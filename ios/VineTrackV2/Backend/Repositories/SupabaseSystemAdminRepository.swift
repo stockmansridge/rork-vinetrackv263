@@ -64,6 +64,58 @@ nonisolated private struct SetFlagParams: Encodable, Sendable {
 
 nonisolated private struct EmptyParams: Encodable, Sendable {}
 
+// MARK: - System Admin Management
+
+nonisolated struct SystemAdminUser: Identifiable, Sendable, Hashable {
+    let userId: UUID
+    let email: String
+    let isActive: Bool
+    let createdAt: Date?
+    let createdBy: UUID?
+
+    var id: UUID { userId }
+}
+
+nonisolated private struct SystemAdminRowDTO: Decodable, Sendable {
+    let userId: UUID
+    let email: String?
+    let isActive: Bool
+    let createdAt: Date?
+    let createdBy: UUID?
+
+    enum CodingKeys: String, CodingKey {
+        case userId    = "user_id"
+        case email
+        case isActive  = "is_active"
+        case createdAt = "created_at"
+        case createdBy = "created_by"
+    }
+
+    func toModel() -> SystemAdminUser {
+        SystemAdminUser(
+            userId: userId,
+            email: email ?? "",
+            isActive: isActive,
+            createdAt: createdAt,
+            createdBy: createdBy
+        )
+    }
+}
+
+nonisolated private struct AddAdminParams: Encodable, Sendable {
+    let email: String
+    enum CodingKeys: String, CodingKey { case email = "p_email" }
+}
+
+nonisolated private struct SetActiveParams: Encodable, Sendable {
+    let userId: UUID
+    let isActive: Bool
+    enum CodingKeys: String, CodingKey {
+        case userId   = "p_user_id"
+        case isActive = "p_is_active"
+    }
+}
+
 // MARK: - Repository
 
 final class SupabaseSystemAdminRepository {
@@ -106,5 +158,36 @@ final class SupabaseSystemAdminRepository {
         _ = try await provider.client
             .rpc("set_system_feature_flag", params: SetFlagParams(key: key, isEnabled: isEnabled))
             .execute()
+    }
+
+    // MARK: - System Admin Management
+
+    func listSystemAdmins() async throws -> [SystemAdminUser] {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let rows: [SystemAdminRowDTO] = try await provider.client
+            .rpc("list_system_admins")
+            .execute()
+            .value
+        return rows.map { $0.toModel() }
+    }
+
+    @discardableResult
+    func addSystemAdmin(email: String) async throws -> SystemAdminUser? {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let rows: [SystemAdminRowDTO] = try await provider.client
+            .rpc("add_system_admin", params: AddAdminParams(email: email))
+            .execute()
+            .value
+        return rows.first?.toModel()
+    }
+
+    @discardableResult
+    func setSystemAdminActive(userId: UUID, isActive: Bool) async throws -> SystemAdminUser? {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let rows: [SystemAdminRowDTO] = try await provider.client
+            .rpc("set_system_admin_active", params: SetActiveParams(userId: userId, isActive: isActive))
+            .execute()
+            .value
+        return rows.first?.toModel()
     }
 }

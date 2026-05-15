@@ -435,6 +435,16 @@ struct BackendSettingsView: View {
                     color: .purple
                 )
             }
+            NavigationLink {
+                SystemAdminUsersView()
+            } label: {
+                SettingsRow(
+                    title: "System Admin Users",
+                    subtitle: "Add or deactivate platform administrators",
+                    symbol: "person.badge.key.fill",
+                    color: .purple
+                )
+            }
         } header: {
             SettingsSectionHeader(title: "System Admin", symbol: "key.fill", color: .purple)
         } footer: {
