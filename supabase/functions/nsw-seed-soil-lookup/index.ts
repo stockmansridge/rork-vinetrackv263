@@ -56,13 +56,35 @@ const CORS: Record<string, string> = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const PROXY_VERSION = "nsw-seed-soil-lookup-2026-05-15-v1";
+const PROXY_VERSION = "nsw-seed-soil-lookup-2026-05-15-v2";
 
 // Default public endpoint from the NSW SEED / DCCEEW dataset catalogue.
 // Layer 0 = "Soil Landscapes - published 100K - 250K", polygon feature
 // layer covering central and eastern NSW.
 const DEFAULT_SOIL_LANDSCAPE_URL =
   "https://mapprod1.environment.nsw.gov.au/arcgis/rest/services/Soil/SoilLandscapes_CentralAndEasternNSW/MapServer/0";
+
+// The default mapprod1 layer is a public ArcGIS service and rejects requests
+// that include an unrecognised `token` parameter. We therefore only append the
+// NSW_SEED_API_KEY when either (a) the operator has explicitly opted in via
+// NSW_SEED_FORCE_TOKEN=true, or (b) a custom NSW_SEED_SOIL_LANDSCAPE_URL has
+// been configured (assumed to be the authenticated SEED endpoint).
+function shouldSendTokenByDefault(endpoint: string): boolean {
+  const force = Deno.env.get("NSW_SEED_FORCE_TOKEN")?.trim().toLowerCase();
+  if (force === "true" || force === "1" || force === "yes") return true;
+  const usingDefault = endpoint.replace(/\/$/, "") ===
+    DEFAULT_SOIL_LANDSCAPE_URL.replace(/\/$/, "");
+  return !usingDefault;
+}
+
+function isArcgisAuthError(body: any): boolean {
+  const err = body && typeof body === "object" ? body.error : null;
+  if (!err || typeof err !== "object") return false;
+  const code = Number(err.code);
+  if ([401, 403, 498, 499].includes(code)) return true;
+  const msg = String(err.message ?? "").toLowerCase();
+  return msg.includes("token") || msg.includes("unauthorized") || msg.includes("not authorized");
+}
 
 const DISCLAIMER =
   "Soil information is estimated from NSW SEED mapping and may not reflect site-specific vineyard soil conditions. Adjust soil class and water-holding values using your own soil knowledge where needed.";
@@ -152,12 +174,15 @@ function extractPolygonPoints(raw: unknown): LatLon[] {
 // NSW SEED ArcGIS query
 // ---------------------------------------------------------------------------
 
-async function querySoilLandscape(
-  endpoint: string,
-  apiKey: string | null,
-  lat: number,
-  lon: number,
-): Promise<{ ok: boolean; status: number; body: any; url: string }> {
+interface QueryAttempt {
+  ok: boolean;
+  status: number;
+  body: any;
+  url_safe: string;        // URL with `token` redacted
+  token_used: boolean;
+}
+
+function buildQueryUrl(endpoint: string, lat: number, lon: number, token: string | null): URL {
   const u = new URL(`${endpoint}/query`);
   u.searchParams.set("geometry", `${lon},${lat}`);
   u.searchParams.set("geometryType", "esriGeometryPoint");
@@ -166,20 +191,54 @@ async function querySoilLandscape(
   u.searchParams.set("outFields", "*");
   u.searchParams.set("returnGeometry", "false");
   u.searchParams.set("f", "json");
-  if (apiKey) u.searchParams.set("token", apiKey);
+  if (token) u.searchParams.set("token", token);
+  return u;
+}
 
+function redactToken(u: URL): string {
+  const safe = new URL(u.toString());
+  if (safe.searchParams.has("token")) safe.searchParams.set("token", "***");
+  return safe.toString();
+}
+
+async function doQuery(endpoint: string, lat: number, lon: number, token: string | null): Promise<QueryAttempt> {
+  const u = buildQueryUrl(endpoint, lat, lon, token);
+  const url_safe = redactToken(u);
   let res: Response;
   try {
-    res = await fetch(u.toString(), {
-      headers: { Accept: "application/json" },
-    });
+    res = await fetch(u.toString(), { headers: { Accept: "application/json" } });
   } catch (e) {
-    return { ok: false, status: 0, body: { error: String(e) }, url: u.toString() };
+    return { ok: false, status: 0, body: { error: String(e) }, url_safe, token_used: token != null };
   }
   const text = await res.text();
   let parsed: any = null;
   try { parsed = JSON.parse(text); } catch { parsed = text; }
-  return { ok: res.ok, status: res.status, body: parsed, url: u.toString() };
+  return { ok: res.ok, status: res.status, body: parsed, url_safe, token_used: token != null };
+}
+
+async function querySoilLandscape(
+  endpoint: string,
+  apiKey: string | null,
+  lat: number,
+  lon: number,
+): Promise<{ ok: boolean; status: number; body: any; attempts: QueryAttempt[] }> {
+  const sendToken = apiKey != null && shouldSendTokenByDefault(endpoint);
+  const attempts: QueryAttempt[] = [];
+
+  const first = await doQuery(endpoint, lat, lon, sendToken ? apiKey : null);
+  attempts.push(first);
+
+  // Retry once without token if ArcGIS returned an auth/token error.
+  const needsRetry = first.token_used && (
+    (!first.ok && (first.status === 401 || first.status === 403 || first.status === 498 || first.status === 499)) ||
+    isArcgisAuthError(first.body)
+  );
+  if (needsRetry) {
+    const second = await doQuery(endpoint, lat, lon, null);
+    attempts.push(second);
+    return { ok: second.ok, status: second.status, body: second.body, attempts };
+  }
+  return { ok: first.ok, status: first.status, body: first.body, attempts };
 }
 
 // ---------------------------------------------------------------------------
@@ -352,6 +411,7 @@ Deno.serve(async (req: Request) => {
       endpoint,
       using_default_endpoint: usingDefaultEndpoint,
       has_api_key: apiKey != null,
+      sends_token_by_default: apiKey != null && shouldSendTokenByDefault(endpoint),
       disclaimer: DISCLAIMER,
       model_version: MODEL_VERSION,
     });
@@ -449,6 +509,16 @@ async function runLookup(
   paddockId: string | null,
 ): Promise<Response> {
   const r = await querySoilLandscape(endpoint, apiKey, lat, lon);
+  const diagnostics = {
+    endpoint,
+    using_default_endpoint: !Deno.env.get("NSW_SEED_SOIL_LANDSCAPE_URL")?.trim(),
+    attempts: r.attempts.map((a) => ({
+      url_safe: a.url_safe,
+      token_used: a.token_used,
+      http_status: a.status,
+      arcgis_error: a.body && typeof a.body === "object" ? a.body.error ?? null : null,
+    })),
+  };
   if (!r.ok) {
     return json({
       success: false,
@@ -456,6 +526,7 @@ async function runLookup(
       reason: "upstream_error",
       http_status: r.status,
       upstream: r.body,
+      diagnostics,
       endpoint,
       disclaimer: DISCLAIMER,
     }, 502);
@@ -467,6 +538,7 @@ async function runLookup(
       error: "NSW SEED returned an error.",
       reason: "upstream_arcgis_error",
       upstream: r.body.error,
+      diagnostics,
       endpoint,
       disclaimer: DISCLAIMER,
     }, 502);
@@ -494,6 +566,7 @@ async function runLookup(
     suggestion,
     feature_count: features.length,
     raw_feature: features[0],
+    diagnostics,
     endpoint,
     disclaimer: DISCLAIMER,
     model_version: MODEL_VERSION,
