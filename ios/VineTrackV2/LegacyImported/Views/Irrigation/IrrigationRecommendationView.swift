@@ -41,6 +41,14 @@ struct IrrigationRecommendationView: View {
     @State private var showMissingRainHelper: Bool = false
     @State private var didLoadWeatherWizardStatus: Bool = false
 
+    // Soil profile (Phase 1: manual soil profile + soil buffer panel).
+    @State private var paddockSoilProfile: BackendSoilProfile?
+    @State private var isLoadingSoilProfile: Bool = false
+    @State private var showSoilProfileEditor: Bool = false
+    @State private var lastLoadedSoilPaddockId: UUID?
+    private let soilProfileRepository: any SoilProfileRepositoryProtocol
+        = SupabaseSoilProfileRepository()
+
     // Info popover state — keyed by term identifier.
     @State private var activeInfoTerm: InfoTerm?
 
@@ -170,11 +178,26 @@ struct IrrigationRecommendationView: View {
         }
     }
 
+    private var soilInputs: SoilProfileInputs {
+        guard let p = paddockSoilProfile else { return .empty }
+        return SoilProfileInputs(
+            irrigationSoilClass: p.irrigationSoilClass,
+            availableWaterCapacityMmPerM: p.availableWaterCapacityMmPerM,
+            effectiveRootDepthM: p.effectiveRootDepthM,
+            managementAllowedDepletionPercent: p.managementAllowedDepletionPercent,
+            infiltrationRisk: p.infiltrationRisk,
+            drainageRisk: p.drainageRisk,
+            waterloggingRisk: p.waterloggingRisk,
+            modelVersion: p.modelVersion
+        )
+    }
+
     private var result: IrrigationRecommendationResult? {
         IrrigationCalculator.calculate(
             forecastDays: forecastDays,
             settings: settings,
-            recentActualRainMm: recentActualRainOffsetMm
+            recentActualRainMm: recentActualRainOffsetMm,
+            soil: soilInputs
         )
     }
 
@@ -208,6 +231,7 @@ struct IrrigationRecommendationView: View {
             }
             rainfallCalendarSection
             blockSection
+            soilProfileSection
             forecastControlSection
             forecastDetailsSection
             dailyBreakdownDisclosure
@@ -241,6 +265,7 @@ struct IrrigationRecommendationView: View {
             }
             Task { await refreshWeatherWizardStatus() }
             Task { await loadPersistedHistoryCoverage() }
+            Task { await loadSoilProfile() }
         }
         .onChange(of: store.selectedVineyardId) { _, _ in
             didLoadWeatherWizardStatus = false
@@ -257,6 +282,7 @@ struct IrrigationRecommendationView: View {
         .onChange(of: bufferText) { _, _ in persistParameters() }
         .onChange(of: selectedPaddockId) { _, _ in
             applyPaddockDefaults()
+            Task { await loadSoilProfile(force: true) }
         }
         .onChange(of: forecastDuration) { _, newValue in
             persistForecastDuration(newValue)
@@ -1348,5 +1374,140 @@ struct IrrigationRecommendationView: View {
         let cleaned = text.replacingOccurrences(of: ",", with: ".")
         if cleaned.isEmpty { return defaultValue }
         return Double(cleaned) ?? defaultValue
+    }
+
+    // MARK: - Soil profile panel
+
+    @ViewBuilder
+    private var soilProfileSection: some View {
+        if let paddock = selectedPaddock {
+            Section {
+                if isLoadingSoilProfile && paddockSoilProfile == nil {
+                    HStack(spacing: 10) {
+                        ProgressView().controlSize(.small)
+                        Text("Loading soil profile…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } else if let soil = paddockSoilProfile {
+                    soilProfileSummary(soil)
+                } else {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("No soil profile set for this paddock", systemImage: "square.stack.3d.up.slash")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text("Add a soil profile to get soil-aware irrigation guidance.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if let advice = result?.soilAdviceText {
+                    Label(advice, systemImage: "drop.degreesign")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let caution = result?.soilCautionText {
+                    Label(caution, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Button {
+                    showSoilProfileEditor = true
+                } label: {
+                    Label(paddockSoilProfile == nil ? "Add soil profile" : "Edit soil profile",
+                          systemImage: "square.and.pencil")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            } header: {
+                Text("Soil profile")
+            } footer: {
+                if paddockSoilProfile?.source == "nsw_seed" {
+                    Text("Soil information is estimated from NSW SEED mapping and may not reflect site-specific vineyard soil conditions. Adjust soil class and water-holding values using your own soil knowledge where needed.")
+                } else {
+                    Text("Soil profile values feed the soil buffer and root-zone calculation. Editing requires Owner or Manager access.")
+                }
+            }
+            .sheet(isPresented: $showSoilProfileEditor, onDismiss: {
+                Task { await loadSoilProfile(force: true) }
+            }) {
+                SoilProfileEditorSheet(
+                    vineyardId: paddock.vineyardId,
+                    paddockId: paddock.id,
+                    paddockName: paddock.name,
+                    onSaved: { saved in
+                        paddockSoilProfile = saved
+                    }
+                )
+            }
+        }
+    }
+
+    private func soilProfileSummary(_ soil: BackendSoilProfile) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: "square.stack.3d.up.fill")
+                    .foregroundStyle(VineyardTheme.leafGreen)
+                Text(soilClassDisplay(soil))
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text(soil.source.replacingOccurrences(of: "_", with: " ").capitalized)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            HStack(spacing: 14) {
+                soilStat("AWC", soil.availableWaterCapacityMmPerM.map { String(format: "%.0f mm/m", $0) } ?? "—")
+                soilStat("Root depth", soil.effectiveRootDepthM.map { String(format: "%.2f m", $0) } ?? "—")
+                soilStat("Depletion", soil.managementAllowedDepletionPercent.map { String(format: "%.0f%%", $0) } ?? "—")
+            }
+            if let rzc = soil.rootZoneCapacityMm, let raw = soil.readilyAvailableWaterMm {
+                Text(String(format: "Root-zone capacity %.0f mm • Readily available %.0f mm", rzc, raw))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func soilStat(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).font(.caption2).foregroundStyle(.secondary)
+            Text(value).font(.caption.weight(.semibold)).monospacedDigit()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func soilClassDisplay(_ soil: BackendSoilProfile) -> String {
+        if let cls = soil.typedSoilClass { return cls.fallbackLabel }
+        if let raw = soil.irrigationSoilClass, !raw.isEmpty {
+            return raw.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+        return "Unspecified soil class"
+    }
+
+    private func loadSoilProfile(force: Bool = false) async {
+        guard let pid = selectedPaddockId else {
+            paddockSoilProfile = nil
+            lastLoadedSoilPaddockId = nil
+            return
+        }
+        if !force && lastLoadedSoilPaddockId == pid && paddockSoilProfile != nil { return }
+        isLoadingSoilProfile = true
+        defer { isLoadingSoilProfile = false }
+        do {
+            let profile = try await soilProfileRepository.fetchPaddockSoilProfile(paddockId: pid)
+            paddockSoilProfile = profile
+            lastLoadedSoilPaddockId = pid
+        } catch {
+            // Leave the profile nil on transient failure; the editor will
+            // surface the error if the user opens it.
+            paddockSoilProfile = nil
+            lastLoadedSoilPaddockId = pid
+        }
     }
 }
