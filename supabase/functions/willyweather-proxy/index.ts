@@ -342,18 +342,31 @@ Deno.serve(async (req: Request) => {
 
     case "search_locations": {
       if (!apiKey) {
-        return json({ error: "WillyWeather is not available — global API key not configured." }, 503);
+        return json({
+          error: "WillyWeather is not available — global API key not configured.",
+          reason: "missing_global_api_key",
+        }, 503);
       }
       const query = typeof body?.query === "string" ? body.query.trim() : "";
+      // Accept both `lon` (preferred) and `lng` (legacy) for resilience.
       const lat = num(body?.lat);
-      const lon = num(body?.lon);
+      const lon = num(body?.lon ?? body?.lng);
 
-      const r = query.length > 0
+      const mode = query.length > 0 ? "query" : (lat != null && lon != null ? "coords" : null);
+      const r = mode === "query"
         ? await wwSearch(apiKey, query)
-        : (lat != null && lon != null ? await wwSearchByCoords(apiKey, lat, lon) : null);
+        : (mode === "coords" ? await wwSearchByCoords(apiKey, lat as number, lon as number) : null);
 
-      if (!r) return json({ error: "query or lat/lon required" }, 400);
-      if (!r.ok) return json({ error: "WillyWeather search failed", http_status: r.status }, 502);
+      if (!r) return json({ error: "query or lat/lon required", reason: "missing_params" }, 400);
+      if (!r.ok) {
+        return json({
+          error: "WillyWeather search failed",
+          reason: "willyweather_rejected",
+          mode,
+          http_status: r.status,
+          upstream: r.body,
+        }, 502);
+      }
 
       const rawList = Array.isArray(r.body?.location) ? r.body.location : (Array.isArray(r.body) ? r.body : []);
       const locations = rawList.map((loc: any) => ({
