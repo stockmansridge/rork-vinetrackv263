@@ -418,11 +418,7 @@ private struct NewHomeTabView: View {
 
     private func formattedNumber(_ value: Int) -> String {
         if value >= 1000 {
-            let thousands = Double(value) / 1000.0
-            if thousands >= 10 {
-                return "\(Int(thousands))k"
-            }
-            return String(format: "%.1fk", thousands)
+            return String(format: "%.1fk", Double(value) / 1000.0)
         }
         return "\(value)"
     }

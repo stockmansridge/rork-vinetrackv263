@@ -27,13 +27,6 @@ struct BackendSettingsView: View {
 
     @Environment(\.openURL) private var openURL
 
-    private static let adminEmails: Set<String> = ["jonathan@stockmansridge.com.au"]
-
-    private var isAdminUser: Bool {
-        guard let email = auth.userEmail?.lowercased() else { return false }
-        return Self.adminEmails.contains(email)
-    }
-
     private var pendingInvitationCount: Int {
         let userEmail = (auth.userEmail ?? "").lowercased()
         let memberIds = Set(store.vineyards.map { $0.id })
@@ -129,10 +122,6 @@ struct BackendSettingsView: View {
                     }
                 } header: {
                     SettingsSectionHeader(title: "Preferences & Data", symbol: "gearshape.fill", color: .indigo)
-                }
-
-                if isAdminUser {
-                    adminSection
                 }
 
                 if systemAdmin.isSystemAdmin {
@@ -417,25 +406,6 @@ struct BackendSettingsView: View {
     private var systemAdminSection: some View {
         Section {
             NavigationLink {
-                SystemFeatureFlagsView()
-            } label: {
-                SettingsRow(
-                    title: "Feature Flags",
-                    subtitle: "Diagnostics & beta controls (platform-wide)",
-                    symbol: "flag.2.crossed.fill",
-                    color: .purple
-                )
-            }
-        } header: {
-            SettingsSectionHeader(title: "System Admin", symbol: "key.fill", color: .purple)
-        } footer: {
-            Text("Visible only to VineTrack platform administrators. Controls diagnostics across iOS and the web portal.")
-        }
-    }
-
-    private var adminSection: some View {
-        Section {
-            NavigationLink {
                 AdminDashboardView()
             } label: {
                 SettingsRow(
@@ -455,10 +425,20 @@ struct BackendSettingsView: View {
                     color: .orange
                 )
             }
+            NavigationLink {
+                SystemFeatureFlagsView()
+            } label: {
+                SettingsRow(
+                    title: "Feature Flags",
+                    subtitle: "Diagnostics & beta controls (platform-wide)",
+                    symbol: "flag.2.crossed.fill",
+                    color: .purple
+                )
+            }
         } header: {
-            SettingsSectionHeader(title: "Admin", symbol: "shield.lefthalf.filled", color: .purple)
+            SettingsSectionHeader(title: "System Admin", symbol: "key.fill", color: .purple)
         } footer: {
-            Text("Visible only to authorized admin accounts.")
+            Text("Visible only to VineTrack platform administrators. Controls diagnostics, notices and admin tools across iOS and the web portal.")
         }
     }
 
