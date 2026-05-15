@@ -10,6 +10,13 @@ class IrrigationForecastService {
     var isLoading: Bool = false
     var errorMessage: String?
     var forecast: IrrigationForecast?
+    /// Reason the active forecast fell back to Open-Meteo, if any.
+    /// Surfaced in the Weather sources card so users understand why
+    /// the configured WillyWeather provider wasn't used.
+    var fallbackReason: String?
+    /// The provider resolved before fetching. Used by UI to show the
+    /// expected source label even while the forecast is loading.
+    var resolvedProvider: ForecastProvider = .auto
 
     /// Fetches an irrigation forecast for the given coordinates. If
     /// `vineyardId` is supplied and the vineyard's `forecastProvider` is
@@ -25,23 +32,57 @@ class IrrigationForecastService {
     ) async {
         isLoading = true
         errorMessage = nil
+        fallbackReason = nil
         forecast = nil
 
         let clampedDays = max(1, min(days, 16))
 
-        // Resolve preferred provider for this vineyard.
-        let provider: ForecastProvider = {
-            guard let vid = vineyardId else { return .openMeteo }
-            return WeatherProviderStore.shared.config(for: vid).forecastProvider
-        }()
+        // Resolve preferred provider for this vineyard. Prefer the
+        // server-side preference (shared with Lovable) when available
+        // so we don't depend on the local WeatherProviderStore cache
+        // being hydrated on this device.
+        var provider: ForecastProvider = .openMeteo
+        var hasWillyLocation: Bool = false
+        if let vid = vineyardId {
+            let cfg = WeatherProviderStore.shared.config(for: vid)
+            provider = cfg.forecastProvider
+            hasWillyLocation = (cfg.willyWeatherLocationId?.isEmpty == false)
+
+            // Refresh from backend (shared source of truth).
+            if let backend = try? await VineyardWillyWeatherProxyService
+                .getProviderPreference(vineyardId: vid) {
+                switch backend {
+                case "auto": provider = .auto
+                case "open_meteo": provider = .openMeteo
+                case "willyweather": provider = .willyWeather
+                default: break
+                }
+            }
+
+            // If we don't yet know the WW location locally, ask the
+            // backend integration record. This handles users who set
+            // up WillyWeather on another device / in Lovable.
+            if !hasWillyLocation, provider != .openMeteo {
+                let repo = SupabaseVineyardWeatherIntegrationRepository()
+                if let integ = try? await repo.fetch(
+                    vineyardId: vid, provider: "willyweather"
+                ), let sid = integ.stationId, !sid.isEmpty {
+                    hasWillyLocation = true
+                    var updated = cfg
+                    updated.willyWeatherHasApiKey = true
+                    updated.willyWeatherLocationId = sid
+                    updated.willyWeatherLocationName = integ.stationName
+                    updated.forecastProvider = provider
+                    WeatherProviderStore.shared.save(updated, for: vid)
+                }
+            }
+        }
+        resolvedProvider = provider
 
         // 1. Try WillyWeather if preferred / auto with WW configured.
         if let vid = vineyardId, provider != .openMeteo {
-            let cfg = WeatherProviderStore.shared.config(for: vid)
-            let wwConfigured = cfg.willyWeatherHasApiKey
-                && (cfg.willyWeatherLocationId?.isEmpty == false)
             let shouldTryWilly = provider == .willyWeather
-                || (provider == .auto && wwConfigured)
+                || (provider == .auto && hasWillyLocation)
 
             if shouldTryWilly {
                 do {
@@ -62,15 +103,17 @@ class IrrigationForecastService {
                         isLoading = false
                         return
                     }
+                    fallbackReason = "WillyWeather returned no forecast days — using Open-Meteo."
+                    print("[Forecast] WillyWeather returned empty days, falling back to Open-Meteo.")
                 } catch {
-                    // Auto falls back silently. Explicit willyWeather records
-                    // the error but still falls back so the user isn't left
-                    // without an irrigation forecast.
+                    fallbackReason = "WillyWeather unavailable — using Open-Meteo (\(error.localizedDescription))."
                     if provider == .willyWeather {
-                        errorMessage = "WillyWeather forecast failed — falling back to Open-Meteo (\(error.localizedDescription))."
+                        errorMessage = fallbackReason
                     }
                     print("[Forecast] WillyWeather failed, falling back: \(error.localizedDescription)")
                 }
+            } else if provider == .willyWeather {
+                fallbackReason = "WillyWeather is selected but not yet configured for this vineyard — using Open-Meteo."
             }
         }
 

@@ -410,7 +410,7 @@ struct IrrigationRecommendationView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     sourceRow(
                         label: "Forecast",
-                        value: forecastService.forecast?.source ?? "Open-Meteo Forecast",
+                        value: forecastSourceDisplayValue,
                         icon: "cloud.sun.fill",
                         tint: Color.accentColor
                     )
@@ -428,6 +428,12 @@ struct IrrigationRecommendationView: View {
                         icon: "tray.full.fill",
                         tint: .secondary
                     )
+                }
+
+                if let reason = forecastService.fallbackReason, !reason.isEmpty {
+                    Label(reason, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
                 }
 
                 if let r = recentRainResult, r.fallbackUsed {
@@ -509,6 +515,39 @@ struct IrrigationRecommendationView: View {
             return String(raw.dropFirst("Source: ".count))
         }
         return raw
+    }
+
+    /// Display label for the active forecast source on the Weather
+    /// sources card. Normalises raw provider keys returned by the
+    /// WillyWeather edge function so the UI reads "WillyWeather" rather
+    /// than "willyweather". While the forecast is still loading, shows
+    /// the resolved provider so users see the expected source rather
+    /// than a hard-coded Open-Meteo placeholder.
+    private var forecastSourceDisplayValue: String {
+        if let raw = forecastService.forecast?.source,
+           !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return prettyForecastSource(raw)
+        }
+        switch forecastService.resolvedProvider {
+        case .willyWeather: return "WillyWeather"
+        case .openMeteo: return "Open-Meteo Forecast"
+        case .auto: return forecastService.isLoading ? "Resolving…" : "Open-Meteo Forecast"
+        }
+    }
+
+    private func prettyForecastSource(_ raw: String) -> String {
+        switch raw.lowercased() {
+        case "willyweather", "willy_weather", "willy-weather":
+            return "WillyWeather"
+        case "open_meteo", "open-meteo", "openmeteo":
+            return "Open-Meteo Forecast"
+        case "davis_weatherlink", "davis", "weatherlink":
+            return "Davis WeatherLink"
+        case "weather_underground", "wunderground":
+            return "Weather Underground"
+        default:
+            return raw
+        }
     }
 
     /// Short tag used inside the recommendation card sentence. Looks at
