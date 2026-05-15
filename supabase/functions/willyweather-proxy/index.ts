@@ -34,7 +34,7 @@ const CORS: Record<string, string> = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const PROXY_VERSION = "willyweather-proxy-2026-05-15-global-key";
+const PROXY_VERSION = "willyweather-proxy-2026-05-15-nearest-town";
 const WW_BASE = "https://api.willyweather.com.au/v2";
 const PROVIDER = "willyweather";
 
@@ -82,10 +82,11 @@ async function getLocation(admin: any, vineyardId: string): Promise<{ id: string
 // ---------------------------------------------------------------------------
 
 async function wwSearch(apiKey: string, query: string): Promise<any> {
+  // WillyWeather v2 text search: only `query` + `units` are accepted.
+  // Adding `types` / `limit` triggers HTTP 400 on the upstream.
   const u = new URL(`${WW_BASE}/${encodeURIComponent(apiKey)}/search.json`);
   u.searchParams.set("query", query);
-  u.searchParams.set("types", "location");
-  u.searchParams.set("limit", "10");
+  u.searchParams.set("units", "distance:km");
   const res = await fetch(u.toString());
   const body = await res.text();
   let parsed: any = null;
@@ -103,6 +104,50 @@ async function wwSearchByCoords(apiKey: string, lat: number, lon: number): Promi
   let parsed: any = null;
   try { parsed = JSON.parse(body); } catch { /* fall through */ }
   return { status: res.status, ok: res.ok, body: parsed ?? body };
+}
+
+// Reverse-geocode fallback via OpenStreetMap Nominatim. We use this when
+// WillyWeather's coordinate search returns no usable locations — we derive
+// candidate town/suburb/locality names from the GPS centre and then text-search
+// each one against WillyWeather until we find a match.
+async function reverseGeocodeCandidates(lat: number, lon: number): Promise<string[]> {
+  try {
+    const u = new URL("https://nominatim.openstreetmap.org/reverse");
+    u.searchParams.set("format", "jsonv2");
+    u.searchParams.set("lat", String(lat));
+    u.searchParams.set("lon", String(lon));
+    u.searchParams.set("zoom", "12");
+    u.searchParams.set("addressdetails", "1");
+    const res = await fetch(u.toString(), {
+      headers: { "User-Agent": "VineTrack/1.0 (willyweather-proxy)" },
+    });
+    if (!res.ok) return [];
+    const j: any = await res.json();
+    const a = j?.address ?? {};
+    const names = [
+      a.town, a.village, a.suburb, a.city, a.hamlet, a.municipality,
+      a.county, a.state_district, a.locality,
+    ].filter((s: unknown) => typeof s === "string" && (s as string).length > 0) as string[];
+    // Dedupe while preserving order.
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const n of names) {
+      const k = n.toLowerCase();
+      if (!seen.has(k)) { seen.add(k); out.push(n); }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const R = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
 }
 
 async function wwForecast(apiKey: string, locationId: string, days: number): Promise<any> {
@@ -352,35 +397,110 @@ Deno.serve(async (req: Request) => {
       const lat = num(body?.lat);
       const lon = num(body?.lon ?? body?.lng);
 
-      const mode = query.length > 0 ? "query" : (lat != null && lon != null ? "coords" : null);
-      const r = mode === "query"
-        ? await wwSearch(apiKey, query)
-        : (mode === "coords" ? await wwSearchByCoords(apiKey, lat as number, lon as number) : null);
-
-      if (!r) return json({ error: "query or lat/lon required", reason: "missing_params" }, 400);
-      if (!r.ok) {
-        return json({
-          error: "WillyWeather search failed",
-          reason: "willyweather_rejected",
-          mode,
-          http_status: r.status,
-          upstream: r.body,
-        }, 502);
+      function normaliseList(raw: any, originLat: number | null, originLon: number | null): any[] {
+        const rawList = Array.isArray(raw?.location)
+          ? raw.location
+          : (Array.isArray(raw) ? raw : []);
+        const list = rawList.map((loc: any) => {
+          const lt = num(loc?.lat);
+          const ln = num(loc?.lng);
+          let dist = num(loc?.distance);
+          if (dist == null && lt != null && ln != null && originLat != null && originLon != null) {
+            dist = Math.round(haversineKm(originLat, originLon, lt, ln) * 10) / 10;
+          }
+          return {
+            id: String(loc?.id ?? ""),
+            name: typeof loc?.name === "string" ? loc.name : "",
+            region: typeof loc?.region === "string" ? loc.region : null,
+            state: typeof loc?.state === "string" ? loc.state : null,
+            postcode: typeof loc?.postcode === "string" ? loc.postcode : null,
+            latitude: lt,
+            longitude: ln,
+            distanceKm: dist,
+          };
+        }).filter((l: any) => l.id.length > 0);
+        if (originLat != null && originLon != null) {
+          list.sort((a: any, b: any) => {
+            const da = a.distanceKm ?? Number.POSITIVE_INFINITY;
+            const db = b.distanceKm ?? Number.POSITIVE_INFINITY;
+            return da - db;
+          });
+        }
+        return list;
       }
 
-      const rawList = Array.isArray(r.body?.location) ? r.body.location : (Array.isArray(r.body) ? r.body : []);
-      const locations = rawList.map((loc: any) => ({
-        id: String(loc?.id ?? ""),
-        name: typeof loc?.name === "string" ? loc.name : "",
-        region: typeof loc?.region === "string" ? loc.region : null,
-        state: typeof loc?.state === "string" ? loc.state : null,
-        postcode: typeof loc?.postcode === "string" ? loc.postcode : null,
-        latitude: num(loc?.lat),
-        longitude: num(loc?.lng),
-        distanceKm: num(loc?.distance),
-      })).filter((l: any) => l.id.length > 0);
+      // Manual text search.
+      if (query.length > 0) {
+        const r = await wwSearch(apiKey, query);
+        if (!r.ok) {
+          return json({
+            error: "WillyWeather search failed",
+            reason: "willyweather_rejected",
+            mode: "query",
+            http_status: r.status,
+            upstream: r.body,
+          }, 502);
+        }
+        return json({ success: true, mode: "query", locations: normaliseList(r.body, lat, lon) });
+      }
 
-      return json({ success: true, locations });
+      // Coordinate / nearest-town search.
+      if (lat == null || lon == null) {
+        return json({ error: "query or lat/lon required", reason: "missing_params" }, 400);
+      }
+
+      // 1) Direct coordinate search via WillyWeather.
+      const direct = await wwSearchByCoords(apiKey, lat, lon);
+      if (direct.ok) {
+        const locations = normaliseList(direct.body, lat, lon);
+        if (locations.length > 0) {
+          return json({ success: true, mode: "coords", locations });
+        }
+      }
+
+      // 2) Fallback: reverse-geocode the GPS centre into nearby town names
+      //    and text-search each one until WillyWeather returns matches.
+      const candidates = await reverseGeocodeCandidates(lat, lon);
+      const attempts: Array<{ name: string; http_status: number; matches: number }> = [];
+      const merged: any[] = [];
+      const seenIds = new Set<string>();
+
+      for (const name of candidates) {
+        const r = await wwSearch(apiKey, name);
+        attempts.push({ name, http_status: r.status, matches: 0 });
+        if (!r.ok) continue;
+        const found = normaliseList(r.body, lat, lon);
+        attempts[attempts.length - 1].matches = found.length;
+        for (const loc of found) {
+          if (!seenIds.has(loc.id)) {
+            seenIds.add(loc.id);
+            merged.push(loc);
+          }
+        }
+        if (merged.length >= 5) break;
+      }
+
+      if (merged.length > 0) {
+        merged.sort((a, b) => (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity));
+        return json({
+          success: true,
+          mode: "nearest_town",
+          locations: merged,
+          fallback: { strategy: "reverse_geocode", candidates, attempts },
+        });
+      }
+
+      // No match anywhere.
+      return json({
+        success: false,
+        mode: "coords",
+        locations: [],
+        error: "No WillyWeather forecast location found near these coordinates.",
+        reason: "no_nearest_match",
+        http_status: direct.status,
+        upstream: direct.ok ? null : direct.body,
+        fallback: { strategy: "reverse_geocode", candidates, attempts },
+      }, 200);
     }
 
     case "fetch_forecast": {
