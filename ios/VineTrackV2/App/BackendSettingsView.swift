@@ -135,6 +135,10 @@ struct BackendSettingsView: View {
                     adminSection
                 }
 
+                if systemAdmin.isSystemAdmin {
+                    systemAdminSection
+                }
+
                 supportSection
                 accountPrivacySection
                 aboutSection
@@ -407,6 +411,25 @@ struct BackendSettingsView: View {
             }
         } header: {
             SettingsSectionHeader(title: "Team", symbol: "person.2.fill", color: .teal)
+        }
+    }
+
+    private var systemAdminSection: some View {
+        Section {
+            NavigationLink {
+                SystemFeatureFlagsView()
+            } label: {
+                SettingsRow(
+                    title: "Feature Flags",
+                    subtitle: "Diagnostics & beta controls (platform-wide)",
+                    symbol: "flag.2.crossed.fill",
+                    color: .purple
+                )
+            }
+        } header: {
+            SettingsSectionHeader(title: "System Admin", symbol: "key.fill", color: .purple)
+        } footer: {
+            Text("Visible only to VineTrack platform administrators. Controls diagnostics across iOS and the web portal.")
         }
     }
 
