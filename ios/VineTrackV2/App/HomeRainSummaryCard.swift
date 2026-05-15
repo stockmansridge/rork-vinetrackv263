@@ -11,7 +11,6 @@ struct HomeRainSummaryCard: View {
 
     @State private var todayMm: Double?
     @State private var forecastDays: [ForecastDay] = []
-    @State private var forecastSource: String?
     @State private var hasLoadedForecast: Bool = false
     @State private var isLoading: Bool = false
 
@@ -45,12 +44,6 @@ struct HomeRainSummaryCard: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
-                    if let src = forecastSource, !src.isEmpty {
-                        Text("Forecast: \(src)")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
-                    }
                 }
                 Spacer(minLength: 8)
                 if isLoading {
@@ -128,11 +121,9 @@ struct HomeRainSummaryCard: View {
             let svc = IrrigationForecastService()
             await svc.fetchForecast(latitude: lat, longitude: lon, days: 7, vineyardId: vid)
             forecastDays = svc.forecast?.days ?? []
-            forecastSource = svc.forecast?.source
             hasLoadedForecast = true
         } else {
             forecastDays = []
-            forecastSource = nil
             hasLoadedForecast = true
         }
     }

@@ -45,13 +45,6 @@ struct RainAndForecastView: View {
                 dailyForecastSection
                 rainfallHistorySection
                 calendarLink
-                if let src = forecastSource {
-                    Text("Forecast source: \(src)")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.top, 4)
-                }
                 Spacer(minLength: 24)
             }
             .padding(.horizontal, 16)
@@ -180,9 +173,18 @@ struct RainAndForecastView: View {
 
     private var dailyForecastSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Daily forecast")
-                .font(.subheadline.weight(.semibold))
-                .padding(.horizontal, 4)
+            HStack(alignment: .firstTextBaseline) {
+                Text("Daily forecast")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                if let label = forecastSourceLabel {
+                    Text("Forecast source: \(label)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            .padding(.horizontal, 4)
 
             if !hasLocation {
                 unavailableCard(message: "Rain forecast is currently unavailable.")
@@ -545,6 +547,27 @@ struct RainAndForecastView: View {
         if mm >= 1 { return .teal }
         if mm > 0 { return .mint }
         return .orange
+    }
+
+    /// Display label for the active forecast source, shown on the Daily
+    /// forecast header. Returns `nil` while the source is still loading so
+    /// the header stays clean.
+    private var forecastSourceLabel: String? {
+        guard let raw = forecastSource?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else { return nil }
+        let key = raw.lowercased()
+        switch key {
+        case "willyweather", "willy_weather", "willy-weather":
+            return "WillyWeather"
+        case "open_meteo", "open-meteo", "openmeteo":
+            return "Open-Meteo"
+        case "davis_weatherlink", "davis", "weatherlink":
+            return "Davis"
+        case "weather_underground", "wunderground":
+            return "Wunderground"
+        default:
+            return raw
+        }
     }
 
     private func prettySource(_ source: String?) -> String {
