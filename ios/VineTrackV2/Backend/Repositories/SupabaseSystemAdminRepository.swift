@@ -12,6 +12,14 @@ nonisolated enum SystemFeatureFlagKey {
     static let showRawJSONPanels      = "show_raw_json_panels"
     static let showCostingDiagnostics = "show_costing_diagnostics"
     static let enableBetaFeatures     = "enable_beta_features"
+    /// Master switch for the soil-aware irrigation model + NSW SEED lookup
+    /// button. Defaults to ON for system admins; falls back to enabled when
+    /// the flag row is missing so existing Phase 1 manual soil profiles keep
+    /// working.
+    static let soilAwareIrrigation    = "soil_aware_irrigation"
+    /// Show raw NSW SEED ArcGIS attributes / diagnostics in the soil editor
+    /// after a fetch. Gated to system admins only.
+    static let showNSWSeedDiagnostics = "show_nsw_seed_diagnostics"
 }
 
 nonisolated struct SystemFeatureFlag: Identifiable, Sendable, Hashable {

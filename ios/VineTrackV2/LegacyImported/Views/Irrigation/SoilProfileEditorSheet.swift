@@ -14,6 +14,8 @@ struct SoilProfileEditorSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(BackendAccessControl.self) private var accessControl
+    @Environment(MigratedDataStore.self) private var store
+    @Environment(SystemAdminService.self) private var systemAdmin
 
     @State private var defaults: [SoilClassDefault] = []
     @State private var existing: BackendSoilProfile?
@@ -29,7 +31,17 @@ struct SoilProfileEditorSheet: View {
     @State private var errorMessage: String?
     @State private var showDeleteConfirm: Bool = false
 
+    // NSW SEED fetch state (Phase 2)
+    @State private var isFetchingNSWSeed: Bool = false
+    @State private var nswSeedSuggestion: NSWSeedSoilSuggestion?
+    @State private var nswSeedMessage: String?
+    @State private var nswSeedDisclaimer: String?
+    @State private var nswSeedRawResponse: [String: Any]?
+    @State private var nswSeedError: String?
+    @State private var showOverwriteConfirm: Bool = false
+
     private let repository: any SoilProfileRepositoryProtocol = SupabaseSoilProfileRepository()
+    private let nswSeedService = NSWSeedSoilLookupService()
 
     private var canEdit: Bool { accessControl.canChangeSettings }
 
@@ -63,6 +75,15 @@ struct SoilProfileEditorSheet: View {
                     valuesSection
                     derivedSection
                     notesSection
+                    if showNSWSeedSection {
+                        nswSeedSection
+                    }
+                    if let suggestion = nswSeedSuggestion {
+                        suggestionPreviewSection(suggestion)
+                    }
+                    if showRawDiagnostics, let raw = nswSeedRawResponse {
+                        diagnosticsSection(raw)
+                    }
                     if existing != nil, canEdit {
                         Section {
                             Button(role: .destructive) { showDeleteConfirm = true } label: {
@@ -104,7 +125,255 @@ struct SoilProfileEditorSheet: View {
                 Button("Reset", role: .destructive) { Task { await deleteProfile() } }
                 Button("Cancel", role: .cancel) {}
             }
+            .confirmationDialog(
+                "Replace your manual soil values?",
+                isPresented: $showOverwriteConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Replace with NSW SEED values", role: .destructive) {
+                    if let s = nswSeedSuggestion { applySuggestion(s) }
+                }
+                Button("Keep my values", role: .cancel) {}
+            } message: {
+                Text("This paddock already has a manual soil profile. Applying NSW SEED values will overwrite your tuned AWC, root depth and allowed depletion.")
+            }
         }
+    }
+
+    // MARK: - NSW SEED gating
+
+    private var vineyardCountry: String {
+        store.vineyards.first(where: { $0.id == vineyardId })?.country ?? ""
+    }
+
+    private var isAustralianVineyard: Bool {
+        let c = vineyardCountry.trimmingCharacters(in: .whitespaces).lowercased()
+        if c.isEmpty { return false }
+        return c == "au" || c == "aus" || c == "australia"
+    }
+
+    private var soilAwareEnabled: Bool {
+        // Default to ON when the flag row is missing — keeps Phase 1 working
+        // even before the flag is seeded.
+        guard let flag = systemAdmin.flags[SystemFeatureFlagKey.soilAwareIrrigation] else { return true }
+        return flag.isEnabled
+    }
+
+    private var showNSWSeedSection: Bool {
+        canEdit && isAustralianVineyard && soilAwareEnabled
+    }
+
+    private var showRawDiagnostics: Bool {
+        systemAdmin.isEnabled(SystemFeatureFlagKey.showNSWSeedDiagnostics)
+    }
+
+    // MARK: - NSW SEED Sections
+
+    private var nswSeedSection: some View {
+        Section {
+            Button {
+                Task { await fetchFromNSWSeed() }
+            } label: {
+                HStack {
+                    if isFetchingNSWSeed {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "square.stack.3d.down.right")
+                    }
+                    Text(isFetchingNSWSeed ? "Fetching from NSW SEED\u{2026}" : "Fetch soil from NSW SEED")
+                }
+                .font(.subheadline.weight(.semibold))
+            }
+            .disabled(isFetchingNSWSeed || isSaving)
+            if let msg = nswSeedMessage {
+                Text(msg)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let err = nswSeedError {
+                Label(err, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } header: {
+            Text("NSW SEED soil lookup")
+        } footer: {
+            Text("Estimates the soil profile from the NSW SEED Soil Landscapes layer using your paddock centroid. The NSW SEED API key stays on the server — it is never sent to your device.")
+        }
+    }
+
+    private func suggestionPreviewSection(_ s: NSWSeedSoilSuggestion) -> some View {
+        Section {
+            VStack(alignment: .leading, spacing: 8) {
+                if let name = s.sourceName ?? s.soilLandscape, !name.isEmpty {
+                    LabeledContent("Soil landscape") { Text(name).multilineTextAlignment(.trailing) }
+                }
+                if let code = s.soilLandscapeCode ?? s.sourceFeatureId, !code.isEmpty {
+                    LabeledContent("SALIS code") { Text(code).font(.caption.monospaced()) }
+                }
+                if let cls = s.irrigationSoilClass,
+                   let typed = IrrigationSoilClass(rawValue: cls) {
+                    LabeledContent("Suggested class") { Text(label(for: typed)) }
+                }
+                if let conf = s.confidence, !conf.isEmpty {
+                    LabeledContent("Confidence") { Text(conf.capitalized) }
+                }
+                if !s.matchedKeywords.isEmpty {
+                    LabeledContent("Matched terms") {
+                        Text(s.matchedKeywords.joined(separator: ", "))
+                            .font(.caption)
+                            .multilineTextAlignment(.trailing)
+                    }
+                }
+            }
+            HStack {
+                Button(role: .cancel) {
+                    clearSuggestion()
+                } label: {
+                    Label("Cancel", systemImage: "xmark")
+                }
+                .buttonStyle(.bordered)
+                Spacer()
+                Button {
+                    if hasUserTunedValues {
+                        showOverwriteConfirm = true
+                    } else {
+                        applySuggestion(s)
+                    }
+                } label: {
+                    Label("Apply", systemImage: "checkmark")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(s.irrigationSoilClass == nil)
+            }
+            Text(s.disclaimer ?? "Soil information is estimated from NSW SEED mapping and may not reflect site-specific vineyard soil conditions. Adjust soil class and water-holding values using your own soil knowledge where needed.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        } header: {
+            Text("NSW SEED suggestion")
+        }
+    }
+
+    private func diagnosticsSection(_ raw: [String: Any]) -> some View {
+        Section("Diagnostics (system admin)") {
+            DisclosureGroup("Raw NSW SEED response") {
+                Text(prettyJSON(raw))
+                    .font(.caption2.monospaced())
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var hasUserTunedValues: Bool {
+        guard let existing else { return false }
+        // Only treat as "user-tuned" when there is an existing manual
+        // override with non-default values to protect.
+        if !existing.isManualOverride { return false }
+        return existing.availableWaterCapacityMmPerM != nil
+            || existing.effectiveRootDepthM != nil
+            || existing.managementAllowedDepletionPercent != nil
+    }
+
+    private func clearSuggestion() {
+        nswSeedSuggestion = nil
+        nswSeedRawResponse = nil
+        nswSeedMessage = nil
+        nswSeedError = nil
+    }
+
+    // MARK: - NSW SEED actions
+
+    private func fetchFromNSWSeed() async {
+        guard canEdit, !isFetchingNSWSeed else { return }
+        nswSeedError = nil
+        nswSeedMessage = nil
+        nswSeedSuggestion = nil
+        nswSeedRawResponse = nil
+        isFetchingNSWSeed = true
+        defer { isFetchingNSWSeed = false }
+        do {
+            let result = try await nswSeedService.lookupPaddockSoil(
+                vineyardId: vineyardId,
+                paddockId: paddockId,
+                persist: true
+            )
+            nswSeedRawResponse = result.rawResponse
+            nswSeedDisclaimer = result.disclaimer
+            if let suggestion = result.suggestion, result.found {
+                nswSeedSuggestion = suggestion
+                nswSeedMessage = nil
+            } else {
+                nswSeedMessage = result.message ?? "No NSW SEED soil match found at this paddock's centroid."
+            }
+        } catch let error as NSWSeedSoilLookupError {
+            nswSeedError = error.errorDescription
+        } catch {
+            nswSeedError = "NSW SEED lookup failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func applySuggestion(_ s: NSWSeedSoilSuggestion) {
+        if let raw = s.irrigationSoilClass,
+           let cls = IrrigationSoilClass(rawValue: raw) {
+            selectedClass = cls
+            // Pre-fill numeric values from the matching soil class defaults
+            // so the user sees a complete, editable profile.
+            applyDefaultsForSelectedClass()
+        }
+        clearSuggestion()
+        Task { await saveFromSuggestion(s) }
+    }
+
+    /// Writes the suggestion (and its current numeric values) to
+    /// `paddock_soil_profiles` via the existing upsert RPC, then refreshes
+    /// the editor + Irrigation Advisor by calling `onSaved`. This is what
+    /// fulfils the "persist=true writes directly to paddock_soil_profiles"
+    /// contract from the iOS side — the Edge Function returns the
+    /// suggestion, the iOS service persists it through the shared RPC so
+    /// row-level security and audit fields are applied consistently.
+    private func saveFromSuggestion(_ s: NSWSeedSoilSuggestion) async {
+        guard canEdit else { return }
+        isSaving = true
+        defer { isSaving = false }
+        errorMessage = nil
+        let payload = SoilProfileUpsert(
+            paddockId: paddockId,
+            irrigationSoilClass: selectedClass.rawValue,
+            availableWaterCapacityMmPerM: Double(awcText),
+            effectiveRootDepthM: Double(rootDepthText),
+            managementAllowedDepletionPercent: Double(allowedDepletionText),
+            soilLandscape: s.soilLandscape,
+            soilDescription: s.sourceName,
+            confidence: s.confidence,
+            isManualOverride: false,
+            manualNotes: notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : notes,
+            source: "nsw_seed",
+            sourceProvider: "nsw_seed",
+            sourceDataset: s.sourceDataset ?? "SoilLandscapes_CentralAndEasternNSW",
+            sourceFeatureId: s.sourceFeatureId,
+            sourceName: s.sourceName,
+            countryCode: s.countryCode ?? "AU",
+            regionCode: s.regionCode ?? "NSW"
+        )
+        do {
+            let saved = try await repository.upsertSoilProfile(payload)
+            existing = saved
+            onSaved(saved)
+            dismiss()
+        } catch {
+            errorMessage = friendlyError(error)
+        }
+    }
+
+    private func prettyJSON(_ obj: [String: Any]) -> String {
+        guard JSONSerialization.isValidJSONObject(obj),
+              let data = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]),
+              let s = String(data: data, encoding: .utf8) else { return "{}" }
+        return s
     }
 
     // MARK: - Sections
