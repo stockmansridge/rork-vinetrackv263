@@ -1578,6 +1578,34 @@ struct WeatherDataSettingsView: View {
         }
     }
 
+    // MARK: - WillyWeather debug (system-admin flag gated)
+
+    /// Non-secret WillyWeather integration debug panel. Hidden by default;
+    /// shown only when the system admin enables `show_willyweather_debug`.
+    /// Never exposes the server-side API key — only per-vineyard status.
+    private var willyWeatherDebugSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 6) {
+                diagRow("Vineyard ID", vineyardId?.uuidString ?? "—")
+                diagRow("Location ID", config.willyWeatherLocationId ?? "—")
+                diagRow("Location name", config.willyWeatherLocationName ?? "—")
+                diagRow("Last test success", config.willyWeatherLastTestSuccess.map {
+                    $0.formatted(date: .abbreviated, time: .shortened)
+                } ?? "—")
+                diagRow("Last test error", config.willyWeatherLastTestError ?? "—")
+                diagRow("Auto-match attempted", wwDidAttemptAutoMatch ? "Yes" : "No")
+                diagRow("Auto-matching now", wwIsAutoMatching ? "Yes" : "No")
+                diagRow("Search results loaded", "\(wwSearchResults.count)")
+                diagRow("Integration row", wwIntegration == nil ? "—" : "present")
+            }
+            .font(.caption.monospaced())
+        } header: {
+            Text("WillyWeather debug")
+        } footer: {
+            Text("Non-secret status only. The WillyWeather API key lives server-side in Supabase secrets and is never exposed to the client.")
+        }
+    }
+
     // MARK: - Build 365-day rainfall history
 
     private var buildRainfallHistorySection: some View {

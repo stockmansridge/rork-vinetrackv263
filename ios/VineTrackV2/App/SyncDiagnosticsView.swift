@@ -18,6 +18,7 @@ struct SyncDiagnosticsView: View {
     @Environment(WorkTaskLabourLineSyncService.self) private var workTaskLabourLineSync
     @Environment(WorkTaskPaddockSyncService.self) private var workTaskPaddockSync
     @Environment(GrowthStageRecordSyncService.self) private var growthStageRecordSync
+    @Environment(SystemAdminService.self) private var systemAdmin
 
     @State private var copyConfirmation: String?
     @State private var isSyncingAll: Bool = false
@@ -38,7 +39,9 @@ struct SyncDiagnosticsView: View {
             contextSection
             entitiesSection
             actionsSection
-            pinAuditSection
+            if systemAdmin.isEnabled(SystemFeatureFlagKey.showPinDiagnostics) {
+                pinAuditSection
+            }
             repairSection
             footerSection
         }

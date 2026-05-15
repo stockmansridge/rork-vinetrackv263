@@ -105,15 +105,17 @@ struct BackendSettingsView: View {
                             color: .blue
                         )
                     }
-                    NavigationLink {
-                        SyncDiagnosticsView()
-                    } label: {
-                        SettingsRow(
-                            title: "Sync Diagnostics",
-                            subtitle: "Pending uploads, last sync & status",
-                            symbol: "stethoscope",
-                            color: .teal
-                        )
+                    if systemAdmin.isEnabled(SystemFeatureFlagKey.showSyncDiagnostics) {
+                        NavigationLink {
+                            SyncDiagnosticsView()
+                        } label: {
+                            SettingsRow(
+                                title: "Sync Diagnostics",
+                                subtitle: "Pending uploads, last sync & status",
+                                symbol: "stethoscope",
+                                color: .teal
+                            )
+                        }
                     }
                     if let portalURL = VineTrackPortal.url {
                         Link(destination: portalURL) {
