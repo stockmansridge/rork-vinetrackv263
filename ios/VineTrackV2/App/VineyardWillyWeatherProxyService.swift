@@ -125,6 +125,22 @@ nonisolated enum VineyardWillyWeatherProxyService {
         lat: Double? = nil,
         lon: Double? = nil
     ) async throws -> [WillyWeatherLocation] {
+        let result = try await searchLocationsDetailed(
+            vineyardId: vineyardId, query: query, lat: lat, lon: lon
+        )
+        return result.locations
+    }
+
+    /// Same as `searchLocations` but also surfaces the optional `reason`
+    /// string returned by the proxy (e.g. `no_nearest_match`). Lets the
+    /// caller show a precise message when nearest-match auto-resolution
+    /// fails.
+    static func searchLocationsDetailed(
+        vineyardId: UUID,
+        query: String? = nil,
+        lat: Double? = nil,
+        lon: Double? = nil
+    ) async throws -> (locations: [WillyWeatherLocation], reason: String?) {
         var payload: [String: Any] = [
             "vineyardId": vineyardId.uuidString,
             "action": "search_locations",
@@ -135,7 +151,7 @@ nonisolated enum VineyardWillyWeatherProxyService {
 
         let json = try await invoke(payload: payload)
         let arr = json["locations"] as? [[String: Any]] ?? []
-        return arr.compactMap { raw -> WillyWeatherLocation? in
+        let locations = arr.compactMap { raw -> WillyWeatherLocation? in
             guard let id = raw["id"] as? String, !id.isEmpty else { return nil }
             return WillyWeatherLocation(
                 id: id,
@@ -148,6 +164,7 @@ nonisolated enum VineyardWillyWeatherProxyService {
                 distanceKm: doubleVal(raw["distanceKm"])
             )
         }
+        return (locations, json["reason"] as? String)
     }
 
     static func fetchForecast(

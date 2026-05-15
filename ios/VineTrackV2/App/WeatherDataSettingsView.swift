@@ -84,6 +84,10 @@ struct WeatherDataSettingsView: View {
     @State private var wwSearchResults: [WillyWeatherLocation] = []
     @State private var wwIsSearching: Bool = false
     @State private var wwIntegration: VineyardWeatherIntegration?
+    /// Guards the auto-match nearest-WillyWeather flow so it only runs
+    /// once per screen load and never overwrites a user-selected location.
+    @State private var wwDidAttemptAutoMatch: Bool = false
+    @State private var wwIsAutoMatching: Bool = false
 
     private let integrationRepository: any VineyardWeatherIntegrationRepositoryProtocol
         = SupabaseVineyardWeatherIntegrationRepository()
@@ -206,7 +210,10 @@ struct WeatherDataSettingsView: View {
             loadConfig()
             if let vid = vineyardId {
                 Task { await loadWuIntegration(for: vid) }
-                Task { await loadWwIntegration(for: vid) }
+                Task {
+                    await loadWwIntegration(for: vid)
+                    await autoMatchWillyWeatherIfNeeded(for: vid)
+                }
             }
         }
         .sheet(isPresented: $showSetupWizard) {
@@ -663,30 +670,100 @@ struct WeatherDataSettingsView: View {
 
     private func searchNearbyWillyWeather() async {
         guard let vid = vineyardId else { return }
-        // Try to use vineyard centroid if available via paddocks.
-        let paddocks = store.paddocks.filter { $0.vineyardId == vid && !$0.polygonPoints.isEmpty }
-        let lat: Double?
-        let lon: Double?
-        if let first = paddocks.first {
-            lat = first.polygonPoints.map(\.latitude).reduce(0, +) / Double(first.polygonPoints.count)
-            lon = first.polygonPoints.map(\.longitude).reduce(0, +) / Double(first.polygonPoints.count)
-        } else {
-            lat = nil; lon = nil
-        }
+        let (lat, lon) = vineyardCentroid(for: vid)
         wwIsSearching = true
         defer { wwIsSearching = false }
         do {
-            wwSearchResults = try await VineyardWillyWeatherProxyService
-                .searchLocations(vineyardId: vid, query: nil, lat: lat, lon: lon)
+            let result = try await VineyardWillyWeatherProxyService
+                .searchLocationsDetailed(
+                    vineyardId: vid, query: nil, lat: lat, lon: lon
+                )
+            wwSearchResults = result.locations
             if wwSearchResults.isEmpty {
                 wwStatusOk = false
-                wwStatusMessage = "No nearby locations found. Try searching by suburb."
+                if result.reason == "no_nearest_match" {
+                    wwStatusMessage = "We couldn’t automatically find a WillyWeather forecast location near this vineyard. Search for the nearest town manually."
+                } else {
+                    wwStatusMessage = "No nearby locations found. Try searching by suburb."
+                }
             } else {
                 wwStatusMessage = nil
             }
         } catch {
             wwStatusOk = false
             wwStatusMessage = error.localizedDescription
+        }
+    }
+
+    /// Compute the vineyard centroid from all paddocks with polygon
+    /// points. Returns `(nil, nil)` if no paddocks have geometry.
+    private func vineyardCentroid(for vid: UUID) -> (Double?, Double?) {
+        let paddocks = store.paddocks.filter { $0.vineyardId == vid && !$0.polygonPoints.isEmpty }
+        var lats: [Double] = []
+        var lons: [Double] = []
+        for p in paddocks {
+            let n = Double(p.polygonPoints.count)
+            guard n > 0 else { continue }
+            lats.append(p.polygonPoints.map(\.latitude).reduce(0, +) / n)
+            lons.append(p.polygonPoints.map(\.longitude).reduce(0, +) / n)
+        }
+        guard !lats.isEmpty else { return (nil, nil) }
+        let lat = lats.reduce(0, +) / Double(lats.count)
+        let lon = lons.reduce(0, +) / Double(lons.count)
+        return (lat, lon)
+    }
+
+    /// Auto-match the nearest WillyWeather forecast location from the
+    /// vineyard GPS centre. Runs at most once per screen load and never
+    /// overwrites an existing user-selected location.
+    private func autoMatchWillyWeatherIfNeeded(for vid: UUID) async {
+        guard !wwDidAttemptAutoMatch else { return }
+        // Only owner/manager can change shared vineyard config.
+        guard canEdit else { return }
+        // Only relevant when provider is auto or willyweather.
+        let provider = config.forecastProvider
+        guard provider == .auto || provider == .willyWeather else { return }
+        // Skip if a location is already saved for this vineyard.
+        if let id = config.willyWeatherLocationId, !id.isEmpty { return }
+        let (lat, lon) = vineyardCentroid(for: vid)
+        guard let lat, let lon else { return }
+
+        wwDidAttemptAutoMatch = true
+        wwIsAutoMatching = true
+        defer { wwIsAutoMatching = false }
+        do {
+            let result = try await VineyardWillyWeatherProxyService
+                .searchLocationsDetailed(
+                    vineyardId: vid, query: nil, lat: lat, lon: lon
+                )
+            guard let best = result.locations.first else {
+                wwStatusOk = false
+                if result.reason == "no_nearest_match" {
+                    wwStatusMessage = "We couldn’t automatically find a WillyWeather forecast location near this vineyard. Search for the nearest town manually."
+                }
+                print("[WillyWeatherProxy] auto-match vineyardId=\(vid) result=empty reason=\(result.reason ?? "-")")
+                return
+            }
+            // Re-check guard: do not overwrite if the user picked a
+            // location while the request was in flight.
+            if let existing = config.willyWeatherLocationId, !existing.isEmpty { return }
+            try await VineyardWillyWeatherProxyService.setLocation(
+                vineyardId: vid, location: best
+            )
+            var c = config
+            c.willyWeatherLocationId = best.id
+            c.willyWeatherLocationName = best.name
+            config = c
+            persist()
+            wwSearchResults = []
+            wwSearchQuery = ""
+            wwStatusOk = true
+            wwStatusMessage = "Nearest WillyWeather forecast location matched from vineyard GPS centre."
+            print("[WillyWeatherProxy] auto-match vineyardId=\(vid) result=ok location=\(best.name) id=\(best.id)")
+        } catch {
+            wwStatusOk = false
+            wwStatusMessage = error.localizedDescription
+            print("[WillyWeatherProxy] auto-match vineyardId=\(vid) result=fail error=\(error.localizedDescription)")
         }
     }
 
