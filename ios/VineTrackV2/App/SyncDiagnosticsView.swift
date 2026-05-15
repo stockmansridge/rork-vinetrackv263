@@ -30,12 +30,15 @@ struct SyncDiagnosticsView: View {
     @State private var isRepushingNames: Bool = false
     @State private var lastRepushNamesResult: TripSyncService.RepushNamesResult?
     @State private var lastRepushNamesAt: Date?
+    @State private var isAuditingPinSync: Bool = false
+    @State private var lastPinSyncAudit: PinSyncService.AuditResult?
 
     var body: some View {
         Form {
             contextSection
             entitiesSection
             actionsSection
+            pinAuditSection
             repairSection
             footerSection
         }
@@ -100,6 +103,163 @@ struct SyncDiagnosticsView: View {
         } header: {
             Text("Actions")
         }
+    }
+
+    private var pinAuditSection: some View {
+        Section {
+            Button {
+                Task { await runPinSyncAudit() }
+            } label: {
+                HStack {
+                    Label(isAuditingPinSync ? "Auditing pins…" : "Audit pin sync (selected vineyard)", systemImage: "checklist")
+                    Spacer()
+                    if isAuditingPinSync { ProgressView() }
+                }
+            }
+            .disabled(isAuditingPinSync || !auth.isSignedIn || store.selectedVineyardId == nil)
+
+            if let audit = lastPinSyncAudit {
+                pinSyncAuditView(audit)
+            }
+        } header: {
+            Text("Pin Audit")
+        } footer: {
+            Text("Compares local pins against Supabase for the selected vineyard. Shows local-only pins (not uploaded), remote-only pins (only in Supabase), orphan pins (wrong vineyard), and remote soft-deleted pins. Copy diagnostics to share full pin IDs with the portal team.")
+        }
+    }
+
+    @ViewBuilder
+    private func pinSyncAuditView(_ audit: PinSyncService.AuditResult) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Last pin sync audit")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            HStack(spacing: 14) {
+                metric("Local", value: "\(audit.localForVineyard)")
+                metric("Remote active", value: "\(audit.remoteActive)")
+                metric("Local-only", value: "\(audit.localOnlyIds.count)", highlight: !audit.localOnlyIds.isEmpty)
+                metric("Remote-only", value: "\(audit.remoteOnlyIds.count)", highlight: !audit.remoteOnlyIds.isEmpty)
+            }
+            HStack(spacing: 14) {
+                metric("All local", value: "\(audit.localAcrossAllVineyards)")
+                metric("Orphans", value: "\(audit.localVineyardMismatch.count)", highlight: !audit.localVineyardMismatch.isEmpty)
+                metric("Soft-deleted", value: "\(audit.remoteSoftDeleted)", highlight: audit.remoteSoftDeleted > 0)
+                metric("Pending", value: "\(pinSync.pendingUpsertCount)", highlight: pinSync.pendingUpsertCount > 0)
+            }
+            if let err = audit.error, !err.isEmpty {
+                Text("Error: \(err)")
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+            }
+            if !audit.localOnlyDetails.isEmpty {
+                DisclosureGroup("Local-only pins — not in Supabase (\(audit.localOnlyDetails.count))") {
+                    ForEach(audit.localOnlyDetails) { d in
+                        localPinDetailRow(d)
+                    }
+                }
+                .font(.footnote)
+            }
+            if !audit.orphanLocalDetails.isEmpty {
+                DisclosureGroup("Orphan local pins — wrong vineyard (\(audit.orphanLocalDetails.count))") {
+                    ForEach(audit.orphanLocalDetails) { d in
+                        localPinDetailRow(d)
+                    }
+                }
+                .font(.footnote)
+            }
+            if !audit.remoteSoftDeletedDetails.isEmpty {
+                DisclosureGroup("Remote soft-deleted (\(audit.remoteSoftDeletedDetails.count))") {
+                    ForEach(audit.remoteSoftDeletedDetails) { d in
+                        remotePinDetailRow(d)
+                    }
+                }
+                .font(.footnote)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private func localPinDetailRow(_ d: PinSyncService.LocalPinDetail) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Text(d.title.isEmpty ? "(no title)" : d.title)
+                    .font(.caption.weight(.semibold))
+                Text(d.mode)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                if d.isCompleted {
+                    Text("completed").font(.caption2).foregroundStyle(.green)
+                }
+                if d.isPendingUpsert {
+                    Text("pending").font(.caption2).foregroundStyle(.orange)
+                }
+                if d.isPendingDelete {
+                    Text("pending-delete").font(.caption2).foregroundStyle(.red)
+                }
+            }
+            Text("pin_id: \(d.id.uuidString)")
+                .font(.caption2.monospaced())
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            Text("vineyard_id: \(d.localVineyardId.uuidString)")
+                .font(.caption2.monospaced())
+                .foregroundStyle(.secondary)
+            if let p = d.paddockId {
+                Text("paddock: \(d.paddockName ?? "—") (\(p.uuidString))")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("paddock: (none)")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.orange)
+            }
+            if let code = d.growthStageCode, !code.isEmpty {
+                Text("growth_stage: \(code)")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+            Text("created: \(d.createdAt.formatted(date: .abbreviated, time: .shortened)) by \(d.createdBy ?? "—")")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 2)
+    }
+
+    @ViewBuilder
+    private func remotePinDetailRow(_ d: PinSyncService.RemotePinDetail) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Text(d.title.isEmpty ? "(no title)" : d.title)
+                    .font(.caption.weight(.semibold))
+                if let mode = d.mode {
+                    Text(mode).font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            Text("pin_id: \(d.id.uuidString)")
+                .font(.caption2.monospaced())
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            if let del = d.deletedAt {
+                Text("deleted_at: \(del.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+            }
+            if let p = d.paddockId {
+                Text("paddock_id: \(p.uuidString)")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func runPinSyncAudit() async {
+        guard !isAuditingPinSync, let vineyardId = store.selectedVineyardId else { return }
+        isAuditingPinSync = true
+        defer { isAuditingPinSync = false }
+        let result = await pinSync.auditPinSync(vineyardId: vineyardId)
+        lastPinSyncAudit = result
     }
 
     @ViewBuilder
@@ -786,6 +946,49 @@ struct SyncDiagnosticsView: View {
                         lines.append("      - \(functionDisplayName(key)): \(sign)\(diff)")
                     }
                 }
+            }
+        }
+        if let audit = lastPinSyncAudit {
+            let df2 = df
+            lines.append("")
+            lines.append("Pin Sync Audit (selected vineyard)")
+            if let at = audit.ranAt {
+                lines.append("  ran_at: \(df2.string(from: at))")
+            }
+            lines.append("  local_for_vineyard: \(audit.localForVineyard)")
+            lines.append("  local_across_all_vineyards: \(audit.localAcrossAllVineyards)")
+            lines.append("  remote_for_vineyard: \(audit.remoteForVineyard)")
+            lines.append("  remote_active: \(audit.remoteActive)")
+            lines.append("  remote_soft_deleted: \(audit.remoteSoftDeleted)")
+            lines.append("  local_only: \(audit.localOnlyIds.count)")
+            lines.append("  remote_only: \(audit.remoteOnlyIds.count)")
+            lines.append("  local_vineyard_mismatch: \(audit.localVineyardMismatch.count)")
+            lines.append("  pending_upserts: \(audit.pendingUpsertIds.count)")
+            lines.append("  pending_deletes: \(audit.pendingDeleteIds.count)")
+            for d in audit.localOnlyDetails {
+                let paddockIdStr = d.paddockId?.uuidString ?? "(none)"
+                let paddockName = d.paddockName ?? "—"
+                let createdByStr = d.createdBy ?? "—"
+                let createdByUser = d.createdByUserId?.uuidString ?? "(none)"
+                lines.append("    - LOCAL_ONLY \(d.id.uuidString) \"\(d.title)\" mode=\(d.mode) completed=\(d.isCompleted) created=\(df2.string(from: d.createdAt))")
+                lines.append("        vineyard_id: \(d.localVineyardId.uuidString)")
+                lines.append("        paddock_id: \(paddockIdStr)")
+                lines.append("        paddock_name: \(paddockName)")
+                lines.append("        created_by: \(createdByStr) user_id=\(createdByUser)")
+                lines.append("        pending_upsert: \(d.isPendingUpsert) pending_delete: \(d.isPendingDelete)")
+                if let code = d.growthStageCode, !code.isEmpty {
+                    lines.append("        growth_stage_code: \(code)")
+                }
+            }
+            for d in audit.orphanLocalDetails {
+                lines.append("    - ORPHAN \(d.id.uuidString) \"\(d.title)\" mode=\(d.mode) vineyard=\(d.localVineyardId.uuidString)")
+            }
+            for d in audit.remoteSoftDeletedDetails {
+                let when = d.deletedAt.map { df2.string(from: $0) } ?? "-"
+                lines.append("    - SOFT_DELETED \(d.id.uuidString) \"\(d.title)\" deleted_at=\(when)")
+            }
+            if let err = audit.error, !err.isEmpty {
+                lines.append("  error: \(err)")
             }
         }
         if auditService.lastResult.scanned > 0 || auditService.lastResult.ranAt != nil {

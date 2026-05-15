@@ -16,6 +16,58 @@ final class PinSyncService {
         case failure(String)
     }
 
+    nonisolated struct LocalPinDetail: Sendable, Identifiable {
+        var id: UUID
+        var title: String
+        var mode: String
+        var category: String?
+        var growthStageCode: String?
+        var localVineyardId: UUID
+        var paddockId: UUID?
+        var paddockName: String?
+        var isCompleted: Bool
+        var createdAt: Date
+        var createdBy: String?
+        var createdByUserId: UUID?
+        var hasPhotoPath: Bool
+        var hasLocalPhotoBytes: Bool
+        var isPendingUpsert: Bool
+        var isPendingDelete: Bool
+    }
+
+    nonisolated struct RemotePinDetail: Sendable, Identifiable {
+        var id: UUID
+        var title: String
+        var mode: String?
+        var vineyardId: UUID
+        var paddockId: UUID?
+        var isCompleted: Bool
+        var deletedAt: Date?
+        var createdAt: Date?
+        var updatedAt: Date?
+        var createdBy: UUID?
+    }
+
+    nonisolated struct AuditResult: Sendable {
+        var ranAt: Date?
+        var localAcrossAllVineyards: Int = 0
+        var localForVineyard: Int = 0
+        var remoteForVineyard: Int = 0
+        var remoteActive: Int = 0
+        var remoteSoftDeleted: Int = 0
+        var localOnlyIds: [UUID] = []
+        var remoteOnlyIds: [UUID] = []
+        var localVineyardMismatch: [UUID] = []
+        var localOnlyDetails: [LocalPinDetail] = []
+        var orphanLocalDetails: [LocalPinDetail] = []
+        var remoteSoftDeletedDetails: [RemotePinDetail] = []
+        var pendingUpsertIds: [UUID] = []
+        var pendingDeleteIds: [UUID] = []
+        var error: String?
+    }
+
+    var lastAuditResult: AuditResult = AuditResult()
+
     var syncStatus: Status = .idle
     var lastSyncDate: Date?
     var errorMessage: String?
@@ -85,6 +137,116 @@ final class PinSyncService {
     }
 
     // MARK: - Public sync entry points
+
+    /// Compare local pins against Supabase for the selected vineyard so the
+    /// user can see whether locally-visible pins have reached the backend.
+    /// Read-only — does not push, pull or repair.
+    func auditPinSync(vineyardId: UUID) async -> AuditResult {
+        var result = AuditResult()
+        result.ranAt = Date()
+        guard let store else { return result }
+        guard SupabaseClientProvider.shared.isConfigured else {
+            result.error = "Supabase not configured"
+            lastAuditResult = result
+            return result
+        }
+
+        let allLocal = store.pinRepo.loadAll()
+        result.localAcrossAllVineyards = allLocal.count
+        let localForVineyard = allLocal.filter { $0.vineyardId == vineyardId }
+        result.localForVineyard = localForVineyard.count
+        result.localVineyardMismatch = allLocal
+            .filter { $0.vineyardId != vineyardId }
+            .map { $0.id }
+        let pendingUpsertIds = Array(metadata.pendingUpserts.keys)
+        let pendingDeleteIds = Array(metadata.pendingDeletes.keys)
+        result.pendingUpsertIds = pendingUpsertIds
+        result.pendingDeleteIds = pendingDeleteIds
+        let pendingUpsertSet = Set(pendingUpsertIds)
+        let pendingDeleteSet = Set(pendingDeleteIds)
+
+        let paddockNames = Dictionary(
+            store.paddocks.map { ($0.id, $0.name) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        func detail(for pin: VinePin) -> LocalPinDetail {
+            LocalPinDetail(
+                id: pin.id,
+                title: pin.buttonName,
+                mode: pin.mode.rawValue,
+                category: nil,
+                growthStageCode: pin.growthStageCode,
+                localVineyardId: pin.vineyardId,
+                paddockId: pin.paddockId,
+                paddockName: pin.paddockId.flatMap { paddockNames[$0] },
+                isCompleted: pin.isCompleted,
+                createdAt: pin.timestamp,
+                createdBy: pin.createdBy,
+                createdByUserId: pin.createdByUserId,
+                hasPhotoPath: pin.photoPath != nil,
+                hasLocalPhotoBytes: pin.photoData != nil,
+                isPendingUpsert: pendingUpsertSet.contains(pin.id),
+                isPendingDelete: pendingDeleteSet.contains(pin.id)
+            )
+        }
+
+        // Orphans: local pins assigned to a different vineyard.
+        result.orphanLocalDetails = allLocal
+            .filter { $0.vineyardId != vineyardId }
+            .sorted { $0.timestamp > $1.timestamp }
+            .prefix(50)
+            .map { detail(for: $0) }
+
+        do {
+            let remote = try await repository.fetchAllPins(vineyardId: vineyardId)
+            result.remoteForVineyard = remote.count
+            let active = remote.filter { $0.deletedAt == nil }
+            result.remoteActive = active.count
+            result.remoteSoftDeleted = remote.count - active.count
+            let activeIds = Set(active.map { $0.id })
+            let remoteAllIds = Set(remote.map { $0.id })
+            let localIds = Set(localForVineyard.map { $0.id })
+
+            let localOnly = localForVineyard.filter { !activeIds.contains($0.id) }
+            result.localOnlyIds = localOnly.map { $0.id }
+            result.localOnlyDetails = localOnly
+                .sorted { $0.timestamp > $1.timestamp }
+                .prefix(50)
+                .map { detail(for: $0) }
+
+            result.remoteOnlyIds = active
+                .filter { !localIds.contains($0.id) }
+                .map { $0.id }
+
+            // Remote rows that are soft-deleted server-side (and may be
+            // why Lovable does not show them).
+            let softDeleted = remote.filter { $0.deletedAt != nil }
+            result.remoteSoftDeletedDetails = softDeleted
+                .sorted { ($0.deletedAt ?? .distantPast) > ($1.deletedAt ?? .distantPast) }
+                .prefix(50)
+                .map { backendPin in
+                    RemotePinDetail(
+                        id: backendPin.id,
+                        title: backendPin.buttonName ?? backendPin.title ?? "",
+                        mode: backendPin.mode,
+                        vineyardId: backendPin.vineyardId,
+                        paddockId: backendPin.paddockId,
+                        isCompleted: backendPin.isCompleted,
+                        deletedAt: backendPin.deletedAt,
+                        createdAt: backendPin.createdAt,
+                        updatedAt: backendPin.updatedAt,
+                        createdBy: backendPin.createdBy
+                    )
+                }
+            _ = remoteAllIds
+        } catch {
+            result.error = error.localizedDescription
+        }
+
+        lastAuditResult = result
+        return result
+    }
 
     func syncPinsForSelectedVineyard() async {
         guard let store, let auth, auth.isSignedIn,
