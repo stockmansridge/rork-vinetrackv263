@@ -5,6 +5,7 @@ struct NewBackendRootView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(SubscriptionService.self) private var subscription
     @Environment(BiometricAuthService.self) private var biometric
+    @Environment(SystemAdminService.self) private var systemAdmin
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var didAttemptRestore: Bool = false
@@ -97,6 +98,9 @@ struct NewBackendRootView: View {
         .task(id: auth.isSignedIn) {
             if auth.isSignedIn {
                 await auth.loadPendingInvitations()
+                await systemAdmin.refresh()
+            } else {
+                systemAdmin.clearOnSignOut()
             }
         }
         .onChange(of: scenePhase) { _, newPhase in

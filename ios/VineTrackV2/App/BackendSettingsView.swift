@@ -11,6 +11,7 @@ struct BackendSettingsView: View {
     @Environment(TripSyncService.self) private var tripSync
     @Environment(SprayRecordSyncService.self) private var sprayRecordSync
     @Environment(ButtonConfigSyncService.self) private var buttonConfigSync
+    @Environment(SystemAdminService.self) private var systemAdmin
 
     @State private var showVineyardSwitcher: Bool = false
     @State private var showVineyardDetail: Bool = false
