@@ -714,6 +714,29 @@ struct EditPaddockSheet: View {
         varietyAllocations.reduce(0) { $0 + $1.percent }
     }
 
+    #if DEBUG
+    @ViewBuilder
+    private func varietyDiagnostics(
+        allocation: PaddockVarietyAllocation,
+        resolved: PaddockVarietyResolver.Resolved
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("DIAG paddock=\(paddock?.id.uuidString.prefix(8) ?? "new")")
+            Text("alloc.id=\(allocation.id.uuidString.prefix(8))")
+            Text("alloc.varietyId=\(allocation.varietyId.uuidString.prefix(8))")
+            Text("alloc.name=\(allocation.name ?? "<nil>")")
+            Text("resolved.name=\(resolved.displayName ?? "<nil>") via \(resolved.reason)")
+            Text("master count=\(store.grapeVarieties.count)")
+            if let v = resolved.varietyId.flatMap({ id in store.grapeVarieties.first(where: { $0.id == id }) }) {
+                Text("matched master id=\(v.id.uuidString.prefix(8)) name=\(v.name) key=\(v.key ?? "<nil>")")
+            }
+        }
+        .font(.system(size: 10, design: .monospaced))
+        .foregroundStyle(.secondary)
+        .padding(.top, 2)
+    }
+    #endif
+
     private var varietiesSection: some View {
         Section {
             ForEach(varietyAllocations) { allocation in
@@ -761,6 +784,9 @@ struct EditPaddockSheet: View {
                     if let paddock {
                         BlockRipenessChip(paddockId: paddock.id, varietyId: allocation.varietyId)
                     }
+                    #if DEBUG
+                    varietyDiagnostics(allocation: allocation, resolved: resolved)
+                    #endif
                 }
             }
 

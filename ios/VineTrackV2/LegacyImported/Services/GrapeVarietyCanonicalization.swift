@@ -31,6 +31,12 @@ enum GrapeVarietyCanonicalization {
     static func run(store: MigratedDataStore) {
         guard let vineyardId = store.selectedVineyardId else { return }
 
+        #if DEBUG
+        let startVarieties = store.grapeVarieties.filter { $0.vineyardId == vineyardId }.count
+        let startPaddocks = store.paddocks.filter { $0.vineyardId == vineyardId }.count
+        print("[GrapeVarietyCanonicalization] start vineyard=\(vineyardId.uuidString.prefix(8)) varieties=\(startVarieties) paddocks=\(startPaddocks)")
+        #endif
+
         var idRemap: [UUID: UUID] = [:]
         var varieties = store.grapeVarieties
 
@@ -161,6 +167,10 @@ enum GrapeVarietyCanonicalization {
         if paddocksChanged {
             store.persistPaddocksAfterRepair()
         }
+
+        #if DEBUG
+        print("[GrapeVarietyCanonicalization] done varietiesChanged=\(varietiesChanged) paddocksChanged=\(paddocksChanged) idRemap=\(idRemap.count)")
+        #endif
     }
 }
 

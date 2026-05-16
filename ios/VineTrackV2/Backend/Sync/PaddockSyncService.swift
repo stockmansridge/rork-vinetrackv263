@@ -46,6 +46,22 @@ final class PaddockSyncService {
             self.needsForceRepushMigration = true
             UserDefaults.standard.set(true, forKey: migrationKey)
         }
+
+        // One-time follow-up: after the server-side grape variety
+        // canonicalisation/repair (SQL 067/068/069/070), iOS devices may
+        // still hold pre-repair paddock allocations cached locally with
+        // stale `varietyId`s and missing `name` snapshots. Reset lastSync
+        // once so the next sync pulls the repaired `variety_allocations`
+        // JSON for every vineyard, even when the local `updated_at` is
+        // already past the server's repaired timestamps.
+        let varietyRepullKey = "vinetrack_paddock_sync_variety_repull_v1"
+        if !UserDefaults.standard.bool(forKey: varietyRepullKey) {
+            self.metadata.resetAllLastSync()
+            UserDefaults.standard.set(true, forKey: varietyRepullKey)
+            #if DEBUG
+            print("[PaddockSync] variety-repair re-pull migration: cleared lastSync to force a fresh paddock pull")
+            #endif
+        }
     }
 
     // MARK: - Configuration
@@ -205,6 +221,15 @@ final class PaddockSyncService {
 
         for backendPaddock in remote {
             applyRemote(backendPaddock, vineyardId: vineyardId, store: store)
+        }
+
+        // After a pull, re-run the local grape variety canonicalisation
+        // pass. Pulled paddocks may carry repaired `variety_allocations`
+        // from the server (deterministic ids + backfilled names) which
+        // the local master variety list also needs to converge on, and
+        // any stale local allocations get repaired by id/name match.
+        if !remote.isEmpty {
+            GrapeVarietyCanonicalization.run(store: store)
         }
     }
 

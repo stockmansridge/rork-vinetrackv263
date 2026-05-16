@@ -68,6 +68,28 @@ nonisolated enum PaddockVarietyResolver {
                     reason: "name-match"
                 )
             }
+            // Try the built-in catalog (alias-aware). Covers cases like a
+            // saved "Pinot Gris" snapshot when the master list happens to
+            // be missing or stored under "Pinot Gris / Grigio".
+            if let entry = BuiltInGrapeVarietyCatalog.entry(matching: raw) {
+                if let v = varieties.first(where: {
+                    $0.key == entry.key
+                        || canonical($0.name) == canonical(entry.name)
+                }) {
+                    return Resolved(
+                        varietyId: v.id,
+                        displayName: v.name,
+                        isResolved: true,
+                        reason: "catalog-alias-match"
+                    )
+                }
+                return Resolved(
+                    varietyId: nil,
+                    displayName: entry.name,
+                    isResolved: true,
+                    reason: "catalog-alias-name-only"
+                )
+            }
             // Name supplied but no managed variety to match — still useful.
             return Resolved(
                 varietyId: nil,
