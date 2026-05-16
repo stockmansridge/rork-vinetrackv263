@@ -8,6 +8,9 @@ struct VineyardDetailsView: View {
     @Environment(BackendAccessControl.self) private var accessControl
 
     @State private var selectedPaddock: Paddock? = nil
+    @State private var soilProfilesByPaddockId: [UUID: BackendSoilProfile] = [:]
+
+    private let soilProfileRepository: any SoilProfileRepositoryProtocol = SupabaseSoilProfileRepository()
 
     private var vineyard: Vineyard? { store.selectedVineyard }
     private var paddocks: [Paddock] { store.orderedPaddocks }
@@ -63,6 +66,28 @@ struct VineyardDetailsView: View {
             BlockDetailSheet(paddock: paddock)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
+        }
+        .task(id: vineyard?.id) {
+            await loadSoilProfiles()
+        }
+    }
+
+    private func loadSoilProfiles() async {
+        guard let vid = vineyard?.id else {
+            soilProfilesByPaddockId = [:]
+            return
+        }
+        do {
+            let rows = try await soilProfileRepository.listVineyardSoilProfiles(vineyardId: vid)
+            var map: [UUID: BackendSoilProfile] = [:]
+            for row in rows {
+                if let pid = row.paddockId {
+                    map[pid] = row
+                }
+            }
+            soilProfilesByPaddockId = map
+        } catch {
+            soilProfilesByPaddockId = [:]
         }
     }
 
@@ -142,7 +167,7 @@ struct VineyardDetailsView: View {
                     Button {
                         selectedPaddock = paddock
                     } label: {
-                        BlockInfoCard(paddock: paddock)
+                        BlockInfoCard(paddock: paddock, soilProfile: soilProfilesByPaddockId[paddock.id])
                     }
                     .buttonStyle(.plain)
                 }
@@ -453,9 +478,26 @@ private struct FullScreenBlocksMap: View {
 
 private struct BlockInfoCard: View {
     let paddock: Paddock
+    let soilProfile: BackendSoilProfile?
 
     private var rowNumbers: [Int] {
         paddock.rows.map { $0.number }.sorted()
+    }
+
+    private var soilTypeLabel: String? {
+        if let texture = soilProfile?.soilTextureClass, !texture.isEmpty {
+            return texture
+        }
+        if let typed = soilProfile?.typedSoilClass, typed != .unknown {
+            return typed.fallbackLabel
+        }
+        if let asc = soilProfile?.australianSoilClassification, !asc.isEmpty {
+            return asc
+        }
+        if let landscape = soilProfile?.soilLandscape, !landscape.isEmpty {
+            return landscape
+        }
+        return nil
     }
 
     var body: some View {
@@ -506,6 +548,21 @@ private struct BlockInfoCard: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+            }
+
+            HStack(spacing: 6) {
+                Image(systemName: "square.stack.3d.down.right.fill")
+                    .font(.caption2)
+                    .foregroundStyle(VineyardTheme.earthBrown)
+                Text("Soil Type")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 4)
+                Text(soilTypeLabel ?? "Not set")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(soilTypeLabel == nil ? .secondary : .primary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
         }
         .padding(14)
