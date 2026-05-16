@@ -91,6 +91,9 @@ struct EditGrapeVarietySheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var name: String = ""
     @State private var optimalGDDText: String = "1400"
+    @State private var isSaving: Bool = false
+    @State private var saveError: String?
+    private let catalogRepository = SupabaseGrapeVarietyCatalogRepository()
 
     private var isEditing: Bool { variety != nil }
 
@@ -129,10 +132,9 @@ struct EditGrapeVarietySheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        save()
-                        dismiss()
+                        Task { await save() }
                     }
-                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || isSaving)
                 }
             }
             .onAppear {
@@ -141,19 +143,96 @@ struct EditGrapeVarietySheet: View {
                     optimalGDDText = "\(Int(variety.optimalGDD))"
                 }
             }
+            .overlay(alignment: .bottom) {
+                if let saveError {
+                    Text(saveError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(.regularMaterial, in: Capsule())
+                        .padding(.bottom, 12)
+                }
+            }
         }
     }
 
-    private func save() {
+    private func save() async {
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
         let gdd = Double(optimalGDDText) ?? 1400
+        isSaving = true
+        defer { isSaving = false }
+        saveError = nil
+
         if var existing = variety {
             existing.name = trimmedName
             existing.optimalGDD = gdd
             store.updateGrapeVariety(existing)
-        } else {
+            // Best-effort: mirror the rename / GDD override to the shared
+            // vineyard_grape_varieties table so other clients see it.
+            if let vid = store.selectedVineyardId {
+                let key: String? = existing.key
+                _ = try? await catalogRepository.upsertVineyardVariety(
+                    vineyardId: vid,
+                    key: key,
+                    displayName: trimmedName,
+                    optimalGDDOverride: existing.isBuiltIn ? nil : gdd,
+                    isActive: true
+                )
+            }
+            dismiss()
+            return
+        }
+
+        // New variety. If the name matches a built-in catalog entry, the
+        // local add helper will stamp the catalog key + deterministic id.
+        // Otherwise we route through `upsert_vineyard_grape_variety` so the
+        // server mints a stable `custom:<vineyardId>:<slug>` key — this is
+        // what keeps custom varieties resolvable across devices.
+        let catalogEntry = BuiltInGrapeVarietyCatalog.entry(matching: trimmedName)
+        if catalogEntry != nil {
             let new = GrapeVariety(name: trimmedName, optimalGDD: gdd)
             store.addGrapeVariety(new)
+            dismiss()
+            return
+        }
+
+        guard let vid = store.selectedVineyardId else {
+            // No vineyard selected — fall back to local-only add.
+            let new = GrapeVariety(name: trimmedName, optimalGDD: gdd)
+            store.addGrapeVariety(new)
+            dismiss()
+            return
+        }
+
+        do {
+            let row = try await catalogRepository.upsertVineyardVariety(
+                vineyardId: vid,
+                key: nil,
+                displayName: trimmedName,
+                optimalGDDOverride: gdd,
+                isActive: true
+            )
+            // Mirror the server row locally with the stable key so the
+            // resolver can use it.
+            let new = GrapeVariety(
+                vineyardId: vid,
+                name: row.displayName,
+                optimalGDD: row.optimalGDDOverride ?? gdd,
+                isBuiltIn: false,
+                key: row.varietyKey
+            )
+            store.addGrapeVariety(new)
+            dismiss()
+        } catch {
+            // Offline / RPC missing — degrade gracefully to a local add so
+            // the user can keep working. The next sync/repair pass will
+            // reconcile the key.
+            let new = GrapeVariety(name: trimmedName, optimalGDD: gdd)
+            store.addGrapeVariety(new)
+            saveError = "Saved locally; couldn't reach catalogue server."
+            try? await Task.sleep(for: .seconds(1))
+            dismiss()
         }
     }
 }

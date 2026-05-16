@@ -93,12 +93,19 @@ struct NewBackendRootView: View {
         .task(id: store.selectedVineyardId) {
             if store.selectedVineyardId != nil {
                 DefaultDataSeeder.seedIfNeeded(store: store)
+                // Refresh shared grape-variety catalogue when a vineyard is
+                // selected so pickers and resolvers can use Supabase as the
+                // source of truth. Falls back to the cached/built-in copy.
+                await SharedGrapeVarietyCatalogCache.shared.refresh()
             }
         }
         .task(id: auth.isSignedIn) {
             if auth.isSignedIn {
                 await auth.loadPendingInvitations()
                 await systemAdmin.refresh()
+                // Warm the shared grape-variety catalogue right after sign-in
+                // so the cache is ready before any block screen renders.
+                await SharedGrapeVarietyCatalogCache.shared.refresh()
             } else {
                 systemAdmin.clearOnSignOut()
             }

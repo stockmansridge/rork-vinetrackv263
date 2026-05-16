@@ -854,7 +854,22 @@ struct EditPaddockSheet: View {
                     Button {
                         let remaining = max(0, 100 - totalVarietyPercent)
                         let suggested = varietyAllocations.isEmpty ? 100.0 : remaining
-                        varietyAllocations.append(PaddockVarietyAllocation(varietyId: variety.id, percent: suggested))
+                        // Always stamp a stable key + name snapshot so the
+                        // allocation stays resolvable across devices, app
+                        // resets, and id drift. Prefer the stored key, fall
+                        // back to alias-folded catalog key via the resolver.
+                        let stableKey: String? = {
+                            if let k = variety.key, !k.isEmpty { return k }
+                            return BuiltInGrapeVarietyCatalog.entry(matching: variety.name)?.key
+                        }()
+                        varietyAllocations.append(
+                            PaddockVarietyAllocation(
+                                varietyId: variety.id,
+                                percent: suggested,
+                                name: variety.name,
+                                varietyKey: stableKey
+                            )
+                        )
                         showAddVariety = false
                     } label: {
                         HStack {

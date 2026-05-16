@@ -37,6 +37,9 @@ struct SyncDiagnosticsView: View {
     @State private var lastRepushNamesAt: Date?
     @State private var isAuditingPinSync: Bool = false
     @State private var lastPinSyncAudit: PinSyncService.AuditResult?
+    @State private var isRefreshingCatalog: Bool = false
+    @State private var lastCatalogRefreshCount: Int?
+    @State private var lastCatalogRefreshAt: Date?
 
     var body: some View {
         Form {
@@ -44,6 +47,7 @@ struct SyncDiagnosticsView: View {
             entitiesSection
             actionsSection
             paddockForceRefreshSection
+            grapeVarietyCatalogSection
             if systemAdmin.isEnabled(SystemFeatureFlagKey.showPinDiagnostics) {
                 pinAuditSection
             }
@@ -158,6 +162,51 @@ struct SyncDiagnosticsView: View {
         } footer: {
             Text("Pulls every paddock for the selected vineyard from Supabase and overwrites the local cache, ignoring the local sync watermark. Use this after a server-side repair (e.g. grape variety canonicalisation) when local paddocks still show stale data such as `Unknown` varieties. Local changes that were already pushed are unaffected; unpushed local edits to those paddocks will be replaced by the server row.")
         }
+    }
+
+    @ViewBuilder
+    private var grapeVarietyCatalogSection: some View {
+        Section {
+            Button {
+                Task { await refreshSharedCatalog() }
+            } label: {
+                HStack {
+                    Label(
+                        isRefreshingCatalog ? "Refreshing catalogue\u{2026}" : "Refresh shared grape variety catalogue",
+                        systemImage: "leaf.arrow.circlepath"
+                    )
+                    Spacer()
+                    if isRefreshingCatalog { ProgressView() }
+                }
+            }
+            .disabled(isRefreshingCatalog || !auth.isSignedIn)
+
+            if let count = lastCatalogRefreshCount {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Entries: \(count)")
+                        .font(.caption.monospacedDigit())
+                    if let at = lastCatalogRefreshAt {
+                        Text("Ran: \(at.formatted(date: .abbreviated, time: .shortened))")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+        } header: {
+            Text("Grape Variety Catalogue")
+        } footer: {
+            Text("Pulls the shared Supabase grape variety catalogue (built-ins + aliases) and caches it locally for offline use. Run this after the catalogue is updated server-side so pickers and resolvers (Pinot Gris / Grigio etc.) reflect the latest data without waiting for the next launch.")
+        }
+    }
+
+    private func refreshSharedCatalog() async {
+        guard !isRefreshingCatalog else { return }
+        isRefreshingCatalog = true
+        defer { isRefreshingCatalog = false }
+        let entries = await SharedGrapeVarietyCatalogCache.shared.refresh()
+        lastCatalogRefreshCount = entries.count
+        lastCatalogRefreshAt = Date()
     }
 
     private func forceRepullPaddocks() async {
