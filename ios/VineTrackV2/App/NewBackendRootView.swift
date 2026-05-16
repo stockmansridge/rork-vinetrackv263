@@ -19,6 +19,7 @@ struct NewBackendRootView: View {
     @State private var didApplyDefaultVineyard: Bool = false
     @State private var isLoadingVineyards: Bool = false
     @State private var lastScenePhase: ScenePhase = .active
+    @State private var didEnterBackground: Bool = false
 
     private let disclaimerRepository: any DisclaimerRepositoryProtocol = SupabaseDisclaimerRepository(currentVersion: DisclaimerInfo.version)
     private let vineyardRepository: any VineyardRepositoryProtocol = SupabaseVineyardRepository()
@@ -112,11 +113,16 @@ struct NewBackendRootView: View {
             }
         }
         .onChange(of: scenePhase) { _, newPhase in
-            // Re-arm the biometric lock whenever the app returns from
-            // background/inactive so Face ID is required again on resume.
-            if newPhase == .active && auth.isSignedIn {
-                if lastScenePhase != .active {
+            // Re-arm the biometric lock only when returning from a true
+            // background state. The Face ID system prompt itself causes a
+            // brief `.inactive` phase; re-locking on `.inactive -> .active`
+            // would create an unlock loop.
+            if newPhase == .background {
+                didEnterBackground = true
+            } else if newPhase == .active && auth.isSignedIn {
+                if didEnterBackground {
                     biometric.lockIfEnabled()
+                    didEnterBackground = false
                 }
                 Task { await auth.loadPendingInvitations() }
             }
