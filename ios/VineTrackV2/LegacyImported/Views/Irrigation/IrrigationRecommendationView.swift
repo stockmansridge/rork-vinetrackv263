@@ -345,12 +345,17 @@ struct IrrigationRecommendationView: View {
         )
     }
 
+    private var soilAwareV2Enabled: Bool {
+        systemAdmin.isEnabled(SystemFeatureFlagKey.enableSoilAwareIrrigationV2)
+    }
+
     private var result: IrrigationRecommendationResult? {
         IrrigationCalculator.calculate(
             forecastDays: forecastDays,
             settings: settings,
             recentActualRainMm: recentActualRainOffsetMm,
-            soil: soilInputs
+            soil: soilInputs,
+            soilAwareV2Enabled: soilAwareV2Enabled
         )
     }
 
@@ -1486,9 +1491,102 @@ struct IrrigationRecommendationView: View {
                     .foregroundStyle(.secondary)
             }
 
+            if let v2 = result.v2 {
+                soilAwareV2Panel(v2)
+            }
+
             wholeVineyardWarningsView
         }
         .padding(.vertical, 6)
+    }
+
+    @ViewBuilder
+    private func soilAwareV2Panel(_ v2: SoilAwareV2Result) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "leaf.circle.fill")
+                    .foregroundStyle(VineyardTheme.leafGreen)
+                Text("Soil-aware recommendation")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text("v2")
+                    .font(.caption2.weight(.bold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(VineyardTheme.leafGreen.opacity(0.15), in: .capsule)
+                    .foregroundStyle(VineyardTheme.leafGreen)
+            }
+
+            HStack(spacing: 6) {
+                Image(systemName: urgencyIcon(v2.urgency))
+                    .foregroundStyle(urgencyColor(v2.urgency))
+                Text(v2.urgency.displayLabel)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(urgencyColor(v2.urgency))
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                if let raw = result?.readilyAvailableWaterMm, raw > 0 {
+                    Text(String(format: "RAW: %.0f mm", raw))
+                        .font(.caption).foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                if let rzc = result?.rootZoneCapacityMm, rzc > 0 {
+                    Text(String(format: "Root-zone capacity: %.0f mm", rzc))
+                        .font(.caption).foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                Text(String(format: "Base demand: %.1f mm", v2.baseGrossIrrigationMm))
+                    .font(.caption).foregroundStyle(.secondary)
+                    .monospacedDigit()
+                if v2.soilAdjusted {
+                    Text(String(format: "Soil-adjusted event: %.1f mm", v2.soilAdjustedGrossMm))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .monospacedDigit()
+                }
+                if v2.splitSuggested {
+                    Text("Split irrigation suggested (\(v2.splitCount) events)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.orange)
+                }
+            }
+
+            if let reason = v2.adjustmentReason {
+                Text(reason)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let caution = v2.cautionText {
+                Label(caution, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(VineyardTheme.leafGreen.opacity(0.08), in: .rect(cornerRadius: 10))
+    }
+
+    private func urgencyIcon(_ u: IrrigationUrgency) -> String {
+        switch u {
+        case .irrigateNow:     return "exclamationmark.circle.fill"
+        case .irrigateSoon:    return "clock.fill"
+        case .monitor:         return "eye.fill"
+        case .delayRainLikely: return "cloud.rain.fill"
+        }
+    }
+
+    private func urgencyColor(_ u: IrrigationUrgency) -> Color {
+        switch u {
+        case .irrigateNow:     return VineyardTheme.vineRed
+        case .irrigateSoon:    return .orange
+        case .monitor:         return .secondary
+        case .delayRainLikely: return .blue
+        }
     }
 
     private func summaryStat(_ label: String, _ value: String, info: InfoTerm? = nil) -> some View {

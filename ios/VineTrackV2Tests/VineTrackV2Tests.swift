@@ -167,4 +167,120 @@ struct VineTrackV2Tests {
         #expect(lower.first == 100.5)
         #expect(higher.first == 100.5)
     }
+
+    // MARK: - Soil-Aware Irrigation v2
+
+    private static func forecast(days: Int, etoPerDay: Double, rainPerDay: Double = 0) -> [ForecastDay] {
+        let base = Date(timeIntervalSince1970: 0)
+        return (0..<days).map { i in
+            ForecastDay(
+                date: Calendar.current.date(byAdding: .day, value: i, to: base) ?? base,
+                forecastEToMm: etoPerDay,
+                forecastRainMm: rainPerDay
+            )
+        }
+    }
+
+    private static func settings(rate: Double = 4.0) -> IrrigationSettings {
+        IrrigationSettings(
+            irrigationApplicationRateMmPerHour: rate,
+            cropCoefficientKc: 0.7,
+            irrigationEfficiencyPercent: 90,
+            rainfallEffectivenessPercent: 80,
+            replacementPercent: 100,
+            soilMoistureBufferMm: 0
+        )
+    }
+
+    /// Sandy soil with low AWC / shallow root depth → RAW cap + split suggested.
+    @Test func v2_sandySoil_capsAtRawAndSuggestsSplit() {
+        let soil = SoilProfileInputs(
+            irrigationSoilClass: "sand_loamy_sand",
+            availableWaterCapacityMmPerM: 70,
+            effectiveRootDepthM: 0.4,
+            managementAllowedDepletionPercent: 40,
+            modelVersion: "test"
+        )
+        let r = IrrigationCalculator.calculate(
+            forecastDays: Self.forecast(days: 7, etoPerDay: 8),
+            settings: Self.settings(),
+            soil: soil,
+            soilAwareV2Enabled: true
+        )
+        #expect(r != nil)
+        let v2 = r?.v2
+        #expect(v2 != nil)
+        #expect(v2?.splitSuggested == true)
+        // RAW = 70 * 0.4 * 0.4 = 11.2 mm — adjusted event should equal that.
+        if let adj = v2?.soilAdjustedGrossMm, let base = v2?.baseGrossIrrigationMm {
+            #expect(adj < base)
+            #expect(abs(adj - 11.2) < 0.5)
+        }
+    }
+
+    /// Heavy clay + heavy forecast rain → delay urgency + caution.
+    @Test func v2_clayWithForecastRain_delays() {
+        let soil = SoilProfileInputs(
+            irrigationSoilClass: "clay_heavy_clay",
+            availableWaterCapacityMmPerM: 180,
+            effectiveRootDepthM: 0.8,
+            managementAllowedDepletionPercent: 50,
+            modelVersion: "test"
+        )
+        let r = IrrigationCalculator.calculate(
+            forecastDays: Self.forecast(days: 5, etoPerDay: 6, rainPerDay: 4),
+            settings: Self.settings(),
+            soil: soil,
+            soilAwareV2Enabled: true
+        )
+        #expect(r?.v2?.urgency == .delayRainLikely)
+        #expect(r?.v2?.cautionText != nil)
+        #expect(r?.v2?.splitSuggested == false)
+    }
+
+    /// Deep loam with good RAW → close to base recommendation, no split.
+    @Test func v2_deepLoam_matchesBaseRecommendation() {
+        let soil = SoilProfileInputs(
+            irrigationSoilClass: "loam",
+            availableWaterCapacityMmPerM: 150,
+            effectiveRootDepthM: 1.0,
+            managementAllowedDepletionPercent: 50,
+            modelVersion: "test"
+        )
+        let r = IrrigationCalculator.calculate(
+            forecastDays: Self.forecast(days: 7, etoPerDay: 7),
+            settings: Self.settings(),
+            soil: soil,
+            soilAwareV2Enabled: true
+        )
+        let v2 = r?.v2
+        #expect(v2?.splitSuggested == false)
+        if let adj = v2?.soilAdjustedGrossMm, let base = v2?.baseGrossIrrigationMm {
+            #expect(abs(adj - base) < 0.5)
+        }
+    }
+
+    /// Missing soil profile → v2 still produces a result with a caution.
+    @Test func v2_missingSoil_fallsBackWithWarning() {
+        let r = IrrigationCalculator.calculate(
+            forecastDays: Self.forecast(days: 5, etoPerDay: 6),
+            settings: Self.settings(),
+            soil: .empty,
+            soilAwareV2Enabled: true
+        )
+        #expect(r?.v2 != nil)
+        #expect(r?.v2?.cautionText != nil)
+        #expect(r?.v2?.splitSuggested == false)
+    }
+
+    /// v2 flag OFF → v1-only result (no v2 payload).
+    @Test func v2_flagOff_returnsNilV2() {
+        let r = IrrigationCalculator.calculate(
+            forecastDays: Self.forecast(days: 5, etoPerDay: 6),
+            settings: Self.settings(),
+            soil: .empty,
+            soilAwareV2Enabled: false
+        )
+        #expect(r?.v2 == nil)
+    }
 }

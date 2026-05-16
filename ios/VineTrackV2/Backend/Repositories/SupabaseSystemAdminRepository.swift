@@ -27,6 +27,11 @@ nonisolated enum SystemFeatureFlagKey {
     /// Show the irrigation rate resolver diagnostics section inside the
     /// Irrigation Advisor. Gated to system admins only.
     static let showIrrigationDiagnostics = "show_irrigation_diagnostics"
+    /// Enable the Soil-Aware Irrigation v2 recommendation model (RAW caps,
+    /// split-event suggestions, urgency tiers, heavy-clay/sandy/shallow
+    /// cautions). When OFF, v1 descriptive-only soil advice is used so
+    /// admins can compare side-by-side before rolling it out as default.
+    static let enableSoilAwareIrrigationV2 = "enable_soil_aware_irrigation_v2"
 }
 
 nonisolated struct SystemFeatureFlag: Identifiable, Sendable, Hashable {

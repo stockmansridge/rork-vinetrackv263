@@ -97,6 +97,50 @@ nonisolated enum IrrigationSoilAdvice: String, Sendable, Hashable {
     case generic
 }
 
+/// Soil-Aware Irrigation v2 urgency tier — derived from forecast deficit
+/// relative to RAW / root-zone capacity, plus forecast rain.
+nonisolated enum IrrigationUrgency: String, Sendable, Hashable {
+    case irrigateNow
+    case irrigateSoon
+    case monitor
+    case delayRainLikely
+
+    var displayLabel: String {
+        switch self {
+        case .irrigateNow:      return "Irrigate now"
+        case .irrigateSoon:     return "Irrigate soon"
+        case .monitor:          return "Monitor"
+        case .delayRainLikely:  return "Delay — rain likely"
+        }
+    }
+}
+
+/// Soil-Aware Irrigation v2 outputs. All optional so v1 callers ignore
+/// them transparently.
+nonisolated struct SoilAwareV2Result: Sendable, Hashable {
+    /// Base replacement demand (gross mm) before any soil adjustment —
+    /// matches what v1 would have recommended.
+    let baseGrossIrrigationMm: Double
+    /// Soil-adjusted single-event recommendation (gross mm). May be
+    /// capped at RAW for sandy/shallow soils.
+    let soilAdjustedGrossMm: Double
+    /// Estimated urgency tier.
+    let urgency: IrrigationUrgency
+    /// True when the soil adjustment differs materially from the base.
+    let soilAdjusted: Bool
+    /// True when splitting the irrigation into multiple smaller events
+    /// is recommended (typically when base demand > RAW on sandy/shallow).
+    let splitSuggested: Bool
+    /// Suggested number of split events (2 when split is suggested,
+    /// otherwise 1).
+    let splitCount: Int
+    /// Human-readable reason the soil adjusted the recommendation.
+    let adjustmentReason: String?
+    /// Optional caution shown alongside the recommendation (heavy clay
+    /// + forecast rain, drainage loss, etc.).
+    let cautionText: String?
+}
+
 nonisolated struct IrrigationRecommendationResult: Sendable, Hashable {
     let dailyBreakdown: [DailyIrrigationBreakdown]
     let forecastCropUseMm: Double
@@ -115,6 +159,8 @@ nonisolated struct IrrigationRecommendationResult: Sendable, Hashable {
     let readilyAvailableWaterMm: Double?
     let soilAdviceText: String?
     let soilCautionText: String?
+    /// Soil-aware v2 outputs. Nil when the v2 flag is OFF.
+    let v2: SoilAwareV2Result?
 }
 
 nonisolated enum IrrigationCalculator {
@@ -122,7 +168,8 @@ nonisolated enum IrrigationCalculator {
         forecastDays: [ForecastDay],
         settings: IrrigationSettings,
         recentActualRainMm: Double = 0,
-        soil: SoilProfileInputs = .empty
+        soil: SoilProfileInputs = .empty,
+        soilAwareV2Enabled: Bool = false
     ) -> IrrigationRecommendationResult? {
         guard !forecastDays.isEmpty else { return nil }
         guard settings.irrigationApplicationRateMmPerHour > 0 else { return nil }
@@ -174,6 +221,16 @@ nonisolated enum IrrigationCalculator {
         let adviceText = adviceCopy(for: advice, soil: soil, grossIrrigationMm: grossIrrigationMm)
         let cautionText = cautionCopy(for: advice, soil: soil, forecastDays: forecastDays)
 
+        let v2: SoilAwareV2Result? = soilAwareV2Enabled
+            ? computeV2(
+                advice: advice,
+                soil: soil,
+                forecastDays: forecastDays,
+                baseGrossMm: grossIrrigationMm,
+                adjustedNetDeficitMm: adjustedNetDeficitMm
+            )
+            : nil
+
         return IrrigationRecommendationResult(
             dailyBreakdown: breakdown,
             forecastCropUseMm: totalCropUse,
@@ -187,7 +244,118 @@ nonisolated enum IrrigationCalculator {
             rootZoneCapacityMm: soil.rootZoneCapacityMm,
             readilyAvailableWaterMm: soil.readilyAvailableWaterMm,
             soilAdviceText: adviceText,
-            soilCautionText: cautionText
+            soilCautionText: cautionText,
+            v2: v2
+        )
+    }
+
+    // MARK: - Soil-Aware v2
+
+    /// Soil-aware v2 logic: RAW-capped single events, split suggestions,
+    /// urgency tiers, and heavy-clay / sandy / shallow cautions. Kept
+    /// conservative on purpose — when soil data is missing we fall back
+    /// to base demand with `monitor` urgency.
+    private static func computeV2(
+        advice: IrrigationSoilAdvice?,
+        soil: SoilProfileInputs,
+        forecastDays: [ForecastDay],
+        baseGrossMm: Double,
+        adjustedNetDeficitMm: Double
+    ) -> SoilAwareV2Result {
+        let raw = soil.readilyAvailableWaterMm
+        let forecastRain = forecastDays.reduce(0) { $0 + $1.forecastRainMm }
+        let rzc = soil.rootZoneCapacityMm
+
+        // 1. RAW cap for sandy / shallow soils. Loam + clay are not capped
+        //    because their root zone can absorb a larger refilling event.
+        var soilAdjustedGrossMm = baseGrossMm
+        var splitSuggested = false
+        var adjustmentReason: String? = nil
+        let shouldCapAtRaw: Bool = {
+            switch advice {
+            case .sandyFrequent, .shallow: return true
+            default: return false
+            }
+        }()
+        if shouldCapAtRaw, let raw, raw > 0, baseGrossMm > raw {
+            soilAdjustedGrossMm = raw
+            splitSuggested = true
+            let descriptor = advice == .shallow ? "shallow soil" : "sandy soil"
+            adjustmentReason = String(
+                format: "RAW limit for %@: capping single event at %.0f mm. Split remainder into a follow-up irrigation.",
+                descriptor, raw
+            )
+        }
+
+        let splitCount = splitSuggested
+            ? max(2, Int((baseGrossMm / max(soilAdjustedGrossMm, 1)).rounded(.up)))
+            : 1
+
+        // 2. Urgency from depletion vs RAW.
+        //    With no RAW we fall back to a deficit-only heuristic.
+        let urgency: IrrigationUrgency = {
+            // Heavy clay + significant forecast rain → delay even if a
+            // deficit exists, to avoid waterlogging.
+            if advice == .clayCaution, forecastRain >= 10 {
+                return .delayRainLikely
+            }
+            // Forecast rain covers most of the deficit → monitor/delay.
+            if adjustedNetDeficitMm <= 0 { return .monitor }
+            if forecastRain >= adjustedNetDeficitMm * 1.5 {
+                return .delayRainLikely
+            }
+            if let raw, raw > 0 {
+                if adjustedNetDeficitMm >= raw { return .irrigateNow }
+                if adjustedNetDeficitMm >= raw * 0.7 { return .irrigateSoon }
+                return .monitor
+            }
+            if let rzc, rzc > 0 {
+                if adjustedNetDeficitMm >= rzc * 0.5 { return .irrigateNow }
+                if adjustedNetDeficitMm >= rzc * 0.3 { return .irrigateSoon }
+                return .monitor
+            }
+            // No soil data: use deficit heuristic.
+            if adjustedNetDeficitMm >= 20 { return .irrigateNow }
+            if adjustedNetDeficitMm >= 8  { return .irrigateSoon }
+            return .monitor
+        }()
+
+        // 3. Cautions.
+        var cautions: [String] = []
+        if advice == .clayCaution, forecastRain >= 10 {
+            cautions.append(String(
+                format: "Heavy clay soil with %.0f mm forecast rain — risk of waterlogging. Consider delaying or reducing irrigation.",
+                forecastRain
+            ))
+        }
+        if advice == .sandyFrequent, let raw, raw > 0, baseGrossMm > raw {
+            cautions.append(String(
+                format: "Applying more than ~%.0f mm at once on sandy soils may drain below the root zone.",
+                raw
+            ))
+        }
+        if advice == .shallow, let raw, raw > 0 {
+            cautions.append(String(
+                format: "Shallow root zone — keep individual events under ~%.0f mm to avoid runoff.",
+                raw
+            ))
+        }
+        if soil.availableWaterCapacityMmPerM == nil || soil.effectiveRootDepthM == nil {
+            cautions.append("Soil profile incomplete — soil-aware adjustments limited. Add AWC and effective root depth for a full v2 recommendation.")
+        }
+        let cautionText: String? = cautions.isEmpty ? nil : cautions.joined(separator: "\n")
+
+        let soilAdjusted = abs(soilAdjustedGrossMm - baseGrossMm) > 0.5
+
+        return SoilAwareV2Result(
+            baseGrossIrrigationMm: baseGrossMm,
+            soilAdjustedGrossMm: soilAdjustedGrossMm,
+            urgency: urgency,
+            soilAdjusted: soilAdjusted,
+            splitSuggested: splitSuggested,
+            splitCount: splitCount,
+            adjustmentReason: adjustmentReason,
+            cautionText: cautionText
         )
     }
 
