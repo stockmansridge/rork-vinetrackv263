@@ -759,6 +759,7 @@ struct SyncSettingsView: View {
                 }
                 .disabled(isSyncingMgmt(tractorSync.syncStatus))
                 VineyardSyncStatusRow(label: "tractors", state: mgmtStateFrom(tractorSync.syncStatus, lastSync: tractorSync.lastSyncDate))
+                TractorSyncDiagnosticsRows()
 
                 Button {
                     Task { await fuelPurchaseSync.syncForSelectedVineyard() }
@@ -1011,5 +1012,75 @@ struct SyncSettingsView: View {
         case .success: return .success(lastSync)
         case .failure(let m): return .failure(m)
         }
+    }
+}
+
+/// Compact diagnostics rows for the Tractor sync service. Shows the
+/// local active-tractor count for the selected vineyard, a fetched
+/// remote count, and the pending upsert/delete queue depth.
+private struct TractorSyncDiagnosticsRows: View {
+    @Environment(MigratedDataStore.self) private var store
+    @Environment(TractorSyncService.self) private var tractorSync
+    @State private var remoteCount: Int?
+    @State private var isFetching: Bool = false
+
+    var body: some View {
+        Group {
+            HStack {
+                Text("Local tractors")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(localCount)")
+                    .font(.footnote.monospacedDigit())
+            }
+            HStack {
+                Text("Remote tractors")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if isFetching {
+                    ProgressView()
+                } else if let remoteCount {
+                    Text("\(remoteCount)")
+                        .font(.footnote.monospacedDigit())
+                } else {
+                    Text("—")
+                        .font(.footnote.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                Button {
+                    Task { await refreshRemote() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.footnote)
+                }
+                .buttonStyle(.plain)
+                .disabled(isFetching || store.selectedVineyardId == nil)
+            }
+            HStack {
+                Text("Pending upload / delete")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(tractorSync.pendingUpsertCount) / \(tractorSync.pendingDeleteCount)")
+                    .font(.footnote.monospacedDigit())
+            }
+        }
+        .task(id: store.selectedVineyardId) {
+            await refreshRemote()
+        }
+    }
+
+    private var localCount: Int {
+        guard let vid = store.selectedVineyardId else { return 0 }
+        return store.tractors.filter { $0.vineyardId == vid }.count
+    }
+
+    private func refreshRemote() async {
+        guard !isFetching else { return }
+        isFetching = true
+        defer { isFetching = false }
+        remoteCount = await tractorSync.fetchRemoteCountForSelectedVineyard()
     }
 }

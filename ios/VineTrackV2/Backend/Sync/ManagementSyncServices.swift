@@ -502,6 +502,9 @@ final class TractorSyncService {
     var lastSyncDate: Date?
     var errorMessage: String?
 
+    var pendingUpsertCount: Int { metadata.pendingUpserts.count }
+    var pendingDeleteCount: Int { metadata.pendingDeletes.count }
+
     private weak var store: MigratedDataStore?
     private weak var auth: NewBackendAuthService?
     private let repository: any TractorSyncRepositoryProtocol
@@ -536,6 +539,19 @@ final class TractorSyncService {
         guard let store, let auth, auth.isSignedIn,
               let vineyardId = store.selectedVineyardId else { return }
         await sync(vineyardId: vineyardId)
+    }
+
+    /// Diagnostics helper: count remote tractor rows for the selected
+    /// vineyard (including soft-deleted) so the Sync panel can compare
+    /// local vs remote without changing the user-facing pull path.
+    func fetchRemoteCountForSelectedVineyard() async -> Int? {
+        guard let store, let vineyardId = store.selectedVineyardId else { return nil }
+        do {
+            let remote = try await repository.fetch(vineyardId: vineyardId, since: nil)
+            return remote.filter { $0.deletedAt == nil }.count
+        } catch {
+            return nil
+        }
     }
 
     func sync(vineyardId: UUID) async {
