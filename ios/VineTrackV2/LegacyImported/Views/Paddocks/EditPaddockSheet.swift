@@ -39,6 +39,10 @@ struct EditPaddockSheet: View {
     @State private var showAddVariety: Bool = false
     @State private var showBoundaryEditor: Bool = false
     @State private var showFullscreenRowConfig: Bool = false
+    @State private var varietySearch: String = ""
+    @State private var isAddingCustomVariety: Bool = false
+    @State private var customVarietyError: String?
+    private let catalogRepository = SupabaseGrapeVarietyCatalogRepository()
 
     // Soil profile state — loaded from Supabase paddock_soil_profiles.
     // Edited via the shared SoilProfileEditorSheet so writes go through
@@ -815,13 +819,11 @@ struct EditPaddockSheet: View {
                 }
             }
 
-            if !availableVarieties.isEmpty {
-                Button {
-                    showAddVariety = true
-                } label: {
-                    Label("Add Variety", systemImage: "plus.circle")
-                        .foregroundStyle(VineyardTheme.info)
-                }
+            Button {
+                showAddVariety = true
+            } label: {
+                Label("Add Variety", systemImage: "plus.circle")
+                    .foregroundStyle(VineyardTheme.info)
             }
         } header: {
             HStack(spacing: 6) {
@@ -846,55 +848,241 @@ struct EditPaddockSheet: View {
         }
     }
 
+    private var filteredAvailableVarieties: [GrapeVariety] {
+        let query = varietySearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return availableVarieties }
+        return availableVarieties.filter { v in
+            v.name.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    /// Built-in catalog entries that match the current search term but are
+    /// not already in the vineyard's master list (so the user can pull a
+    /// newly-shipped built-in into their picker without an admin step).
+    private var matchingBuiltInSuggestions: [BuiltInGrapeVarietyCatalog.Entry] {
+        let query = varietySearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return [] }
+        let masterKeys = Set(store.grapeVarieties.compactMap { $0.key })
+        let masterCanonical = Set(store.grapeVarieties.map { BuiltInGrapeVarietyCatalog.canonical($0.name) })
+        return BuiltInGrapeVarietyCatalog.entries.filter { e in
+            if masterKeys.contains(e.key) { return false }
+            if masterCanonical.contains(BuiltInGrapeVarietyCatalog.canonical(e.name)) { return false }
+            if e.name.localizedCaseInsensitiveContains(query) { return true }
+            return e.aliases.contains { $0.localizedCaseInsensitiveContains(query) }
+        }
+    }
+
+    private var trimmedVarietySearch: String {
+        varietySearch.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var canOfferCustomAdd: Bool {
+        let q = trimmedVarietySearch
+        guard !q.isEmpty else { return false }
+        if BuiltInGrapeVarietyCatalog.entry(matching: q) != nil { return false }
+        let canonical = BuiltInGrapeVarietyCatalog.canonical(q)
+        let alreadyInMaster = store.grapeVarieties.contains { BuiltInGrapeVarietyCatalog.canonical($0.name) == canonical }
+        return !alreadyInMaster
+    }
+
     @ViewBuilder
     private var addVarietyPickerSheet: some View {
         NavigationStack {
             List {
-                ForEach(availableVarieties) { variety in
-                    Button {
-                        let remaining = max(0, 100 - totalVarietyPercent)
-                        let suggested = varietyAllocations.isEmpty ? 100.0 : remaining
-                        // Always stamp a stable key + name snapshot so the
-                        // allocation stays resolvable across devices, app
-                        // resets, and id drift. Prefer the stored key, fall
-                        // back to alias-folded catalog key via the resolver.
-                        let stableKey: String? = {
-                            if let k = variety.key, !k.isEmpty { return k }
-                            return BuiltInGrapeVarietyCatalog.entry(matching: variety.name)?.key
-                        }()
-                        varietyAllocations.append(
-                            PaddockVarietyAllocation(
-                                varietyId: variety.id,
-                                percent: suggested,
-                                name: variety.name,
-                                varietyKey: stableKey
-                            )
-                        )
-                        showAddVariety = false
-                    } label: {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(variety.name)
-                                    .font(.body)
-                                    .foregroundStyle(.primary)
-                                Text("Optimal: \(Int(variety.optimalGDD)) GDD")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                if !filteredAvailableVarieties.isEmpty {
+                    Section {
+                        ForEach(filteredAvailableVarieties) { variety in
+                            Button {
+                                appendAllocation(for: variety)
+                            } label: {
+                                varietyPickerRow(
+                                    title: variety.name,
+                                    subtitle: "Optimal: \(Int(variety.optimalGDD)) GDD",
+                                    systemImage: "plus.circle"
+                                )
                             }
-                            Spacer()
-                            Image(systemName: "plus.circle")
-                                .foregroundStyle(VineyardTheme.info)
                         }
+                    }
+                }
+
+                if !matchingBuiltInSuggestions.isEmpty {
+                    Section("Add from catalogue") {
+                        ForEach(matchingBuiltInSuggestions, id: \.key) { entry in
+                            Button {
+                                addBuiltInFromCatalog(entry: entry)
+                            } label: {
+                                varietyPickerRow(
+                                    title: entry.name,
+                                    subtitle: "Catalogue · Optimal: \(Int(entry.optimalGDD)) GDD",
+                                    systemImage: "plus.circle.dashed"
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if canOfferCustomAdd {
+                    Section {
+                        Button {
+                            Task { await addCustomVariety(named: trimmedVarietySearch) }
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Add “\(trimmedVarietySearch)” as custom variety")
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(VineyardTheme.info)
+                                    Text("Saved to this vineyard with a stable key for sync.")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if isAddingCustomVariety {
+                                    ProgressView()
+                                } else {
+                                    Image(systemName: "sparkles")
+                                        .foregroundStyle(VineyardTheme.info)
+                                }
+                            }
+                        }
+                        .disabled(isAddingCustomVariety)
+                    } footer: {
+                        if let err = customVarietyError {
+                            Text(err).font(.caption).foregroundStyle(.red)
+                        } else {
+                            Text("Can't find it? Add it as a custom variety. It will sync to this vineyard on iOS and Lovable.")
+                        }
+                    }
+                }
+
+                if filteredAvailableVarieties.isEmpty && matchingBuiltInSuggestions.isEmpty && !canOfferCustomAdd {
+                    Section {
+                        Text(trimmedVarietySearch.isEmpty
+                             ? "All varieties from your vineyard list are already on this block."
+                             : "No matches.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
             .navigationTitle("Add Variety")
             .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $varietySearch, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search varieties")
+            .autocorrectionDisabled()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { showAddVariety = false }
+                    Button("Done") {
+                        showAddVariety = false
+                        varietySearch = ""
+                        customVarietyError = nil
+                    }
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func varietyPickerRow(title: String, subtitle: String, systemImage: String) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.body)
+                    .foregroundStyle(.primary)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Image(systemName: systemImage)
+                .foregroundStyle(VineyardTheme.info)
+        }
+    }
+
+    private func appendAllocation(for variety: GrapeVariety) {
+        let remaining = max(0, 100 - totalVarietyPercent)
+        let suggested = varietyAllocations.isEmpty ? 100.0 : remaining
+        // Always stamp a stable key + name snapshot so the allocation
+        // stays resolvable across devices, app resets, and id drift.
+        let stableKey: String? = {
+            if let k = variety.key, !k.isEmpty { return k }
+            return BuiltInGrapeVarietyCatalog.entry(matching: variety.name)?.key
+        }()
+        varietyAllocations.append(
+            PaddockVarietyAllocation(
+                varietyId: variety.id,
+                percent: suggested,
+                name: variety.name,
+                varietyKey: stableKey
+            )
+        )
+        showAddVariety = false
+        varietySearch = ""
+        customVarietyError = nil
+    }
+
+    /// Pull a built-in catalog entry into the vineyard's master list
+    /// (using its deterministic id + stable key) and immediately append
+    /// it to this block's allocations.
+    private func addBuiltInFromCatalog(entry: BuiltInGrapeVarietyCatalog.Entry) {
+        guard let vid = store.selectedVineyardId else { return }
+        let determinedId = GrapeVariety.deterministicID(vineyardId: vid, key: entry.key)
+        if let existing = store.grapeVarieties.first(where: { $0.id == determinedId || $0.key == entry.key }) {
+            appendAllocation(for: existing)
+            return
+        }
+        let new = GrapeVariety(
+            id: determinedId,
+            vineyardId: vid,
+            name: entry.name,
+            optimalGDD: entry.optimalGDD,
+            isBuiltIn: true,
+            key: entry.key
+        )
+        store.addGrapeVariety(new)
+        appendAllocation(for: new)
+    }
+
+    /// Create a vineyard-scoped custom variety via the shared catalogue
+    /// RPC, mirror it into the local master list with the returned stable
+    /// `custom:<vineyardId>:<slug>` key, then append the allocation.
+    private func addCustomVariety(named raw: String) async {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !isAddingCustomVariety else { return }
+        customVarietyError = nil
+        isAddingCustomVariety = true
+        defer { isAddingCustomVariety = false }
+
+        guard let vid = store.selectedVineyardId else {
+            // No vineyard selected — fall back to local-only add so the
+            // user can keep working. Will reconcile on next sync.
+            let new = GrapeVariety(name: trimmed, optimalGDD: 1400)
+            store.addGrapeVariety(new)
+            appendAllocation(for: new)
+            return
+        }
+
+        do {
+            let row = try await catalogRepository.upsertVineyardVariety(
+                vineyardId: vid,
+                key: nil,
+                displayName: trimmed,
+                optimalGDDOverride: nil,
+                isActive: true
+            )
+            let new = GrapeVariety(
+                vineyardId: vid,
+                name: row.displayName,
+                optimalGDD: row.optimalGDDOverride ?? 1400,
+                isBuiltIn: false,
+                key: row.varietyKey
+            )
+            store.addGrapeVariety(new)
+            appendAllocation(for: new)
+        } catch {
+            // Degrade gracefully: add locally so the user isn't blocked.
+            let new = GrapeVariety(name: trimmed, optimalGDD: 1400)
+            store.addGrapeVariety(new)
+            appendAllocation(for: new)
+            customVarietyError = "Saved locally; couldn't reach catalogue server."
         }
     }
 
