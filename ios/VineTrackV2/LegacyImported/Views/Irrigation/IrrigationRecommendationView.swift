@@ -3,6 +3,7 @@ import SwiftUI
 struct IrrigationRecommendationView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(BackendAccessControl.self) private var accessControl
+    @Environment(SystemAdminService.self) private var systemAdmin
 
     @State private var selectedPaddockId: UUID?
     /// When true the advisor treats the calculation as "Whole Vineyard"
@@ -1050,8 +1051,10 @@ struct IrrigationRecommendationView: View {
             // 7. Block settings (soil + block details)
             blockSection
             soilProfileSection
-            // Diagnostics last.
-            rateResolverDiagnosticsSection
+            // Diagnostics last — system admins only when the flag is on.
+            if showIrrigationDiagnostics {
+                rateResolverDiagnosticsSection
+            }
         }
     }
 
@@ -1679,6 +1682,11 @@ struct IrrigationRecommendationView: View {
     // MARK: - Settings (collapsible)
 
     // MARK: - Application rate resolver diagnostics
+
+    private var showIrrigationDiagnostics: Bool {
+        systemAdmin.isSystemAdmin
+            && systemAdmin.isEnabled(SystemFeatureFlagKey.showIrrigationDiagnostics)
+    }
 
     private struct PaddockRateDiagnostic: Identifiable {
         let id: UUID

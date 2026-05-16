@@ -20,6 +20,13 @@ nonisolated enum SystemFeatureFlagKey {
     /// Show raw NSW SEED ArcGIS attributes / diagnostics in the soil editor
     /// after a fetch. Gated to system admins only.
     static let showNSWSeedDiagnostics = "show_nsw_seed_diagnostics"
+    /// Show grape variety allocation diagnostics in Block/Paddock Settings
+    /// (paddock id, allocation id, varietyId, resolver path, sync metadata).
+    /// Gated to system admins only.
+    static let showVarietyDiagnostics = "show_variety_diagnostics"
+    /// Show the irrigation rate resolver diagnostics section inside the
+    /// Irrigation Advisor. Gated to system admins only.
+    static let showIrrigationDiagnostics = "show_irrigation_diagnostics"
 }
 
 nonisolated struct SystemFeatureFlag: Identifiable, Sendable, Hashable {

@@ -5,6 +5,7 @@ struct EditPaddockSheet: View {
     let paddock: Paddock?
     @Environment(MigratedDataStore.self) private var store
     @Environment(PaddockSyncService.self) private var paddockSync
+    @Environment(SystemAdminService.self) private var systemAdmin
     @Environment(\.dismiss) private var dismiss
     @State private var attemptedSafeRefetch: Bool = false
     @State private var isSafeRefetching: Bool = false
@@ -718,7 +719,11 @@ struct EditPaddockSheet: View {
         varietyAllocations.reduce(0) { $0 + $1.percent }
     }
 
-    #if DEBUG
+    private var showVarietyDiagnostics: Bool {
+        systemAdmin.isSystemAdmin
+            && systemAdmin.isEnabled(SystemFeatureFlagKey.showVarietyDiagnostics)
+    }
+
     @ViewBuilder
     private func varietyDiagnostics(
         allocation: PaddockVarietyAllocation,
@@ -748,7 +753,6 @@ struct EditPaddockSheet: View {
         .padding(.top, 2)
         .textSelection(.enabled)
     }
-    #endif
 
     private var varietiesSection: some View {
         Section {
@@ -797,9 +801,9 @@ struct EditPaddockSheet: View {
                     if let paddock {
                         BlockRipenessChip(paddockId: paddock.id, varietyId: allocation.varietyId)
                     }
-                    #if DEBUG
-                    varietyDiagnostics(allocation: allocation, resolved: resolved)
-                    #endif
+                    if showVarietyDiagnostics {
+                        varietyDiagnostics(allocation: allocation, resolved: resolved)
+                    }
                 }
                 .task {
                     // Safe repair fallback: if this allocation has no usable
