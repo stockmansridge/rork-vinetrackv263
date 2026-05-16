@@ -1,7 +1,11 @@
 import Foundation
 
 nonisolated struct SoilProfileUpsert: Sendable, Hashable {
-    var paddockId: UUID
+    /// Either paddockId (per-paddock row) OR vineyardId (vineyard-level
+    /// fallback row) must be non-nil. The repository routes to the
+    /// matching RPC accordingly.
+    var paddockId: UUID?
+    var vineyardId: UUID?
     var irrigationSoilClass: String?
     var availableWaterCapacityMmPerM: Double?
     var effectiveRootDepthM: Double?
@@ -32,7 +36,8 @@ nonisolated struct SoilProfileUpsert: Sendable, Hashable {
     static let currentModelVersion = "soil_aware_irrigation_v2"
 
     init(
-        paddockId: UUID,
+        paddockId: UUID? = nil,
+        vineyardId: UUID? = nil,
         irrigationSoilClass: String? = nil,
         availableWaterCapacityMmPerM: Double? = nil,
         effectiveRootDepthM: Double? = nil,
@@ -61,6 +66,7 @@ nonisolated struct SoilProfileUpsert: Sendable, Hashable {
         modelVersion: String = Self.currentModelVersion
     ) {
         self.paddockId = paddockId
+        self.vineyardId = vineyardId
         self.irrigationSoilClass = irrigationSoilClass
         self.availableWaterCapacityMmPerM = availableWaterCapacityMmPerM
         self.effectiveRootDepthM = effectiveRootDepthM
@@ -93,7 +99,9 @@ nonisolated struct SoilProfileUpsert: Sendable, Hashable {
 protocol SoilProfileRepositoryProtocol: Sendable {
     func fetchSoilClassDefaults() async throws -> [SoilClassDefault]
     func fetchPaddockSoilProfile(paddockId: UUID) async throws -> BackendSoilProfile?
+    func fetchVineyardDefaultSoilProfile(vineyardId: UUID) async throws -> BackendSoilProfile?
     func listVineyardSoilProfiles(vineyardId: UUID) async throws -> [BackendSoilProfile]
     func upsertSoilProfile(_ profile: SoilProfileUpsert) async throws -> BackendSoilProfile?
     func deleteSoilProfile(paddockId: UUID) async throws
+    func deleteVineyardDefaultSoilProfile(vineyardId: UUID) async throws
 }

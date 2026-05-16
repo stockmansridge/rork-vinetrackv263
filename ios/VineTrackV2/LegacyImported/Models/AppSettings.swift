@@ -96,6 +96,10 @@ nonisolated struct AppSettings: Codable, Sendable, Identifiable {
     var irrigationReplacementPercent: Double
     var irrigationSoilBufferMm: Double
     var irrigationForecastDays: Int
+    /// Vineyard-level default irrigation application rate (mm/hr). Used
+    /// by the Irrigation Advisor in Whole Vineyard mode when no paddock
+    /// system rate is selected. 0 means "not configured".
+    var irrigationDefaultApplicationRateMmPerHour: Double
     var aiSuggestionsEnabled: Bool
 
     init(
@@ -138,6 +142,7 @@ nonisolated struct AppSettings: Codable, Sendable, Identifiable {
         irrigationReplacementPercent: Double = 100,
         irrigationSoilBufferMm: Double = 0,
         irrigationForecastDays: Int = 5,
+        irrigationDefaultApplicationRateMmPerHour: Double = 0,
         aiSuggestionsEnabled: Bool = true
     ) {
         self.id = id
@@ -179,6 +184,7 @@ nonisolated struct AppSettings: Codable, Sendable, Identifiable {
         self.irrigationReplacementPercent = irrigationReplacementPercent
         self.irrigationSoilBufferMm = irrigationSoilBufferMm
         self.irrigationForecastDays = irrigationForecastDays
+        self.irrigationDefaultApplicationRateMmPerHour = irrigationDefaultApplicationRateMmPerHour
         self.aiSuggestionsEnabled = aiSuggestionsEnabled
     }
 
@@ -227,6 +233,7 @@ nonisolated struct AppSettings: Codable, Sendable, Identifiable {
         irrigationReplacementPercent = try container.decodeIfPresent(Double.self, forKey: .irrigationReplacementPercent) ?? 100
         irrigationSoilBufferMm = try container.decodeIfPresent(Double.self, forKey: .irrigationSoilBufferMm) ?? 0
         irrigationForecastDays = try container.decodeIfPresent(Int.self, forKey: .irrigationForecastDays) ?? 5
+        irrigationDefaultApplicationRateMmPerHour = try container.decodeIfPresent(Double.self, forKey: .irrigationDefaultApplicationRateMmPerHour) ?? 0
         aiSuggestionsEnabled = try container.decodeIfPresent(Bool.self, forKey: .aiSuggestionsEnabled) ?? true
     }
 
@@ -240,6 +247,7 @@ nonisolated struct AppSettings: Codable, Sendable, Identifiable {
         case rainAlertEnabled, rainAlertThresholdMm, rainAlertWindowDays
         case irrigationAlertEnabled, irrigationAlertPaddockId, irrigationKc, irrigationEfficiencyPercent, irrigationRainfallEffectivenessPercent, irrigationReplacementPercent, irrigationSoilBufferMm
         case irrigationForecastDays
+        case irrigationDefaultApplicationRateMmPerHour
         case aiSuggestionsEnabled
     }
 }

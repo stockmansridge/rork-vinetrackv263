@@ -15,9 +15,13 @@ private extension String {
 /// confidence value so users can review before saving.
 struct SoilProfileEditorSheet: View {
     let vineyardId: UUID
-    let paddockId: UUID
+    /// Nil = editing the vineyard-level fallback profile used by Whole
+    /// Vineyard mode (saved with paddock_id = null).
+    let paddockId: UUID?
     let paddockName: String
     let onSaved: (BackendSoilProfile?) -> Void
+
+    private var isVineyardLevel: Bool { paddockId == nil }
 
     @Environment(\.dismiss) private var dismiss
     @Environment(BackendAccessControl.self) private var accessControl
@@ -132,6 +136,7 @@ struct SoilProfileEditorSheet: View {
                 Button("Reset", role: .destructive) { Task { await deleteProfile() } }
                 Button("Cancel", role: .cancel) {}
             }
+            .navigationTitle(isVineyardLevel ? "Whole Vineyard Soil" : "Soil Profile")
             .confirmationDialog(
                 "Replace your manual soil values?",
                 isPresented: $showOverwriteConfirm,
@@ -167,7 +172,9 @@ struct SoilProfileEditorSheet: View {
     }
 
     private var showNSWSeedSection: Bool {
-        canEdit && isAustralianVineyard && soilAwareEnabled
+        // NSW SEED needs a paddock polygon centroid — only show for
+        // per-paddock editor, not the vineyard-level fallback.
+        canEdit && !isVineyardLevel && isAustralianVineyard && soilAwareEnabled
     }
 
     private var showRawDiagnostics: Bool {
@@ -320,7 +327,7 @@ struct SoilProfileEditorSheet: View {
     // MARK: - NSW SEED actions
 
     private func fetchFromNSWSeed() async {
-        guard canEdit, !isFetchingNSWSeed else { return }
+        guard canEdit, !isFetchingNSWSeed, let pid = paddockId else { return }
         nswSeedError = nil
         nswSeedMessage = nil
         nswSeedSuggestion = nil
@@ -330,7 +337,7 @@ struct SoilProfileEditorSheet: View {
         do {
             let result = try await nswSeedService.lookupPaddockSoil(
                 vineyardId: vineyardId,
-                paddockId: paddockId,
+                paddockId: pid,
                 persist: true
             )
             nswSeedRawResponse = result.rawResponse
@@ -374,6 +381,7 @@ struct SoilProfileEditorSheet: View {
         errorMessage = nil
         let payload = SoilProfileUpsert(
             paddockId: paddockId,
+            vineyardId: paddockId == nil ? vineyardId : nil,
             irrigationSoilClass: selectedClass.rawValue,
             availableWaterCapacityMmPerM: Double(awcText),
             effectiveRootDepthM: Double(rootDepthText),
@@ -535,9 +543,13 @@ struct SoilProfileEditorSheet: View {
         isLoading = true
         defer { isLoading = false }
         do {
-            async let defs = repository.fetchSoilClassDefaults()
-            async let prof = repository.fetchPaddockSoilProfile(paddockId: paddockId)
-            let (loadedDefaults, loadedProfile) = try await (defs, prof)
+            let loadedDefaults = try await repository.fetchSoilClassDefaults()
+            let loadedProfile: BackendSoilProfile?
+            if let pid = paddockId {
+                loadedProfile = try await repository.fetchPaddockSoilProfile(paddockId: pid)
+            } else {
+                loadedProfile = try await repository.fetchVineyardDefaultSoilProfile(vineyardId: vineyardId)
+            }
             defaults = loadedDefaults
             existing = loadedProfile
             applyExistingOrDefaults()
@@ -587,6 +599,7 @@ struct SoilProfileEditorSheet: View {
         errorMessage = nil
         let payload = SoilProfileUpsert(
             paddockId: paddockId,
+            vineyardId: paddockId == nil ? vineyardId : nil,
             irrigationSoilClass: selectedClass.rawValue,
             availableWaterCapacityMmPerM: Double(awcText),
             effectiveRootDepthM: Double(rootDepthText),
@@ -609,7 +622,11 @@ struct SoilProfileEditorSheet: View {
     private func deleteProfile() async {
         guard canEdit else { return }
         do {
-            try await repository.deleteSoilProfile(paddockId: paddockId)
+            if let pid = paddockId {
+                try await repository.deleteSoilProfile(paddockId: pid)
+            } else {
+                try await repository.deleteVineyardDefaultSoilProfile(vineyardId: vineyardId)
+            }
             existing = nil
             onSaved(nil)
             dismiss()

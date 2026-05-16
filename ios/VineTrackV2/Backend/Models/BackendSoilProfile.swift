@@ -72,7 +72,9 @@ nonisolated struct SoilClassDefault: Codable, Sendable, Hashable, Identifiable {
 nonisolated struct BackendSoilProfile: Codable, Sendable, Hashable, Identifiable {
     let id: UUID
     let vineyardId: UUID
-    let paddockId: UUID
+    /// Nil for the optional vineyard-level fallback profile used by
+    /// Whole Vineyard mode. Per-paddock rows always have a non-nil id.
+    let paddockId: UUID?
 
     let source: String
     let sourceProvider: String?
