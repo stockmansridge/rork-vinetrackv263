@@ -7,8 +7,11 @@ struct IrrigationRecommendationView: View {
     @State private var selectedPaddockId: UUID?
     /// When true the advisor treats the calculation as "Whole Vineyard"
     /// (no specific block selected). Soil profile is averaged across
-    /// available paddock soil profiles.
-    @State private var useWholeVineyard: Bool = false
+    /// available paddock soil profiles. Defaults to true so new users
+    /// see a vineyard-wide recommendation immediately.
+    @State private var useWholeVineyard: Bool = true
+    @State private var showConfigSheet: Bool = false
+    @State private var didLoadRecentRainSettings: Bool = false
     @State private var vineyardSoilProfiles: [BackendSoilProfile] = []
     @State private var vineyardDefaultSoilProfile: BackendSoilProfile?
     @State private var showWholeVineyardSoilEditor: Bool = false
@@ -376,28 +379,19 @@ struct IrrigationRecommendationView: View {
 
     var body: some View {
         Form {
-            // Setup wizard / checklist first — collapses once setup is complete.
-            setupWizardSection
+            // 1. Wizard — only shown when there are incomplete items.
+            if !wizardComplete {
+                setupWizardSection
+            }
             if shouldShowWeatherWizardBanner {
                 weatherWizardBannerSection
             }
-            // Recommendation immediately after the wizard.
+            // 2. Block / Whole Vineyard selector (compact).
+            compactBlockSelectorSection
+            // 3. Recommendation.
             recommendationSection
-            // Visible while we are debugging the Whole Vineyard rate resolver.
-            rateResolverDiagnosticsSection
-            // Status / sources card.
-            statusSection
-            recentRainSection
-            if shouldShowRainfallHistorySection {
-                rainfallHistorySection
-            }
-            rainfallCalendarSection
-            blockSection
-            soilProfileSection
-            forecastControlSection
-            forecastDetailsSection
-            dailyBreakdownDisclosure
-            settingsSection
+            // 4. Config entry button.
+            configEntrySection
         }
         .navigationTitle("Irrigation Advisor")
         .navigationBarTitleDisplayMode(.inline)
@@ -430,7 +424,26 @@ struct IrrigationRecommendationView: View {
             Task { await loadSoilProfile() }
             Task { await loadVineyardSoilProfiles() }
             Task { await loadVineyardDefaultSoilProfile() }
+            if !didLoadRecentRainSettings {
+                let saved = store.settings.irrigationRecentRainLookbackDays
+                if [1, 2, 7, 14].contains(saved) {
+                    recentRainDays = saved
+                }
+                didLoadRecentRainSettings = true
+            }
             logRateResolverDiagnostics(trigger: "onAppear")
+        }
+        .sheet(isPresented: $showConfigSheet) {
+            NavigationStack {
+                irrigationAdvisorConfigBody
+                    .navigationTitle("Irrigation Advisor Config")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Done") { showConfigSheet = false }
+                        }
+                    }
+            }
         }
         .onChange(of: store.selectedVineyardId) { _, _ in
             didLoadWeatherWizardStatus = false
@@ -462,7 +475,14 @@ struct IrrigationRecommendationView: View {
                 Task { await loadForecast() }
             }
         }
-        .onChange(of: recentRainDays) { _, _ in
+        .onChange(of: recentRainDays) { _, newValue in
+            if didLoadRecentRainSettings, [1, 2, 7, 14].contains(newValue) {
+                var s = store.settings
+                if s.irrigationRecentRainLookbackDays != newValue {
+                    s.irrigationRecentRainLookbackDays = newValue
+                    store.updateSettings(s)
+                }
+            }
             if latitude != nil, longitude != nil {
                 Task { await loadRecentRainfall() }
             }
@@ -844,38 +864,21 @@ struct IrrigationRecommendationView: View {
 
     @ViewBuilder
     private var setupWizardSection: some View {
-        let items = wizardItems
-        let complete = wizardComplete
-        Section {
-            if complete && setupWizardCollapsed {
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark.seal.fill")
-                        .foregroundStyle(VineyardTheme.leafGreen)
-                    Text("Irrigation setup complete")
-                        .font(.subheadline.weight(.semibold))
-                    Spacer()
-                    Button("Edit setup") { setupWizardCollapsed = false }
-                        .font(.caption.weight(.semibold))
-                        .buttonStyle(.borderless)
-                }
-            } else {
+        let incomplete = wizardItems.filter { !$0.isComplete }
+        if !incomplete.isEmpty {
+            Section {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 8) {
-                        Image(systemName: complete ? "checkmark.seal.fill" : "list.bullet.clipboard")
-                            .foregroundStyle(complete ? VineyardTheme.leafGreen : Color.accentColor)
-                        Text(complete ? "Setup complete" : "Setup checklist")
+                        Image(systemName: "list.bullet.clipboard")
+                            .foregroundStyle(Color.accentColor)
+                        Text("Finish irrigation setup")
                             .font(.subheadline.weight(.semibold))
                         Spacer()
-                        if complete {
-                            Button("Hide") { setupWizardCollapsed = true }
-                                .font(.caption.weight(.semibold))
-                                .buttonStyle(.borderless)
-                        }
                     }
-                    ForEach(items) { item in
+                    ForEach(incomplete) { item in
                         HStack(alignment: .top, spacing: 8) {
-                            Image(systemName: item.isComplete ? "checkmark.circle.fill" : "circle")
-                                .foregroundStyle(item.isComplete ? VineyardTheme.leafGreen : .secondary)
+                            Image(systemName: "circle")
+                                .foregroundStyle(.secondary)
                                 .padding(.top, 2)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(item.title).font(.caption.weight(.semibold))
@@ -885,12 +888,170 @@ struct IrrigationRecommendationView: View {
                             Spacer(minLength: 0)
                         }
                     }
+                    Button {
+                        showConfigSheet = true
+                    } label: {
+                        Label("Open Irrigation Advisor Config", systemImage: "slider.horizontal.3")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
                 .padding(.vertical, 4)
             }
         }
-        .onChange(of: wizardComplete) { _, newValue in
-            if newValue { setupWizardCollapsed = true }
+    }
+
+    // MARK: - Compact block selector
+
+    private var compactBlockSelectorSection: some View {
+        Section {
+            Picker("Scope", selection: blockScopeBinding) {
+                Text("Whole Vineyard").tag(UUID?.none)
+                ForEach(vineyardPaddocks) { p in
+                    Text(p.name).tag(Optional(p.id))
+                }
+            }
+            .pickerStyle(.menu)
+        } header: {
+            Text("Block")
+        }
+    }
+
+    /// Bridges the Whole Vineyard toggle + paddock selection through a
+    /// single picker. nil tag means Whole Vineyard.
+    private var blockScopeBinding: Binding<UUID?> {
+        Binding(
+            get: { useWholeVineyard ? nil : selectedPaddockId },
+            set: { newValue in
+                if let v = newValue {
+                    useWholeVineyard = false
+                    selectedPaddockId = v
+                } else {
+                    useWholeVineyard = true
+                }
+            }
+        )
+    }
+
+    private var configEntrySection: some View {
+        Section {
+            Button {
+                showConfigSheet = true
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "slider.horizontal.3")
+                        .foregroundStyle(.tint)
+                        .frame(width: 24)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Irrigation Advisor Config")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text("Weather sources, recent rain, forecast, soil profile, assumptions and block settings")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.leading)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    // MARK: - Whole Vineyard warnings
+
+    /// Active paddock names missing emitter setup, in Whole Vineyard
+    /// mode. Used to surface a warning without blocking the
+    /// recommendation when at least one block has a valid rate.
+    private var blocksMissingEmitters: [String] {
+        guard useWholeVineyard else { return [] }
+        return vineyardPaddocks.compactMap { p -> String? in
+            let ok = (p.mmPerHour ?? 0) > 0
+            return ok ? nil : (p.name.isEmpty ? "(unnamed block)" : p.name)
+        }
+    }
+
+    /// Active paddocks without a saved soil profile, in Whole Vineyard
+    /// mode. Helps surface which blocks to configure next without
+    /// blocking the recommendation.
+    private var blocksMissingSoilProfile: [String] {
+        guard useWholeVineyard else { return [] }
+        let withProfileIds = Set(paddockOnlySoilProfiles.compactMap { $0.paddockId })
+        return vineyardPaddocks.compactMap { p in
+            withProfileIds.contains(p.id) ? nil
+                : (p.name.isEmpty ? "(unnamed block)" : p.name)
+        }
+    }
+
+    @ViewBuilder
+    private var wholeVineyardWarningsView: some View {
+        let missingRate = blocksMissingEmitters
+        let missingSoil = blocksMissingSoilProfile
+        if useWholeVineyard, !missingRate.isEmpty || !missingSoil.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                if !missingRate.isEmpty {
+                    Label("Some blocks are missing irrigation setup",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.orange)
+                    ForEach(missingRate, id: \.self) { name in
+                        Text("\u{2022} \(name): missing emitter details")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if !missingSoil.isEmpty {
+                    Label("Some blocks are missing a soil profile",
+                          systemImage: "square.stack.3d.up.slash")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.orange)
+                        .padding(.top, missingRate.isEmpty ? 0 : 4)
+                    ForEach(missingSoil, id: \.self) { name in
+                        Text("\u{2022} \(name)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Text("Recommendation uses the configured blocks. Select an individual block for a more accurate result.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    // MARK: - Config sheet body
+
+    @ViewBuilder
+    private var irrigationAdvisorConfigBody: some View {
+        Form {
+            // 1. Weather sources
+            statusSection
+            // 2. Recent rain
+            recentRainSection
+            if shouldShowRainfallHistorySection {
+                rainfallHistorySection
+            }
+            rainfallCalendarSection
+            // 3/4. Forecast + details
+            forecastControlSection
+            forecastDetailsSection
+            // 5. Daily breakdown
+            dailyBreakdownDisclosure
+            // 6. Calculation assumptions
+            settingsSection
+            // 7. Block settings (soil + block details)
+            blockSection
+            soilProfileSection
+            // Diagnostics last.
+            rateResolverDiagnosticsSection
         }
     }
 
@@ -1268,9 +1429,16 @@ struct IrrigationRecommendationView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
-                Text(String(format: "Apply %.1f mm over the next %d days", result.grossIrrigationMm, result.dailyBreakdown.count))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if useWholeVineyard {
+                    Text(String(format: "Apply approximately %.1f mm. Runtime is estimated per block using the vineyard average rate. Select an individual block for a more accurate runtime.", result.grossIrrigationMm))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text(String(format: "Apply %.1f mm over the next %d days", result.grossIrrigationMm, result.dailyBreakdown.count))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             } else {
                 Text("Forecast rainfall meets vine demand for the next \(result.dailyBreakdown.count) days.")
                     .font(.subheadline)
@@ -1301,6 +1469,8 @@ struct IrrigationRecommendationView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            wholeVineyardWarningsView
         }
         .padding(.vertical, 6)
     }

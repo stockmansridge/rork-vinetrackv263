@@ -100,6 +100,10 @@ nonisolated struct AppSettings: Codable, Sendable, Identifiable {
     /// by the Irrigation Advisor in Whole Vineyard mode when no paddock
     /// system rate is selected. 0 means "not configured".
     var irrigationDefaultApplicationRateMmPerHour: Double
+    /// Vineyard-level default recent-rain lookback window (days) used
+    /// by the Irrigation Advisor. Allowed values: 1 (24h), 2 (48h),
+    /// 7 (7d), 14 (14d). 0 means "not configured" — defaults to 7.
+    var irrigationRecentRainLookbackDays: Int
     var aiSuggestionsEnabled: Bool
 
     init(
@@ -143,6 +147,7 @@ nonisolated struct AppSettings: Codable, Sendable, Identifiable {
         irrigationSoilBufferMm: Double = 0,
         irrigationForecastDays: Int = 5,
         irrigationDefaultApplicationRateMmPerHour: Double = 0,
+        irrigationRecentRainLookbackDays: Int = 7,
         aiSuggestionsEnabled: Bool = true
     ) {
         self.id = id
@@ -185,6 +190,7 @@ nonisolated struct AppSettings: Codable, Sendable, Identifiable {
         self.irrigationSoilBufferMm = irrigationSoilBufferMm
         self.irrigationForecastDays = irrigationForecastDays
         self.irrigationDefaultApplicationRateMmPerHour = irrigationDefaultApplicationRateMmPerHour
+        self.irrigationRecentRainLookbackDays = irrigationRecentRainLookbackDays
         self.aiSuggestionsEnabled = aiSuggestionsEnabled
     }
 
@@ -234,6 +240,7 @@ nonisolated struct AppSettings: Codable, Sendable, Identifiable {
         irrigationSoilBufferMm = try container.decodeIfPresent(Double.self, forKey: .irrigationSoilBufferMm) ?? 0
         irrigationForecastDays = try container.decodeIfPresent(Int.self, forKey: .irrigationForecastDays) ?? 5
         irrigationDefaultApplicationRateMmPerHour = try container.decodeIfPresent(Double.self, forKey: .irrigationDefaultApplicationRateMmPerHour) ?? 0
+        irrigationRecentRainLookbackDays = try container.decodeIfPresent(Int.self, forKey: .irrigationRecentRainLookbackDays) ?? 7
         aiSuggestionsEnabled = try container.decodeIfPresent(Bool.self, forKey: .aiSuggestionsEnabled) ?? true
     }
 
@@ -248,6 +255,7 @@ nonisolated struct AppSettings: Codable, Sendable, Identifiable {
         case irrigationAlertEnabled, irrigationAlertPaddockId, irrigationKc, irrigationEfficiencyPercent, irrigationRainfallEffectivenessPercent, irrigationReplacementPercent, irrigationSoilBufferMm
         case irrigationForecastDays
         case irrigationDefaultApplicationRateMmPerHour
+        case irrigationRecentRainLookbackDays
         case aiSuggestionsEnabled
     }
 }
