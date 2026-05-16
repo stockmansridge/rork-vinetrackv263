@@ -166,12 +166,24 @@ nonisolated struct PaddockVarietyAllocation: Codable, Sendable, Hashable, Identi
     /// matches a managed variety (e.g. local-only varieties seeded with
     /// different UUIDs across devices).
     var name: String?
+    /// Stable catalog key (e.g. `pinot_gris`) or vineyard-scoped custom
+    /// key (`custom:<vineyardId>:<slug>`). Carries the allocation's
+    /// identity across devices, resets, and id drift — the resolver
+    /// trusts this before `varietyId` or `name`.
+    var varietyKey: String?
 
-    init(id: UUID = UUID(), varietyId: UUID, percent: Double, name: String? = nil) {
+    init(
+        id: UUID = UUID(),
+        varietyId: UUID,
+        percent: Double,
+        name: String? = nil,
+        varietyKey: String? = nil
+    ) {
         self.id = id
         self.varietyId = varietyId
         self.percent = percent
         self.name = name
+        self.varietyKey = varietyKey
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
@@ -179,10 +191,13 @@ nonisolated struct PaddockVarietyAllocation: Codable, Sendable, Hashable, Identi
         case varietyId
         case percent
         case name
+        case varietyKey
         // Tolerant aliases for payloads written by other systems.
         case variety_id
         case variety
         case varietyName
+        case variety_key
+        case key
     }
 
     init(from decoder: Decoder) throws {
@@ -225,6 +240,20 @@ nonisolated struct PaddockVarietyAllocation: Codable, Sendable, Hashable, Identi
         } else {
             name = nil
         }
+
+        // Optional stable key. Accept `varietyKey`, `variety_key`, or `key`.
+        if let k = try? c.decode(String.self, forKey: .varietyKey),
+           !k.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            varietyKey = k
+        } else if let k = try? c.decode(String.self, forKey: .variety_key),
+                  !k.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            varietyKey = k
+        } else if let k = try? c.decode(String.self, forKey: .key),
+                  !k.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            varietyKey = k
+        } else {
+            varietyKey = nil
+        }
     }
 
     func encode(to encoder: Encoder) throws {
@@ -233,5 +262,6 @@ nonisolated struct PaddockVarietyAllocation: Codable, Sendable, Hashable, Identi
         try c.encode(varietyId, forKey: .varietyId)
         try c.encode(percent, forKey: .percent)
         try c.encodeIfPresent(name, forKey: .name)
+        try c.encodeIfPresent(varietyKey, forKey: .varietyKey)
     }
 }

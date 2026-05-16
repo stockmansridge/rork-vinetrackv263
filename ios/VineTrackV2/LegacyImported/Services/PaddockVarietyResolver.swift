@@ -41,11 +41,43 @@ nonisolated enum PaddockVarietyResolver {
         return String(trimmed.unicodeScalars.filter { allowed.contains($0) })
     }
 
+    /// Resolve a master `GrapeVariety` to its catalog key — either via the
+    /// stored `key` field or by alias-folding the display name through
+    /// `BuiltInGrapeVarietyCatalog`. Lets us treat master varieties whose
+    /// `key` hasn't been stamped yet (legacy seeds) as if they had been.
+    private static func catalogKey(for variety: GrapeVariety) -> String? {
+        if let k = variety.key, !k.isEmpty { return k }
+        return BuiltInGrapeVarietyCatalog.entry(matching: variety.name)?.key
+    }
+
     /// Resolve a single allocation against the managed variety list.
     static func resolve(
         allocation: PaddockVarietyAllocation,
         varieties: [GrapeVariety]
     ) -> Resolved {
+        // 0. stable key match — strongest signal.
+        if let allocKey = allocation.varietyKey?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !allocKey.isEmpty {
+            if let v = varieties.first(where: { catalogKey(for: $0) == allocKey }) {
+                return Resolved(
+                    varietyId: v.id,
+                    displayName: v.name,
+                    isResolved: true,
+                    reason: "key-match"
+                )
+            }
+            // Key recognised but master list missing it — still useful for
+            // display via the catalog.
+            if let entry = BuiltInGrapeVarietyCatalog.entries.first(where: { $0.key == allocKey }) {
+                return Resolved(
+                    varietyId: nil,
+                    displayName: entry.name,
+                    isResolved: true,
+                    reason: "key-catalog"
+                )
+            }
+        }
+
         // 1. id match.
         if let v = varieties.first(where: { $0.id == allocation.varietyId }) {
             return Resolved(
@@ -68,14 +100,12 @@ nonisolated enum PaddockVarietyResolver {
                     reason: "name-match"
                 )
             }
-            // Try the built-in catalog (alias-aware). Covers cases like a
-            // saved "Pinot Gris" snapshot when the master list happens to
-            // be missing or stored under "Pinot Gris / Grigio".
+            // Catalog-fold BOTH sides. Allocation name and master variety
+            // name both run through `BuiltInGrapeVarietyCatalog.entry(matching:)`
+            // so e.g. "Pinot Gris" (alias) matches a master variety stored as
+            // "Pinot Gris / Grigio" regardless of whether `key` was stamped.
             if let entry = BuiltInGrapeVarietyCatalog.entry(matching: raw) {
-                if let v = varieties.first(where: {
-                    $0.key == entry.key
-                        || canonical($0.name) == canonical(entry.name)
-                }) {
+                if let v = varieties.first(where: { catalogKey(for: $0) == entry.key }) {
                     return Resolved(
                         varietyId: v.id,
                         displayName: v.name,
@@ -118,14 +148,30 @@ nonisolated enum PaddockVarietyResolver {
         varieties: [GrapeVariety]
     ) -> [PaddockVarietyAllocation] {
         allocations.map { alloc in
-            if let existing = alloc.name,
-               !existing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return alloc
-            }
-            let r = resolve(allocation: alloc, varieties: varieties)
-            guard let n = r.displayName, !n.isEmpty else { return alloc }
             var copy = alloc
-            copy.name = n
+            let r = resolve(allocation: alloc, varieties: varieties)
+
+            // Backfill name snapshot when missing.
+            let hasName = !(alloc.name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+            if !hasName, let n = r.displayName, !n.isEmpty {
+                copy.name = n
+            }
+
+            // Backfill stable key when missing and we can derive one. This
+            // is what keeps the allocation resolvable across devices/resets
+            // even if `varietyId` drifts.
+            let hasKey = !(alloc.varietyKey?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+            if !hasKey {
+                if let resolvedId = r.varietyId,
+                   let v = varieties.first(where: { $0.id == resolvedId }),
+                   let key = catalogKey(for: v) {
+                    copy.varietyKey = key
+                } else if let raw = (copy.name ?? alloc.name)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                          !raw.isEmpty,
+                          let entry = BuiltInGrapeVarietyCatalog.entry(matching: raw) {
+                    copy.varietyKey = entry.key
+                }
+            }
             return copy
         }
     }

@@ -156,6 +156,30 @@ enum GrapeVarietyCanonicalization {
                     copy.name = v.name
                     allocationsChanged = true
                 }
+                // d) Backfill stable `varietyKey` so the allocation stays
+                //    resolvable across devices/resets even if `varietyId`
+                //    drifts. Derived from the resolved master variety
+                //    (`key` or catalog-folded name) or the name snapshot.
+                if (copy.varietyKey?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) {
+                    var derivedKey: String? = nil
+                    if let v = scopedVarieties.first(where: { $0.id == copy.varietyId }) {
+                        if let k = v.key, !k.isEmpty {
+                            derivedKey = k
+                        } else if let entry = BuiltInGrapeVarietyCatalog.entry(matching: v.name) {
+                            derivedKey = entry.key
+                        }
+                    }
+                    if derivedKey == nil,
+                       let nameSnapshot = copy.name?.trimmingCharacters(in: .whitespacesAndNewlines),
+                       !nameSnapshot.isEmpty,
+                       let entry = BuiltInGrapeVarietyCatalog.entry(matching: nameSnapshot) {
+                        derivedKey = entry.key
+                    }
+                    if let k = derivedKey {
+                        copy.varietyKey = k
+                        allocationsChanged = true
+                    }
+                }
                 updated.append(copy)
             }
             if allocationsChanged {
