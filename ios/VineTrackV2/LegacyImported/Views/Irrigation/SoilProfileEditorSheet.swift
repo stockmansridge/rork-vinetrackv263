@@ -213,9 +213,23 @@ struct SoilProfileEditorSheet: View {
                 if let code = s.soilLandscapeCode ?? s.sourceFeatureId, !code.isEmpty {
                     LabeledContent("SALIS code") { Text(code).font(.caption.monospaced()) }
                 }
+                if let asc = s.australianSoilClassification, !asc.isEmpty {
+                    LabeledContent("Australian Soil Classification") {
+                        Text(asc).multilineTextAlignment(.trailing)
+                    }
+                }
+                if let lsc = s.landSoilCapability, !lsc.isEmpty {
+                    LabeledContent("Land and Soil Capability") {
+                        if let n = s.landSoilCapabilityClass {
+                            Text("\(lsc) (class \(n))").multilineTextAlignment(.trailing)
+                        } else {
+                            Text(lsc).multilineTextAlignment(.trailing)
+                        }
+                    }
+                }
                 if let cls = s.irrigationSoilClass,
                    let typed = IrrigationSoilClass(rawValue: cls) {
-                    LabeledContent("Suggested class") { Text(label(for: typed)) }
+                    LabeledContent("Suggested irrigation class") { Text(label(for: typed)) }
                 }
                 if let conf = s.confidence, !conf.isEmpty {
                     LabeledContent("Confidence") { Text(conf.capitalized) }

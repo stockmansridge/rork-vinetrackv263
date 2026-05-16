@@ -56,13 +56,24 @@ const CORS: Record<string, string> = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const PROXY_VERSION = "nsw-seed-soil-lookup-2026-05-15-v2";
+const PROXY_VERSION = "nsw-seed-soil-lookup-2026-05-16-v3";
 
-// Default public endpoint from the NSW SEED / DCCEEW dataset catalogue.
-// Layer 0 = "Soil Landscapes - published 100K - 250K", polygon feature
-// layer covering central and eastern NSW.
+// Default public endpoints from the NSW SEED / DCCEEW dataset catalogue.
+// These are the same ArcGIS Map Services that power the public "Soils
+// Near Me NSW" viewer:
+//
+//   Soil Landscapes (NAME, SALIS_CODE)             → SOIL_LANDSCAPE
+//   Australian Soil Classification (ASC_order)     → ASC
+//   Land and Soil Capability (LSC_MstLmt 1–8)       → LSC
+//
+// All three are public — no token required — but the URLs can be
+// overridden via Supabase secrets if NSW ever rotates them.
 const DEFAULT_SOIL_LANDSCAPE_URL =
   "https://mapprod1.environment.nsw.gov.au/arcgis/rest/services/Soil/SoilLandscapes_CentralAndEasternNSW/MapServer/0";
+const DEFAULT_ASC_URL =
+  "https://mapprod1.environment.nsw.gov.au/arcgis/rest/services/Soil/Soils_ASC_SoilTypes_EDP/MapServer/2";
+const DEFAULT_LSC_URL =
+  "https://mapprod1.environment.nsw.gov.au/arcgis/rest/services/LandCap/LandAndSoilCapability_EDP/MapServer/2";
 
 // The default mapprod1 layer is a public ArcGIS service and rejects requests
 // that include an unrecognised `token` parameter. We therefore only append the
@@ -89,7 +100,7 @@ function isArcgisAuthError(body: any): boolean {
 const DISCLAIMER =
   "Soil information is estimated from NSW SEED mapping and may not reflect site-specific vineyard soil conditions. Adjust soil class and water-holding values using your own soil knowledge where needed.";
 
-const MODEL_VERSION = "soil_aware_irrigation_v1";
+const MODEL_VERSION = "soil_aware_irrigation_v2";
 
 function json(body: unknown, status = 200): Response {
   let payload: unknown = body;
@@ -112,6 +123,18 @@ function getSoilLandscapeUrl(): string | null {
   const override = Deno.env.get("NSW_SEED_SOIL_LANDSCAPE_URL")?.trim();
   if (override && override.length > 0) return override.replace(/\/$/, "");
   return DEFAULT_SOIL_LANDSCAPE_URL;
+}
+
+function getAscUrl(): string {
+  const override = Deno.env.get("NSW_SEED_ASC_URL")?.trim();
+  if (override && override.length > 0) return override.replace(/\/$/, "");
+  return DEFAULT_ASC_URL;
+}
+
+function getLscUrl(): string {
+  const override = Deno.env.get("NSW_SEED_LSC_URL")?.trim();
+  if (override && override.length > 0) return override.replace(/\/$/, "");
+  return DEFAULT_LSC_URL;
 }
 
 function getApiKey(): string | null {
@@ -242,17 +265,30 @@ async function querySoilLandscape(
 }
 
 // ---------------------------------------------------------------------------
-// Soil landscape → irrigation soil class heuristic.
+// Combined ASC + Soil Landscape + LSC → irrigation soil class mapping.
 //
-// The public Soil Landscapes layer only exposes NAME + SALIS_CODE. The
-// detailed soil materials live in linked soil reports outside this layer,
-// so V1 maps by name keywords and lets the user override. Confidence is
-// always "low" or "medium" — clients must display the disclaimer.
+// V2 reads the Australian Soil Classification order (e.g. Ferrosols,
+// Vertosols) plus the Soil Landscape name/SALIS code and the Land and
+// Soil Capability "most-limiting" class (1–8) to derive a more useful
+// irrigation soil class than the keyword-only v1 mapping.
 //
 // Per user guidance on basalt mapping:
 //   * basalt + clay loam keywords → basalt_clay_loam
 //   * basalt alone → basalt_clay_loam at lower confidence
 //   * otherwise the texture keyword wins.
+//
+// ASC overrides — when ASC is present it drives the class because it is
+// the authoritative soil-type classification:
+//   Ferrosols + basalt/volcanic context → basalt_clay_loam (medium)
+//   Ferrosols (no basalt context)       → clay_loam (medium)
+//   Vertosols                           → clay_heavy_clay (medium)
+//   Dermosols / Kurosols / Sodosols     → clay_loam (medium)
+//   Chromosols                          → clay_loam (medium)
+//   Kandosols / Calcarosols             → loam (medium)
+//   Tenosols                            → sandy_loam (low)
+//   Rudosols / Podosols                 → sand_loamy_sand (low)
+//   Hydrosols                           → clay_loam (low)
+//   Organosols / Anthroposols           → unknown (low)
 // ---------------------------------------------------------------------------
 
 interface SoilClassGuess {
@@ -261,10 +297,67 @@ interface SoilClassGuess {
   matched_keywords: string[];
 }
 
-function guessIrrigationSoilClass(name: string | null, salisCode: string | null): SoilClassGuess {
+// LSC "most-limiting" integer (1–8) → friendly label used by Soils Near Me.
+function landSoilCapabilityLabel(cls: number | null): string | null {
+  if (cls == null || !isFinite(cls)) return null;
+  if (cls >= 1 && cls <= 3) return "High capability land";
+  if (cls >= 4 && cls <= 5) return "Moderate capability land";
+  if (cls >= 6 && cls <= 8) return "Low capability land";
+  return null;
+}
+
+function guessFromAsc(
+  ascOrder: string | null,
+  landscapeHay: string,
+  matched: string[],
+): { cls: string; conf: "low" | "medium" | "high" } | null {
+  if (!ascOrder) return null;
+  const a = ascOrder.trim().toLowerCase();
+  if (!a) return null;
+  matched.push(`asc:${a}`);
+  const hasBasaltContext = landscapeHay.includes("basalt") || landscapeHay.includes("volcanic");
+  if (a.startsWith("ferrosol")) {
+    return hasBasaltContext
+      ? { cls: "basalt_clay_loam", conf: "medium" }
+      : { cls: "clay_loam", conf: "medium" };
+  }
+  if (a.startsWith("vertosol")) return { cls: "clay_heavy_clay", conf: "medium" };
+  if (a.startsWith("dermosol")) return { cls: "clay_loam", conf: "medium" };
+  if (a.startsWith("kurosol")) return { cls: "clay_loam", conf: "medium" };
+  if (a.startsWith("sodosol")) return { cls: "clay_loam", conf: "medium" };
+  if (a.startsWith("chromosol")) return { cls: "clay_loam", conf: "medium" };
+  if (a.startsWith("kandosol")) return { cls: "loam", conf: "medium" };
+  if (a.startsWith("calcarosol")) return { cls: "loam", conf: "medium" };
+  if (a.startsWith("tenosol")) return { cls: "sandy_loam", conf: "low" };
+  if (a.startsWith("rudosol")) return { cls: "sand_loamy_sand", conf: "low" };
+  if (a.startsWith("podosol")) return { cls: "sand_loamy_sand", conf: "low" };
+  if (a.startsWith("hydrosol")) return { cls: "clay_loam", conf: "low" };
+  if (a.startsWith("organosol")) return { cls: "unknown", conf: "low" };
+  if (a.startsWith("anthroposol")) return { cls: "unknown", conf: "low" };
+  return null;
+}
+
+function guessIrrigationSoilClass(
+  name: string | null,
+  salisCode: string | null,
+  ascOrder: string | null = null,
+): SoilClassGuess {
   const hay = `${name ?? ""} ${salisCode ?? ""}`.toLowerCase();
   const matched: string[] = [];
 
+  // ASC drives the answer when present.
+  const fromAsc = guessFromAsc(ascOrder, hay, matched);
+  if (fromAsc) {
+    if (hay.includes("basalt")) matched.push("basalt");
+    return {
+      irrigation_soil_class: fromAsc.cls,
+      confidence: fromAsc.conf,
+      matched_keywords: matched,
+    };
+  }
+
+  // Fallback to landscape keyword heuristic when ASC is missing or
+  // unrecognised — same logic as v1.
   const has = (kw: string) => {
     if (hay.includes(kw)) { matched.push(kw); return true; }
     return false;
@@ -319,22 +412,41 @@ function guessIrrigationSoilClass(name: string | null, salisCode: string | null)
   return { irrigation_soil_class: "unknown", confidence: "low", matched_keywords: matched };
 }
 
+interface LayerResults {
+  landscape: { feature: any; attrs: any } | null;
+  asc: { feature: any; attrs: any } | null;
+  lsc: { feature: any; attrs: any } | null;
+}
+
 function buildSoilProfileSuggestion(
-  feature: any,
+  layers: LayerResults,
   endpoint: string,
   origin: { lat: number; lon: number },
 ): Record<string, unknown> {
-  const attrs = feature?.attributes ?? {};
-  const name = typeof attrs?.NAME === "string" ? attrs.NAME : null;
-  const salisCode = typeof attrs?.SALIS_CODE === "string"
-    ? attrs.SALIS_CODE
-    : (typeof attrs?.CODE === "string" ? attrs.CODE : null);
-  const guess = guessIrrigationSoilClass(name, salisCode);
+  const lAttrs = layers.landscape?.attrs ?? {};
+  const aAttrs = layers.asc?.attrs ?? {};
+  const sAttrs = layers.lsc?.attrs ?? {};
+
+  const name = typeof lAttrs?.NAME === "string" ? lAttrs.NAME : null;
+  const salisCode = typeof lAttrs?.SALIS_CODE === "string"
+    ? lAttrs.SALIS_CODE
+    : (typeof lAttrs?.CODE === "string" ? lAttrs.CODE : null);
+
+  const ascOrder = typeof aAttrs?.ASC_order === "string" ? aAttrs.ASC_order : null;
+  const ascCode = typeof aAttrs?.ASC_code === "string" ? aAttrs.ASC_code : null;
+
+  const lscMostLimiting = num(sAttrs?.LSC_MstLmt);
+  const lscLabel = landSoilCapabilityLabel(lscMostLimiting);
+
+  const guess = guessIrrigationSoilClass(name, salisCode, ascOrder);
+
   return {
     source: "nsw_seed",
     source_provider: "nsw_seed",
-    source_dataset: "SoilLandscapes_CentralAndEasternNSW",
-    source_feature_id: salisCode ?? (attrs?.OBJECTID != null ? String(attrs.OBJECTID) : null),
+    source_dataset: "SoilsNearMe_Combined",
+    source_feature_id: salisCode
+      ?? (lAttrs?.OBJECTID != null ? String(lAttrs.OBJECTID) : null)
+      ?? (aAttrs?.OBJECTID != null ? String(aAttrs.OBJECTID) : null),
     source_name: name,
     source_endpoint: endpoint,
     country_code: "AU",
@@ -346,10 +458,18 @@ function buildSoilProfileSuggestion(
     lookup_longitude: origin.lon,
     soil_landscape: name,
     soil_landscape_code: salisCode,
+    australian_soil_classification: ascOrder,
+    australian_soil_classification_code: ascCode,
+    land_soil_capability: lscLabel,
+    land_soil_capability_class: lscMostLimiting,
     model_version: MODEL_VERSION,
     is_manual_override: false,
     disclaimer: DISCLAIMER,
-    raw_attributes: attrs,
+    raw_attributes: {
+      landscape: lAttrs,
+      asc: aAttrs,
+      lsc: sAttrs,
+    },
   };
 }
 
@@ -409,6 +529,8 @@ Deno.serve(async (req: Request) => {
     return json({
       success: true,
       endpoint,
+      asc_endpoint: getAscUrl(),
+      lsc_endpoint: getLscUrl(),
       using_default_endpoint: usingDefaultEndpoint,
       has_api_key: apiKey != null,
       sends_token_by_default: apiKey != null && shouldSendTokenByDefault(endpoint),
@@ -508,43 +630,57 @@ async function runLookup(
   lon: number,
   paddockId: string | null,
 ): Promise<Response> {
-  const r = await querySoilLandscape(endpoint, apiKey, lat, lon);
+  const ascEndpoint = getAscUrl();
+  const lscEndpoint = getLscUrl();
+
+  // Query all three layers in parallel. ASC + LSC are public and never
+  // need a token; only the (configurable) landscape endpoint may use one.
+  const [landscape, asc, lsc] = await Promise.all([
+    querySoilLandscape(endpoint, apiKey, lat, lon),
+    querySoilLandscape(ascEndpoint, null, lat, lon),
+    querySoilLandscape(lscEndpoint, null, lat, lon),
+  ]);
+
   const diagnostics = {
     endpoint,
+    asc_endpoint: ascEndpoint,
+    lsc_endpoint: lscEndpoint,
     using_default_endpoint: !Deno.env.get("NSW_SEED_SOIL_LANDSCAPE_URL")?.trim(),
-    attempts: r.attempts.map((a) => ({
-      url_safe: a.url_safe,
-      token_used: a.token_used,
-      http_status: a.status,
-      arcgis_error: a.body && typeof a.body === "object" ? a.body.error ?? null : null,
-    })),
+    layers: {
+      landscape: summariseAttempts(landscape),
+      asc: summariseAttempts(asc),
+      lsc: summariseAttempts(lsc),
+    },
   };
-  if (!r.ok) {
+
+  // Treat the lookup as upstream-failed only when the primary landscape
+  // layer fails AND ASC also fails — if at least one classification layer
+  // succeeded we can still return a useful suggestion.
+  const landscapeArcError = landscape.body && typeof landscape.body === "object" && landscape.body.error;
+  const ascArcError = asc.body && typeof asc.body === "object" && asc.body.error;
+  const lscArcError = lsc.body && typeof lsc.body === "object" && lsc.body.error;
+  const landscapeOk = landscape.ok && !landscapeArcError;
+  const ascOk = asc.ok && !ascArcError;
+  const lscOk = lsc.ok && !lscArcError;
+
+  if (!landscapeOk && !ascOk && !lscOk) {
     return json({
       success: false,
       error: "NSW SEED upstream request failed.",
       reason: "upstream_error",
-      http_status: r.status,
-      upstream: r.body,
+      http_status: landscape.status,
+      upstream: landscape.body,
       diagnostics,
       endpoint,
       disclaimer: DISCLAIMER,
     }, 502);
   }
-  // ArcGIS sometimes returns 200 with an `error` body for bad params.
-  if (r.body && typeof r.body === "object" && r.body.error) {
-    return json({
-      success: false,
-      error: "NSW SEED returned an error.",
-      reason: "upstream_arcgis_error",
-      upstream: r.body.error,
-      diagnostics,
-      endpoint,
-      disclaimer: DISCLAIMER,
-    }, 502);
-  }
-  const features = Array.isArray(r.body?.features) ? r.body.features : [];
-  if (features.length === 0) {
+
+  const landscapeFeatures = landscapeOk && Array.isArray(landscape.body?.features) ? landscape.body.features : [];
+  const ascFeatures = ascOk && Array.isArray(asc.body?.features) ? asc.body.features : [];
+  const lscFeatures = lscOk && Array.isArray(lsc.body?.features) ? lsc.body.features : [];
+
+  if (landscapeFeatures.length === 0 && ascFeatures.length === 0 && lscFeatures.length === 0) {
     return json({
       success: true,
       found: false,
@@ -552,23 +688,56 @@ async function runLookup(
       lookup_longitude: lon,
       paddock_id: paddockId,
       message:
-        "No NSW SEED soil landscape polygon was found at this location. The point may be outside central/eastern NSW coverage.",
+        "No NSW SEED soil mapping polygon was found at this location. The point may be outside the central/eastern NSW coverage.",
+      diagnostics,
       endpoint,
       disclaimer: DISCLAIMER,
       model_version: MODEL_VERSION,
     });
   }
-  const suggestion = buildSoilProfileSuggestion(features[0], endpoint, { lat, lon });
+
+  const layerResults: LayerResults = {
+    landscape: landscapeFeatures.length > 0
+      ? { feature: landscapeFeatures[0], attrs: landscapeFeatures[0]?.attributes ?? {} }
+      : null,
+    asc: ascFeatures.length > 0
+      ? { feature: ascFeatures[0], attrs: ascFeatures[0]?.attributes ?? {} }
+      : null,
+    lsc: lscFeatures.length > 0
+      ? { feature: lscFeatures[0], attrs: lscFeatures[0]?.attributes ?? {} }
+      : null,
+  };
+
+  const suggestion = buildSoilProfileSuggestion(layerResults, endpoint, { lat, lon });
   return json({
     success: true,
     found: true,
     paddock_id: paddockId,
     suggestion,
-    feature_count: features.length,
-    raw_feature: features[0],
+    feature_count: landscapeFeatures.length + ascFeatures.length + lscFeatures.length,
+    raw_features: {
+      landscape: layerResults.landscape?.feature ?? null,
+      asc: layerResults.asc?.feature ?? null,
+      lsc: layerResults.lsc?.feature ?? null,
+    },
     diagnostics,
     endpoint,
     disclaimer: DISCLAIMER,
     model_version: MODEL_VERSION,
   });
+}
+
+function summariseAttempts(r: { ok: boolean; status: number; body: any; attempts: QueryAttempt[] }) {
+  return {
+    ok: r.ok,
+    http_status: r.status,
+    feature_count: Array.isArray(r.body?.features) ? r.body.features.length : 0,
+    arcgis_error: r.body && typeof r.body === "object" ? r.body.error ?? null : null,
+    attempts: r.attempts.map((a) => ({
+      url_safe: a.url_safe,
+      token_used: a.token_used,
+      http_status: a.status,
+      arcgis_error: a.body && typeof a.body === "object" ? a.body.error ?? null : null,
+    })),
+  };
 }

@@ -12,6 +12,10 @@ nonisolated struct NSWSeedSoilSuggestion: Sendable, Hashable {
     let confidence: String?
     let soilLandscape: String?
     let soilLandscapeCode: String?
+    let australianSoilClassification: String?
+    let australianSoilClassificationCode: String?
+    let landSoilCapability: String?
+    let landSoilCapabilityClass: Int?
     let sourceFeatureId: String?
     let sourceName: String?
     let sourceDataset: String?
@@ -149,11 +153,21 @@ nonisolated struct NSWSeedSoilLookupService: Sendable {
             return nil
         }
         let keywords = (dict["matched_keywords"] as? [String]) ?? []
+        let lscClass: Int? = {
+            if let i = dict["land_soil_capability_class"] as? Int { return i }
+            if let d = dict["land_soil_capability_class"] as? Double { return Int(d) }
+            if let n = dict["land_soil_capability_class"] as? NSNumber { return n.intValue }
+            return nil
+        }()
         return NSWSeedSoilSuggestion(
             irrigationSoilClass: str("irrigation_soil_class"),
             confidence: str("confidence"),
             soilLandscape: str("soil_landscape"),
             soilLandscapeCode: str("soil_landscape_code"),
+            australianSoilClassification: str("australian_soil_classification"),
+            australianSoilClassificationCode: str("australian_soil_classification_code"),
+            landSoilCapability: str("land_soil_capability"),
+            landSoilCapabilityClass: lscClass,
             sourceFeatureId: str("source_feature_id"),
             sourceName: str("source_name"),
             sourceDataset: str("source_dataset"),
