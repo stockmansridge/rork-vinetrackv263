@@ -213,33 +213,75 @@ struct IrrigationRecommendationView: View {
         store.settings.vineyardLongitude ?? store.paddockCentroidLongitude
     }
 
-    /// Resolved irrigation application rate (mm/hr) for the current
-    /// selection.
+    /// Source describing where the resolved application rate came from.
+    /// Used in the wizard/Settings note so the user can see whether the
+    /// rate is from a vineyard default, a paddock system rate, an
+    /// aggregate of paddock rates, or a manual typed override.
+    private enum AppRateSource: Equatable {
+        case none
+        case typedOverride
+        case paddockSystemRate
+        case vineyardDefault
+        case areaWeightedAverage(count: Int, missing: Int)
+        case simpleAverage(count: Int, missing: Int)
+
+        var label: String {
+            switch self {
+            case .none: return ""
+            case .typedOverride: return "Manual override"
+            case .paddockSystemRate: return "From this block's system rate"
+            case .vineyardDefault: return "Vineyard default"
+            case .areaWeightedAverage(let count, let missing):
+                let base = "Area-weighted average of \(count) block\(count == 1 ? "" : "s")"
+                return missing > 0 ? "\(base) (\(missing) without rate)" : base
+            case .simpleAverage(let count, let missing):
+                let base = "Average of \(count) block\(count == 1 ? "" : "s")"
+                return missing > 0 ? "\(base) (\(missing) without rate)" : base
+            }
+        }
+    }
+
+    /// Computed (rate, source) so UI can show provenance and the wizard
+    /// can verify completeness without re-implementing the same lookup.
     ///
     /// Block selected: typed value → paddock system rate → vineyard default.
     /// Whole Vineyard: typed value → vineyard default → area-weighted
-    /// aggregate of paddock system rates.
-    private var resolvedApplicationRateMmPerHour: Double {
+    /// aggregate of paddock system rates → simple average.
+    private var resolvedAppRateAndSource: (rate: Double, source: AppRateSource) {
         let typed = parse(applicationRateText)
-        if typed > 0 { return typed }
         if useWholeVineyard {
+            if typed > 0 { return (typed, .typedOverride) }
             let defaultRate = store.settings.irrigationDefaultApplicationRateMmPerHour
-            if defaultRate > 0 { return defaultRate }
-            let rates = vineyardPaddocks.compactMap { $0.mmPerHour }.filter { $0 > 0 }
-            if !rates.isEmpty {
-                let weighted = vineyardPaddocks.reduce(into: (sum: 0.0, weight: 0.0)) { acc, p in
-                    if let r = p.mmPerHour, r > 0, p.areaHectares > 0 {
-                        acc.sum += r * p.areaHectares
-                        acc.weight += p.areaHectares
-                    }
+            if defaultRate > 0 { return (defaultRate, .vineyardDefault) }
+            let paddocks = vineyardPaddocks
+            let withRate = paddocks.filter { ($0.mmPerHour ?? 0) > 0 }
+            let missing = max(0, paddocks.count - withRate.count)
+            guard !withRate.isEmpty else { return (0, .none) }
+            let weighted = withRate.reduce(into: (sum: 0.0, weight: 0.0)) { acc, p in
+                if let r = p.mmPerHour, r > 0, p.areaHectares > 0 {
+                    acc.sum += r * p.areaHectares
+                    acc.weight += p.areaHectares
                 }
-                if weighted.weight > 0 { return weighted.sum / weighted.weight }
-                return rates.reduce(0, +) / Double(rates.count)
             }
-            return 0
+            if weighted.weight > 0 {
+                return (weighted.sum / weighted.weight,
+                        .areaWeightedAverage(count: withRate.count, missing: missing))
+            }
+            let rates = withRate.compactMap { $0.mmPerHour }
+            let avg = rates.reduce(0, +) / Double(rates.count)
+            return (avg, .simpleAverage(count: withRate.count, missing: missing))
         }
-        if let mmHr = selectedPaddock?.mmPerHour, mmHr > 0 { return mmHr }
-        return store.settings.irrigationDefaultApplicationRateMmPerHour
+        if typed > 0 { return (typed, .typedOverride) }
+        if let mmHr = selectedPaddock?.mmPerHour, mmHr > 0 {
+            return (mmHr, .paddockSystemRate)
+        }
+        let def = store.settings.irrigationDefaultApplicationRateMmPerHour
+        if def > 0 { return (def, .vineyardDefault) }
+        return (0, .none)
+    }
+
+    private var resolvedApplicationRateMmPerHour: Double {
+        resolvedAppRateAndSource.rate
     }
 
     private var settings: IrrigationSettings {
@@ -761,9 +803,15 @@ struct IrrigationRecommendationView: View {
                        isComplete: weatherOK),
             WizardItem(id: "appRate", title: "Irrigation application rate",
                        detail: appRateOK
-                       ? String(format: "%.2f mm/hr", resolvedApplicationRateMmPerHour)
+                       ? {
+                           let r = resolvedAppRateAndSource
+                           let label = r.source.label
+                           return label.isEmpty
+                               ? String(format: "%.2f mm/hr", r.rate)
+                               : String(format: "%.2f mm/hr — %@", r.rate, label)
+                       }()
                        : (useWholeVineyard
-                          ? "Set vineyard irrigation application rate in Settings below."
+                          ? "Set irrigation application rate in block settings or add a vineyard default."
                           : "Enter mm/hr below in Settings."),
                        isComplete: appRateOK),
             WizardItem(id: "soil", title: "Soil profile / buffer",
@@ -1457,23 +1505,29 @@ struct IrrigationRecommendationView: View {
     // MARK: - Settings (collapsible)
 
     private var appRateIsSiteData: Bool {
-        if useWholeVineyard {
-            return parse(applicationRateText) <= 0
-                && store.settings.irrigationDefaultApplicationRateMmPerHour > 0
+        let src = resolvedAppRateAndSource.source
+        switch src {
+        case .paddockSystemRate, .vineyardDefault,
+             .areaWeightedAverage, .simpleAverage:
+            return resolvedAppRateAndSource.rate > 0
+        case .typedOverride, .none:
+            return false
         }
-        return (selectedPaddock?.mmPerHour ?? 0) > 0
     }
 
     private var appRateSiteDataNote: String? {
-        if useWholeVineyard {
-            if parse(applicationRateText) <= 0
-                && store.settings.irrigationDefaultApplicationRateMmPerHour > 0 {
-                return String(format: "Using vineyard default rate (%.2f mm/hr).",
-                              store.settings.irrigationDefaultApplicationRateMmPerHour)
-            }
+        let resolved = resolvedAppRateAndSource
+        guard resolved.rate > 0 else { return nil }
+        switch resolved.source {
+        case .typedOverride, .none:
             return nil
+        case .paddockSystemRate:
+            return "Pre-filled from this paddock's system rate."
+        case .vineyardDefault:
+            return String(format: "Using vineyard default rate (%.2f mm/hr).", resolved.rate)
+        case .areaWeightedAverage, .simpleAverage:
+            return String(format: "%.2f mm/hr — %@.", resolved.rate, resolved.source.label)
         }
-        return appRateIsSiteData ? "Pre-filled from this paddock's system rate." : nil
     }
 
     private var settingsSection: some View {
@@ -1670,11 +1724,21 @@ struct IrrigationRecommendationView: View {
     }
 
     private func applyPaddockDefaults() {
+        // Don't clobber a user-typed override. Only pre-fill when the
+        // current text is empty or zero — this lets toggling Whole
+        // Vineyard surface the resolved rate (vineyard default or the
+        // average of configured block rates) directly in the field.
         if useWholeVineyard {
+            if parse(applicationRateText) > 0 { return }
             let def = store.settings.irrigationDefaultApplicationRateMmPerHour
             if def > 0 {
                 applicationRateText = String(format: "%.2f", def)
-            } else if parse(applicationRateText) <= 0 {
+                return
+            }
+            let resolved = resolvedAppRateAndSource
+            if resolved.rate > 0 {
+                applicationRateText = String(format: "%.2f", resolved.rate)
+            } else {
                 applicationRateText = ""
             }
             return
