@@ -50,6 +50,13 @@ struct SoilProfileEditorSheet: View {
     @State private var nswSeedRawResponse: [String: Any]?
     @State private var nswSeedError: String?
     @State private var showOverwriteConfirm: Bool = false
+    /// The most recently fetched SEED suggestion that has been auto-applied
+    /// to the form. While this is non-nil and `hasManualEditsSinceSeed` is
+    /// false, the toolbar Save button will persist using NSW SEED metadata
+    /// (source = nsw_seed, isManualOverride = false) instead of overwriting
+    /// the form values as a manual override.
+    @State private var appliedSeedSuggestion: NSWSeedSoilSuggestion?
+    @State private var hasManualEditsSinceSeed: Bool = false
 
     private let repository: any SoilProfileRepositoryProtocol = SupabaseSoilProfileRepository()
     private let nswSeedService = NSWSeedSoilLookupService()
@@ -345,6 +352,13 @@ struct SoilProfileEditorSheet: View {
             if let suggestion = result.suggestion, result.found {
                 nswSeedSuggestion = suggestion
                 nswSeedMessage = nil
+                // Auto-fill the editor immediately so that whether the user
+                // taps Apply or the toolbar Save, the SEED values + metadata
+                // are persisted (not silently overwritten as a manual
+                // override).
+                if !hasUserTunedValues {
+                    autoFillFromSuggestion(suggestion)
+                }
             } else {
                 nswSeedMessage = result.message ?? "No NSW SEED soil match found at this paddock's centroid."
             }
@@ -356,15 +370,22 @@ struct SoilProfileEditorSheet: View {
     }
 
     private func applySuggestion(_ s: NSWSeedSoilSuggestion) {
+        autoFillFromSuggestion(s)
+        clearSuggestion()
+        Task { await saveFromSuggestion(s) }
+    }
+
+    /// Auto-fill the form from a SEED suggestion without saving. Called as
+    /// soon as the suggestion arrives so the editor reflects NSW SEED
+    /// values even before the user taps Apply or Save.
+    private func autoFillFromSuggestion(_ s: NSWSeedSoilSuggestion) {
         if let raw = s.irrigationSoilClass,
            let cls = IrrigationSoilClass(rawValue: raw) {
             selectedClass = cls
-            // Pre-fill numeric values from the matching soil class defaults
-            // so the user sees a complete, editable profile.
             applyDefaultsForSelectedClass()
         }
-        clearSuggestion()
-        Task { await saveFromSuggestion(s) }
+        appliedSeedSuggestion = s
+        hasManualEditsSinceSeed = false
     }
 
     /// Writes the suggestion (and its current numeric values) to
@@ -433,6 +454,7 @@ struct SoilProfileEditorSheet: View {
             }
             .pickerStyle(.menu)
             .onChange(of: selectedClass) { _, _ in
+                if appliedSeedSuggestion != nil { hasManualEditsSinceSeed = true }
                 applyDefaultsForSelectedClass()
             }
             if let def = currentDefault, let desc = def.description, !desc.isEmpty {
@@ -459,6 +481,9 @@ struct SoilProfileEditorSheet: View {
                     .multilineTextAlignment(.trailing)
                     .frame(maxWidth: 120)
                     .disabled(!canEdit)
+                    .onChange(of: awcText) { _, _ in
+                        if appliedSeedSuggestion != nil { hasManualEditsSinceSeed = true }
+                    }
             }
             HStack {
                 Text("Effective root depth (m)")
@@ -468,6 +493,9 @@ struct SoilProfileEditorSheet: View {
                     .multilineTextAlignment(.trailing)
                     .frame(maxWidth: 120)
                     .disabled(!canEdit)
+                    .onChange(of: rootDepthText) { _, _ in
+                        if appliedSeedSuggestion != nil { hasManualEditsSinceSeed = true }
+                    }
             }
             HStack {
                 Text("Allowed depletion (%)")
@@ -477,6 +505,9 @@ struct SoilProfileEditorSheet: View {
                     .multilineTextAlignment(.trailing)
                     .frame(maxWidth: 120)
                     .disabled(!canEdit)
+                    .onChange(of: allowedDepletionText) { _, _ in
+                        if appliedSeedSuggestion != nil { hasManualEditsSinceSeed = true }
+                    }
             }
         } header: {
             Text("Soil water values")
@@ -594,6 +625,14 @@ struct SoilProfileEditorSheet: View {
 
     private func save() async {
         guard canEdit else { return }
+        // If the user fetched a SEED suggestion and has NOT edited any
+        // fields since it was auto-applied, persist it as a NSW SEED row
+        // (preserves source / confidence / landscape / ASC / LSC) instead
+        // of overwriting as a manual override.
+        if let seed = appliedSeedSuggestion, !hasManualEditsSinceSeed {
+            await saveFromSuggestion(seed)
+            return
+        }
         isSaving = true
         defer { isSaving = false }
         errorMessage = nil

@@ -558,6 +558,18 @@ struct EditPaddockSheet: View {
                     .foregroundStyle(.secondary)
             }
 
+            HStack {
+                Text("Row Spacing")
+                    .font(.subheadline)
+                Spacer()
+                Text(rowWidth > 0 ? String(format: "%.2f", rowWidth) : "-")
+                    .font(.system(.subheadline, design: .monospaced).weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text("m")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             if let flow = irrigationFlowPerEmitter, let spacing = irrigationEmitterSpacing, rowWidth > 0 {
                 let emittersPerHa = 10_000.0 / (rowWidth * spacing)
                 let litresPerHaHr = emittersPerHa * flow
