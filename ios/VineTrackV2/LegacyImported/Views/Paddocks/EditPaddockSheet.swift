@@ -526,15 +526,27 @@ struct EditPaddockSheet: View {
         Section {
             ForEach(varietyAllocations) { allocation in
                 VStack(alignment: .leading, spacing: 8) {
-                    let variety = store.grapeVariety(for: allocation.varietyId)
+                    let resolved = PaddockVarietyResolver.resolve(
+                        allocation: allocation,
+                        varieties: store.grapeVarieties
+                    )
+                    let variety = resolved.varietyId.flatMap { store.grapeVariety(for: $0) }
+                    let nameSnapshot = allocation.name?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let displayName: String = resolved.displayName
+                        ?? (nameSnapshot.flatMap { $0.isEmpty ? nil : $0 })
+                        ?? "Unknown"
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(variety?.name ?? "Unknown")
+                            Text(displayName)
                                 .font(.subheadline.weight(.semibold))
                             if let v = variety {
                                 Text("Optimal: \(Int(v.optimalGDD)) GDD")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
+                            } else if displayName != "Unknown" {
+                                Text("Not in master list — add in Settings → Grape Varieties")
+                                    .font(.caption2)
+                                    .foregroundStyle(.orange)
                             }
                         }
                         Spacer()
