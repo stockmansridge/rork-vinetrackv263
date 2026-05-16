@@ -383,6 +383,8 @@ struct IrrigationRecommendationView: View {
             }
             // Recommendation immediately after the wizard.
             recommendationSection
+            // Visible while we are debugging the Whole Vineyard rate resolver.
+            rateResolverDiagnosticsSection
             // Status / sources card.
             statusSection
             recentRainSection
@@ -428,6 +430,7 @@ struct IrrigationRecommendationView: View {
             Task { await loadSoilProfile() }
             Task { await loadVineyardSoilProfiles() }
             Task { await loadVineyardDefaultSoilProfile() }
+            logRateResolverDiagnostics(trigger: "onAppear")
         }
         .onChange(of: store.selectedVineyardId) { _, _ in
             didLoadWeatherWizardStatus = false
@@ -449,6 +452,7 @@ struct IrrigationRecommendationView: View {
         }
         .onChange(of: useWholeVineyard) { _, _ in
             applyPaddockDefaults()
+            logRateResolverDiagnostics(trigger: "useWholeVineyard changed")
             Task { await loadVineyardSoilProfiles() }
             Task { await loadVineyardDefaultSoilProfile(force: true) }
         }
@@ -1503,6 +1507,164 @@ struct IrrigationRecommendationView: View {
     }
 
     // MARK: - Settings (collapsible)
+
+    // MARK: - Application rate resolver diagnostics
+
+    private struct PaddockRateDiagnostic: Identifiable {
+        let id: UUID
+        let name: String
+        let areaHectares: Double
+        let flowPerEmitter: Double?
+        let emitterSpacing: Double?
+        let rowWidth: Double
+        let mmPerHour: Double?
+        let included: Bool
+        let exclusionReason: String?
+    }
+
+    private struct RateResolverDiagnostic {
+        let mode: String
+        let vineyardId: UUID?
+        let totalPaddocks: Int
+        let paddocksWithRate: Int
+        let resolvedRate: Double
+        let sourceLabel: String
+        let paddocks: [PaddockRateDiagnostic]
+    }
+
+    private var appRateResolverDiagnostics: RateResolverDiagnostic {
+        let paddocks = vineyardPaddocks
+        let details: [PaddockRateDiagnostic] = paddocks.map { p in
+            let mm = p.mmPerHour
+            var reason: String? = nil
+            if p.flowPerEmitter == nil || (p.flowPerEmitter ?? 0) <= 0 {
+                reason = "missing flowPerEmitter"
+            } else if p.emitterSpacing == nil || (p.emitterSpacing ?? 0) <= 0 {
+                reason = "missing emitterSpacing"
+            } else if p.rowWidth <= 0 {
+                reason = "missing rowWidth"
+            } else if (mm ?? 0) <= 0 {
+                reason = "mmPerHour computed as 0"
+            }
+            return PaddockRateDiagnostic(
+                id: p.id,
+                name: p.name.isEmpty ? "(unnamed)" : p.name,
+                areaHectares: p.areaHectares,
+                flowPerEmitter: p.flowPerEmitter,
+                emitterSpacing: p.emitterSpacing,
+                rowWidth: p.rowWidth,
+                mmPerHour: mm,
+                included: (mm ?? 0) > 0,
+                exclusionReason: reason
+            )
+        }
+        let resolved = resolvedAppRateAndSource
+        return RateResolverDiagnostic(
+            mode: useWholeVineyard ? "Whole Vineyard" : "Selected block",
+            vineyardId: store.selectedVineyard?.id,
+            totalPaddocks: paddocks.count,
+            paddocksWithRate: details.filter { $0.included }.count,
+            resolvedRate: resolved.rate,
+            sourceLabel: resolved.source.label.isEmpty ? "none" : resolved.source.label,
+            paddocks: details
+        )
+    }
+
+    @ViewBuilder
+    private var rateResolverDiagnosticsSection: some View {
+        let diag = appRateResolverDiagnostics
+        Section {
+            DisclosureGroup {
+                VStack(alignment: .leading, spacing: 6) {
+                    diagRow("Mode", diag.mode)
+                    diagRow("Vineyard id", diag.vineyardId?.uuidString ?? "—")
+                    diagRow("Paddocks loaded", "\(diag.totalPaddocks)")
+                    diagRow("Configured rates found", "\(diag.paddocksWithRate)")
+                    diagRow("Resolved rate",
+                            diag.resolvedRate > 0
+                            ? String(format: "%.2f mm/hr", diag.resolvedRate)
+                            : "—")
+                    diagRow("Source", diag.sourceLabel)
+                    if !diag.paddocks.isEmpty {
+                        Divider().padding(.vertical, 2)
+                        ForEach(diag.paddocks) { (p: PaddockRateDiagnostic) in
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: p.included ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                        .foregroundStyle(p.included ? VineyardTheme.leafGreen : .orange)
+                                        .font(.caption2)
+                                    Text(p.name).font(.caption.weight(.semibold))
+                                }
+                                Text(String(format: "area %.2f ha • flow %@ L/hr • emitter %@ m • row %.2f m",
+                                            p.areaHectares,
+                                            p.flowPerEmitter.map { String(format: "%.2f", $0) } ?? "—",
+                                            p.emitterSpacing.map { String(format: "%.2f", $0) } ?? "—",
+                                            p.rowWidth))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                Text("mmPerHour = \(p.mmPerHour.map { String(format: "%.3f", $0) } ?? "nil")" +
+                                     (p.exclusionReason.map { " — \($0)" } ?? ""))
+                                    .font(.caption2)
+                                    .foregroundStyle(p.included ? Color.secondary : Color.orange)
+                            }
+                            .padding(.vertical, 2)
+                        }
+                    } else {
+                        Text("No paddocks loaded for this vineyard.")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                }
+                .padding(.vertical, 4)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "ladybug")
+                        .foregroundStyle(.secondary)
+                    Text("Rate resolver diagnostics")
+                        .font(.caption.weight(.semibold))
+                    Spacer()
+                    Text(diag.resolvedRate > 0
+                         ? String(format: "%.2f mm/hr", diag.resolvedRate)
+                         : "—")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+        } footer: {
+            Text("Debug panel for the Whole Vineyard irrigation rate. Remove once verified.")
+        }
+    }
+
+    private func diagRow(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .top) {
+            Text(label).font(.caption2).foregroundStyle(.secondary)
+            Spacer(minLength: 6)
+            Text(value).font(.caption2.monospacedDigit())
+                .multilineTextAlignment(.trailing)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+    }
+
+    private func logRateResolverDiagnostics(trigger: String) {
+        let d = appRateResolverDiagnostics
+        var lines: [String] = []
+        lines.append("[IrrigationRateResolver] trigger=\(trigger)")
+        lines.append("  mode=\(d.mode) vineyardId=\(d.vineyardId?.uuidString ?? "nil")")
+        lines.append("  paddocksLoaded=\(d.totalPaddocks) withRate=\(d.paddocksWithRate)")
+        lines.append(String(format: "  resolvedRate=%.4f source=%@", d.resolvedRate, d.sourceLabel))
+        for p in d.paddocks {
+            lines.append(String(format: "   • %@ area=%.2f flow=%@ emitter=%@ row=%.2f mmPerHour=%@ included=%@ reason=%@",
+                                p.name,
+                                p.areaHectares,
+                                p.flowPerEmitter.map { String(format: "%.2f", $0) } ?? "nil",
+                                p.emitterSpacing.map { String(format: "%.2f", $0) } ?? "nil",
+                                p.rowWidth,
+                                p.mmPerHour.map { String(format: "%.4f", $0) } ?? "nil",
+                                p.included ? "yes" : "no",
+                                p.exclusionReason ?? "-"))
+        }
+        print(lines.joined(separator: "\n"))
+    }
 
     private var appRateIsSiteData: Bool {
         let src = resolvedAppRateAndSource.source
