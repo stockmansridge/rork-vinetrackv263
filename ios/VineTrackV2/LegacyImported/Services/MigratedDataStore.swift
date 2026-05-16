@@ -407,6 +407,11 @@ final class MigratedDataStore {
         paddocks = allPaddocks.filter { $0.vineyardId == vineyardId }
 
         loadButtonsForCurrentVineyard()
+
+        // After paddocks + varieties are loaded for this vineyard, repair
+        // any drift between built-in variety ids and existing block
+        // allocations (e.g. duplicate seedings from earlier app versions).
+        GrapeVarietyCanonicalization.run(store: self)
     }
 
     /// Clear in-memory state without touching disk.
@@ -787,6 +792,16 @@ final class MigratedDataStore {
     }
 
     // MARK: - Paddock CRUD
+
+    /// Public hook used by `GrapeVarietyCanonicalization` to persist
+    /// repaired allocations back to disk and notify sync of the changes.
+    func persistPaddocksAfterRepair() {
+        savePaddocksToDisk()
+        guard let vineyardId = selectedVineyardId else { return }
+        for paddock in paddocks where paddock.vineyardId == vineyardId {
+            onPaddockChanged?(paddock.id)
+        }
+    }
 
     private func savePaddocksToDisk() {
         guard let vineyardId = selectedVineyardId else { return }

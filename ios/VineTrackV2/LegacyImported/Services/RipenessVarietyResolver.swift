@@ -77,8 +77,34 @@ enum RipenessVarietyResolver {
     /// Resolve a specific allocation's variety + target status. Used by
     /// surfaces that show one row per allocation (e.g. multi-variety
     /// blocks in the Optimal Ripeness list).
+    ///
+    /// Resolution order:
+    /// 1. id match against `store.grapeVarieties`.
+    /// 2. name-snapshot match (canonical + built-in alias) — recovers
+    ///    allocations written before built-in varieties had stable ids.
     static func resolve(allocation: PaddockVarietyAllocation, store: MigratedDataStore) -> RipenessVarietyResolution {
-        if let variety = store.grapeVariety(for: allocation.varietyId) {
+        let resolvedVariety: GrapeVariety? = {
+            if let v = store.grapeVariety(for: allocation.varietyId) {
+                return v
+            }
+            // Name fallback. Honours the canonical-name dictionary and the
+            // built-in alias table so e.g. "Syrah" resolves to Shiraz.
+            guard let raw = allocation.name?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !raw.isEmpty else { return nil }
+            let canonical = BuiltInGrapeVarietyCatalog.canonical(raw)
+            if let byName = store.grapeVarieties.first(where: {
+                BuiltInGrapeVarietyCatalog.canonical($0.name) == canonical
+            }) {
+                return byName
+            }
+            if let entry = BuiltInGrapeVarietyCatalog.entry(matching: raw),
+               let byKey = store.grapeVarieties.first(where: { $0.key == entry.key }) {
+                return byKey
+            }
+            return nil
+        }()
+
+        if let variety = resolvedVariety {
             if variety.optimalGDD > 0 {
                 return RipenessVarietyResolution(
                     primaryAllocation: allocation,
@@ -117,12 +143,14 @@ enum RipenessVarietyResolver {
     }
 
     /// Allocation ids that point at varieties the master list cannot
-    /// resolve. Used to surface "unrecognised variety" warnings.
+    /// resolve, even after name-snapshot fallback. Used to surface
+    /// "unrecognised variety" warnings.
     static func unresolvedAllocationVarietyIds(store: MigratedDataStore) -> Set<UUID> {
         var ids: Set<UUID> = []
         for paddock in store.orderedPaddocks {
             for alloc in paddock.varietyAllocations {
-                if store.grapeVariety(for: alloc.varietyId) == nil {
+                let resolution = resolve(allocation: alloc, store: store)
+                if resolution.variety == nil {
                     ids.insert(alloc.varietyId)
                 }
             }

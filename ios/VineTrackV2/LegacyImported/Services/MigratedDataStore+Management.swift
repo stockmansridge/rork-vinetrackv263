@@ -421,10 +421,40 @@ extension MigratedDataStore {
         persistenceStore.save(all, key: MgmtKeys.grapeVarieties)
     }
 
+    /// Public hook used by `GrapeVarietyCanonicalization` to persist
+    /// repaired variety rows for the current vineyard.
+    func persistGrapeVarieties() {
+        saveGrapeVarietiesToDisk()
+    }
+
     func addGrapeVariety(_ variety: GrapeVariety) {
         guard let vineyardId = selectedVineyardId else { return }
         var entry = variety
         entry.vineyardId = vineyardId
+        // De-duplicate by canonical name within the vineyard. If a variety
+        // with the same canonical name already exists, prefer it and do
+        // not create a parallel row with a different id (which is what
+        // caused the historical "Unknown variety" regression).
+        let canonical = BuiltInGrapeVarietyCatalog.canonical(entry.name)
+        if !canonical.isEmpty,
+           grapeVarieties.contains(where: {
+               $0.vineyardId == vineyardId &&
+               BuiltInGrapeVarietyCatalog.canonical($0.name) == canonical
+           }) {
+            return
+        }
+        // If this matches a built-in catalog entry, stamp the stable
+        // key + deterministic id so it survives device migration.
+        if let catalog = BuiltInGrapeVarietyCatalog.entry(matching: entry.name) {
+            entry = GrapeVariety(
+                id: GrapeVariety.deterministicID(vineyardId: vineyardId, key: catalog.key),
+                vineyardId: vineyardId,
+                name: catalog.name,
+                optimalGDD: entry.optimalGDD > 0 ? entry.optimalGDD : catalog.optimalGDD,
+                isBuiltIn: true,
+                key: catalog.key
+            )
+        }
         grapeVarieties.append(entry)
         saveGrapeVarietiesToDisk()
     }
