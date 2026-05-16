@@ -18,6 +18,7 @@ struct NewBackendRootView: View {
     @State private var disclaimerError: String?
     @State private var didApplyDefaultVineyard: Bool = false
     @State private var isLoadingVineyards: Bool = false
+    @State private var lastScenePhase: ScenePhase = .active
 
     private let disclaimerRepository: any DisclaimerRepositoryProtocol = SupabaseDisclaimerRepository(currentVersion: DisclaimerInfo.version)
     private let vineyardRepository: any VineyardRepositoryProtocol = SupabaseVineyardRepository()
@@ -111,9 +112,15 @@ struct NewBackendRootView: View {
             }
         }
         .onChange(of: scenePhase) { _, newPhase in
+            // Re-arm the biometric lock whenever the app returns from
+            // background/inactive so Face ID is required again on resume.
             if newPhase == .active && auth.isSignedIn {
+                if lastScenePhase != .active {
+                    biometric.lockIfEnabled()
+                }
                 Task { await auth.loadPendingInvitations() }
             }
+            lastScenePhase = newPhase
         }
     }
 

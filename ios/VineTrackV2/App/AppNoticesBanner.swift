@@ -2,16 +2,26 @@ import SwiftUI
 
 /// Dismissible, swipable banner shown on the Home screen for currently
 /// active, non-dismissed app-wide notices. Multiple notices are paged
-/// horizontally so the banner only ever takes a single card's worth of
-/// vertical space.
+/// horizontally. The banner measures its tallest notice card and sizes
+/// the underlying `TabView` to fit so long, wrapped messages aren't
+/// clipped (the page style of `TabView` does not self-size).
 struct AppNoticesBanner: View {
     @Environment(AppNoticeService.self) private var service
     @State private var selection: UUID?
+    @State private var measuredHeight: CGFloat = 0
 
     var body: some View {
         let visible = service.visibleNotices
         if visible.isEmpty {
             EmptyView()
+        } else if visible.count == 1, let only = visible.first {
+            // Single notice: skip the carousel entirely so the card can
+            // grow naturally with its content.
+            NoticeBannerCard(notice: only) {
+                dismiss(only.id, visible: visible)
+            }
+            .padding(.horizontal)
+            .animation(.easeInOut(duration: 0.18), value: visible.map(\.id))
         } else {
             VStack(spacing: 6) {
                 TabView(selection: $selection) {
@@ -20,20 +30,50 @@ struct AppNoticesBanner: View {
                             dismiss(notice.id, visible: visible)
                         }
                         .padding(.horizontal)
-                        .padding(.bottom, visible.count > 1 ? 18 : 0)
                         .tag(Optional(notice.id))
                     }
                 }
-                .tabViewStyle(.page(indexDisplayMode: visible.count > 1 ? .always : .never))
+                .tabViewStyle(.page(indexDisplayMode: .always))
                 .indexViewStyle(.page(backgroundDisplayMode: .never))
-                // Allow the banner to grow vertically so longer messages
-                // wrap onto multiple lines instead of being clipped. The
-                // minimum height keeps short notices visually aligned.
-                .frame(minHeight: visible.count > 1 ? 96 : 78)
-                .animation(.easeInOut(duration: 0.18), value: visible.map(\.id))
+                // Add space for the page dots beneath the tallest card.
+                .frame(height: max(measuredHeight, 60) + 24)
             }
+            // Measure the tallest notice off-screen (outside the TabView,
+            // which would otherwise clip the measurement to its own bounded
+            // height — a circular dependency). Use the same horizontal
+            // padding so wrapping matches the visible card.
+            .background(
+                VStack(spacing: 0) {
+                    ForEach(visible) { notice in
+                        NoticeBannerCard(notice: notice, onDismiss: {})
+                            .padding(.horizontal)
+                            .background(
+                                GeometryReader { proxy in
+                                    Color.clear.preference(
+                                        key: NoticeHeightKey.self,
+                                        value: proxy.size.height
+                                    )
+                                }
+                            )
+                    }
+                }
+                .hidden()
+                .accessibilityHidden(true)
+            )
+            .onPreferenceChange(NoticeHeightKey.self) { newValue in
+                if abs(newValue - measuredHeight) > 0.5 {
+                    measuredHeight = newValue
+                }
+            }
+            .animation(.easeInOut(duration: 0.18), value: measuredHeight)
+            .animation(.easeInOut(duration: 0.18), value: visible.map(\.id))
             .onAppear { ensureSelection(visible: visible) }
-            .onChange(of: visible.map(\.id)) { _, _ in ensureSelection(visible: visible) }
+            .onChange(of: visible.map(\.id)) { _, _ in
+                // Reset measurement so a freshly-visible (possibly taller)
+                // notice can grow the container.
+                measuredHeight = 0
+                ensureSelection(visible: visible)
+            }
         }
     }
 
@@ -43,8 +83,6 @@ struct AppNoticesBanner: View {
     }
 
     private func dismiss(_ id: UUID, visible: [BackendAppNotice]) {
-        // Advance selection to the next visible notice before dismissing so
-        // the pager doesn't snap awkwardly.
         if let idx = visible.firstIndex(where: { $0.id == id }) {
             let next = visible.indices.contains(idx + 1) ? visible[idx + 1].id : visible.first(where: { $0.id != id })?.id
             selection = next
@@ -55,12 +93,19 @@ struct AppNoticesBanner: View {
     }
 }
 
+private struct NoticeHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 private struct NoticeBannerCard: View {
     let notice: BackendAppNotice
     let onDismiss: () -> Void
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
+        HStack(alignment: .top, spacing: 10) {
             ZStack {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(tint.opacity(0.18))
@@ -73,7 +118,6 @@ private struct NoticeBannerCard: View {
                 Text(notice.title)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.primary)
-                    .lineLimit(2)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(notice.message)
