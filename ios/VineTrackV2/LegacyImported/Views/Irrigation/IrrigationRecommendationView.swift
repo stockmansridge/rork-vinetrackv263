@@ -483,6 +483,19 @@ struct IrrigationRecommendationView: View {
                     s.irrigationRecentRainLookbackDays = newValue
                     store.updateSettings(s)
                 }
+                // Persist shared vineyard-level lookback (hours) to Supabase
+                // so Lovable and other clients see the same window.
+                if let vid = store.selectedVineyardId {
+                    let hours = newValue * 24
+                    Task {
+                        do {
+                            _ = try await RecentRainfallContractService
+                                .setLookbackHours(vineyardId: vid, hours: hours)
+                        } catch {
+                            print("[Irrigation] failed to persist shared lookback: \(error.localizedDescription)")
+                        }
+                    }
+                }
             }
             if latitude != nil, longitude != nil {
                 Task { await loadRecentRainfall() }
