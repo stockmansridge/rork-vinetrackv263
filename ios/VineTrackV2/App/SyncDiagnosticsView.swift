@@ -40,6 +40,13 @@ struct SyncDiagnosticsView: View {
     @State private var isRefreshingCatalog: Bool = false
     @State private var lastCatalogRefreshCount: Int?
     @State private var lastCatalogRefreshAt: Date?
+    @State private var catalogVerification: GrapeVarietyCatalogVerification?
+    @State private var catalogVerificationError: String?
+    @State private var catalogSource: String = "cache"
+    @State private var vineyardVarietyDiagnostics: VineyardGrapeVarietyDiagnostics?
+    @State private var vineyardDiagnosticsError: String?
+    @State private var isLoadingVarietyDiagnostics: Bool = false
+    private let catalogRepository = SupabaseGrapeVarietyCatalogRepository()
 
     var body: some View {
         Form {
@@ -48,6 +55,7 @@ struct SyncDiagnosticsView: View {
             actionsSection
             paddockForceRefreshSection
             grapeVarietyCatalogSection
+            grapeVarietyDiagnosticsSection
             if systemAdmin.isEnabled(SystemFeatureFlagKey.showPinDiagnostics) {
                 pinAuditSection
             }
@@ -207,6 +215,120 @@ struct SyncDiagnosticsView: View {
         let entries = await SharedGrapeVarietyCatalogCache.shared.refresh()
         lastCatalogRefreshCount = entries.count
         lastCatalogRefreshAt = Date()
+        catalogSource = entries.isEmpty ? "offline fallback" : "Supabase"
+        await loadVarietyDiagnostics()
+    }
+
+    @ViewBuilder
+    private var grapeVarietyDiagnosticsSection: some View {
+        if systemAdmin.isSystemAdmin && systemAdmin.isEnabled(SystemFeatureFlagKey.showVarietyDiagnostics) {
+            Section {
+                Button {
+                    Task { await loadVarietyDiagnostics() }
+                } label: {
+                    HStack {
+                        Label(
+                            isLoadingVarietyDiagnostics ? "Loading\u{2026}" : "Refresh diagnostics",
+                            systemImage: "chart.bar.doc.horizontal"
+                        )
+                        Spacer()
+                        if isLoadingVarietyDiagnostics { ProgressView() }
+                    }
+                }
+                .disabled(isLoadingVarietyDiagnostics || !auth.isSignedIn)
+
+                if let v = catalogVerification {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Shared grape variety catalogue")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        HStack(spacing: 14) {
+                            metric("Active built-in", value: "\(v.activeBuiltinCount)")
+                            metric("Inactive built-in", value: "\(v.inactiveBuiltinCount)", highlight: v.inactiveBuiltinCount > 0)
+                            metric("Aliases", value: "\(v.totalAliases)")
+                        }
+                        HStack(spacing: 14) {
+                            metric("Pinot Gris", value: v.pinotGrisActive ? "active" : "inactive", highlight: !v.pinotGrisActive)
+                            metric("Grigio→Gris", value: v.pinotGrigioResolvesToPinotGris ? "ok" : "miss", highlight: !v.pinotGrigioResolvesToPinotGris)
+                        }
+                        if let updated = v.lastUpdatedAt {
+                            Text("Last catalogue update: \(updated.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        if let at = lastCatalogRefreshAt {
+                            Text("Last cache refresh: \(at.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Text("Source: \(catalogSource)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        if let count = lastCatalogRefreshCount {
+                            Text("Cached entries: \(count)")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                } else if let err = catalogVerificationError {
+                    Text("Catalogue: \(err)")
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                }
+
+                if let d = vineyardVarietyDiagnostics {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Vineyard grape varieties")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        HStack(spacing: 14) {
+                            metric("Total", value: "\(d.vineyardVarietyCount)")
+                            metric("Built-in", value: "\(d.builtinCount)")
+                            metric("Custom", value: "\(d.customCount)", highlight: d.customCount > 0)
+                        }
+                        HStack(spacing: 14) {
+                            metric("Archived", value: "\(d.archivedCount)", highlight: d.archivedCount > 0)
+                            metric("Unresolved", value: "\(d.unresolvedAllocations)", highlight: d.unresolvedAllocations > 0)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                } else if let err = vineyardDiagnosticsError {
+                    Text("Vineyard: \(err)")
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                }
+            } header: {
+                Text("Grape Variety Diagnostics")
+            } footer: {
+                Text("Counts come from Supabase via verify_grape_variety_catalog() and grape_variety_diagnostics(). Unresolved allocations require system admin and are 0 when all paddock variety_allocations rows have a catalog-resolvable varietyKey/name.")
+            }
+        }
+    }
+
+    private func loadVarietyDiagnostics() async {
+        guard !isLoadingVarietyDiagnostics else { return }
+        isLoadingVarietyDiagnostics = true
+        defer { isLoadingVarietyDiagnostics = false }
+
+        do {
+            catalogVerification = try await catalogRepository.verifyCatalog()
+            catalogVerificationError = nil
+        } catch {
+            catalogVerificationError = String(describing: error)
+        }
+
+        if let vineyardId = store.selectedVineyardId {
+            do {
+                vineyardVarietyDiagnostics = try await catalogRepository.fetchVineyardDiagnostics(vineyardId: vineyardId)
+                vineyardDiagnosticsError = nil
+            } catch {
+                vineyardDiagnosticsError = String(describing: error)
+            }
+        } else {
+            vineyardVarietyDiagnostics = nil
+            vineyardDiagnosticsError = "No vineyard selected"
+        }
     }
 
     private func forceRepullPaddocks() async {

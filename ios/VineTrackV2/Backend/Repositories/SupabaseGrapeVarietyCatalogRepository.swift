@@ -43,6 +43,62 @@ nonisolated struct SharedGrapeVarietyCatalogEntry: Codable, Sendable, Hashable, 
     }
 }
 
+nonisolated struct GrapeVarietyCatalogVerification: Codable, Sendable, Hashable {
+    let activeBuiltinCount: Int
+    let inactiveBuiltinCount: Int
+    let totalCount: Int
+    let totalAliases: Int
+    let lastUpdatedAt: Date?
+    let pinotGrisActive: Bool
+    let pinotGrigioResolvesToPinotGris: Bool
+
+    nonisolated enum CodingKeys: String, CodingKey {
+        case activeBuiltinCount = "active_builtin_count"
+        case inactiveBuiltinCount = "inactive_builtin_count"
+        case totalCount = "total_count"
+        case totalAliases = "total_aliases"
+        case lastUpdatedAt = "last_updated_at"
+        case pinotGrisActive = "pinot_gris_active"
+        case pinotGrigioResolvesToPinotGris = "pinot_grigio_resolves_to_pinot_gris"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        activeBuiltinCount = (try? c.decodeIfPresent(Int.self, forKey: .activeBuiltinCount)) ?? 0
+        inactiveBuiltinCount = (try? c.decodeIfPresent(Int.self, forKey: .inactiveBuiltinCount)) ?? 0
+        totalCount = (try? c.decodeIfPresent(Int.self, forKey: .totalCount)) ?? 0
+        totalAliases = (try? c.decodeIfPresent(Int.self, forKey: .totalAliases)) ?? 0
+        lastUpdatedAt = try? c.decodeIfPresent(Date.self, forKey: .lastUpdatedAt)
+        pinotGrisActive = (try? c.decodeIfPresent(Bool.self, forKey: .pinotGrisActive)) ?? false
+        pinotGrigioResolvesToPinotGris = (try? c.decodeIfPresent(Bool.self, forKey: .pinotGrigioResolvesToPinotGris)) ?? false
+    }
+}
+
+nonisolated struct VineyardGrapeVarietyDiagnostics: Codable, Sendable, Hashable {
+    let vineyardVarietyCount: Int
+    let builtinCount: Int
+    let customCount: Int
+    let archivedCount: Int
+    let unresolvedAllocations: Int
+
+    nonisolated enum CodingKeys: String, CodingKey {
+        case vineyardVarietyCount = "vineyard_variety_count"
+        case builtinCount = "builtin_count"
+        case customCount = "custom_count"
+        case archivedCount = "archived_count"
+        case unresolvedAllocations = "unresolved_allocations"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        vineyardVarietyCount = (try? c.decodeIfPresent(Int.self, forKey: .vineyardVarietyCount)) ?? 0
+        builtinCount = (try? c.decodeIfPresent(Int.self, forKey: .builtinCount)) ?? 0
+        customCount = (try? c.decodeIfPresent(Int.self, forKey: .customCount)) ?? 0
+        archivedCount = (try? c.decodeIfPresent(Int.self, forKey: .archivedCount)) ?? 0
+        unresolvedAllocations = (try? c.decodeIfPresent(Int.self, forKey: .unresolvedAllocations)) ?? 0
+    }
+}
+
 nonisolated struct VineyardGrapeVarietyRow: Codable, Sendable, Hashable, Identifiable {
     let id: UUID
     let vineyardId: UUID
@@ -128,6 +184,35 @@ final class SupabaseGrapeVarietyCatalogRepository: Sendable {
             .execute()
             .value
         return row
+    }
+
+    /// Returns global catalogue counts + a Pinot Gris/Grigio resolver sanity check.
+    func verifyCatalog() async throws -> GrapeVarietyCatalogVerification {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let rows: [GrapeVarietyCatalogVerification] = try await provider.client
+            .rpc("verify_grape_variety_catalog")
+            .execute()
+            .value
+        guard let first = rows.first else {
+            throw BackendRepositoryError.missingSupabaseConfiguration
+        }
+        return first
+    }
+
+    /// Returns vineyard-scoped variety + unresolved allocation counts.
+    func fetchVineyardDiagnostics(vineyardId: UUID) async throws -> VineyardGrapeVarietyDiagnostics {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        struct Params: Encodable, Sendable {
+            let p_vineyard_id: UUID
+        }
+        let rows: [VineyardGrapeVarietyDiagnostics] = try await provider.client
+            .rpc("grape_variety_diagnostics", params: Params(p_vineyard_id: vineyardId))
+            .execute()
+            .value
+        guard let first = rows.first else {
+            throw BackendRepositoryError.missingSupabaseConfiguration
+        }
+        return first
     }
 
     @discardableResult
