@@ -7,6 +7,11 @@ nonisolated struct SoilProfileUpsert: Sendable, Hashable {
     var effectiveRootDepthM: Double?
     var managementAllowedDepletionPercent: Double?
     var soilLandscape: String?
+    var soilLandscapeCode: String?
+    var australianSoilClassification: String?
+    var australianSoilClassificationCode: String?
+    var landSoilCapability: String?
+    var landSoilCapabilityClass: Int?
     var soilDescription: String?
     var soilTextureClass: String?
     var infiltrationRisk: String?
@@ -24,7 +29,7 @@ nonisolated struct SoilProfileUpsert: Sendable, Hashable {
     var regionCode: String?
     var modelVersion: String
 
-    static let currentModelVersion = "soil_aware_irrigation_v1"
+    static let currentModelVersion = "soil_aware_irrigation_v2"
 
     init(
         paddockId: UUID,
@@ -33,6 +38,11 @@ nonisolated struct SoilProfileUpsert: Sendable, Hashable {
         effectiveRootDepthM: Double? = nil,
         managementAllowedDepletionPercent: Double? = nil,
         soilLandscape: String? = nil,
+        soilLandscapeCode: String? = nil,
+        australianSoilClassification: String? = nil,
+        australianSoilClassificationCode: String? = nil,
+        landSoilCapability: String? = nil,
+        landSoilCapabilityClass: Int? = nil,
         soilDescription: String? = nil,
         soilTextureClass: String? = nil,
         infiltrationRisk: String? = nil,
@@ -56,6 +66,11 @@ nonisolated struct SoilProfileUpsert: Sendable, Hashable {
         self.effectiveRootDepthM = effectiveRootDepthM
         self.managementAllowedDepletionPercent = managementAllowedDepletionPercent
         self.soilLandscape = soilLandscape
+        self.soilLandscapeCode = soilLandscapeCode
+        self.australianSoilClassification = australianSoilClassification
+        self.australianSoilClassificationCode = australianSoilClassificationCode
+        self.landSoilCapability = landSoilCapability
+        self.landSoilCapabilityClass = landSoilCapabilityClass
         self.soilDescription = soilDescription
         self.soilTextureClass = soilTextureClass
         self.infiltrationRisk = infiltrationRisk

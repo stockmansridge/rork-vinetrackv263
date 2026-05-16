@@ -87,6 +87,11 @@ nonisolated struct BackendSoilProfile: Codable, Sendable, Hashable, Identifiable
     let lookupLongitude: Double?
 
     let soilLandscape: String?
+    let soilLandscapeCode: String?
+    let australianSoilClassification: String?
+    let australianSoilClassificationCode: String?
+    let landSoilCapability: String?
+    let landSoilCapabilityClass: Int?
     let soilDescription: String?
     let soilTextureClass: String?
     let irrigationSoilClass: String?
@@ -122,6 +127,11 @@ nonisolated struct BackendSoilProfile: Codable, Sendable, Hashable, Identifiable
         case lookupLatitude                     = "lookup_latitude"
         case lookupLongitude                    = "lookup_longitude"
         case soilLandscape                      = "soil_landscape"
+        case soilLandscapeCode                  = "soil_landscape_code"
+        case australianSoilClassification       = "australian_soil_classification"
+        case australianSoilClassificationCode   = "australian_soil_classification_code"
+        case landSoilCapability                 = "land_soil_capability"
+        case landSoilCapabilityClass            = "land_soil_capability_class"
         case soilDescription                    = "soil_description"
         case soilTextureClass                   = "soil_texture_class"
         case irrigationSoilClass                = "irrigation_soil_class"

@@ -337,6 +337,17 @@ function guessFromAsc(
   return null;
 }
 
+// Known NSW soil-landscape names whose dominant material is basalt-derived,
+// based on the NSW Soil Landscape series (eSPADE). When ASC is missing we use
+// this list to give a useful basalt_clay_loam suggestion instead of falling
+// all the way through to "unknown".
+const BASALT_LANDSCAPE_KEYWORDS: string[] = [
+  "towac", "orange", "lidster", "canobolas", "millthorpe",
+  "byng", "borenore", "mullion", "comboyne", "dorrigo",
+  "ebor", "guyra", "glen innes", "inverell", "tenterfield",
+  "bega", "cobargo", "robertson", "moss vale",
+];
+
 function guessIrrigationSoilClass(
   name: string | null,
   salisCode: string | null,
@@ -345,13 +356,40 @@ function guessIrrigationSoilClass(
   const hay = `${name ?? ""} ${salisCode ?? ""}`.toLowerCase();
   const matched: string[] = [];
 
+  const landscapeIsBasaltDerived = BASALT_LANDSCAPE_KEYWORDS.some((kw) => {
+    if (hay.includes(kw)) { matched.push(`landscape:${kw}`); return true; }
+    return false;
+  });
+
   // ASC drives the answer when present.
   const fromAsc = guessFromAsc(ascOrder, hay, matched);
   if (fromAsc) {
     if (hay.includes("basalt")) matched.push("basalt");
+    // Promote Ferrosols to basalt_clay_loam when the landscape name
+    // resolves to a known basalt-derived NSW landscape even without an
+    // explicit "basalt" keyword in the attributes.
+    if (landscapeIsBasaltDerived && fromAsc.cls === "clay_loam"
+        && ascOrder && ascOrder.toLowerCase().startsWith("ferrosol")) {
+      return {
+        irrigation_soil_class: "basalt_clay_loam",
+        confidence: fromAsc.conf,
+        matched_keywords: matched,
+      };
+    }
     return {
       irrigation_soil_class: fromAsc.cls,
       confidence: fromAsc.conf,
+      matched_keywords: matched,
+    };
+  }
+
+  // No ASC but the landscape name matches a known basalt-derived NSW
+  // landscape → return basalt_clay_loam with low confidence so the user
+  // still gets a useful suggestion (Towac/Orange/Lidster etc.).
+  if (landscapeIsBasaltDerived) {
+    return {
+      irrigation_soil_class: "basalt_clay_loam",
+      confidence: "low",
       matched_keywords: matched,
     };
   }

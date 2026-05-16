@@ -20,6 +20,11 @@ nonisolated private struct UpsertSoilProfileParams: Encodable, Sendable {
     let effectiveRootDepthM: Double?
     let managementAllowedDepletionPercent: Double?
     let soilLandscape: String?
+    let soilLandscapeCode: String?
+    let australianSoilClassification: String?
+    let australianSoilClassificationCode: String?
+    let landSoilCapability: String?
+    let landSoilCapabilityClass: Int?
     let soilDescription: String?
     let soilTextureClass: String?
     let infiltrationRisk: String?
@@ -44,6 +49,11 @@ nonisolated private struct UpsertSoilProfileParams: Encodable, Sendable {
         case effectiveRootDepthM                = "p_effective_root_depth_m"
         case managementAllowedDepletionPercent  = "p_management_allowed_depletion_percent"
         case soilLandscape                      = "p_soil_landscape"
+        case soilLandscapeCode                  = "p_soil_landscape_code"
+        case australianSoilClassification       = "p_australian_soil_classification"
+        case australianSoilClassificationCode   = "p_australian_soil_classification_code"
+        case landSoilCapability                 = "p_land_soil_capability"
+        case landSoilCapabilityClass            = "p_land_soil_capability_class"
         case soilDescription                    = "p_soil_description"
         case soilTextureClass                   = "p_soil_texture_class"
         case infiltrationRisk                   = "p_infiltration_risk"
@@ -109,6 +119,11 @@ final class SupabaseSoilProfileRepository: SoilProfileRepositoryProtocol {
             effectiveRootDepthM: profile.effectiveRootDepthM,
             managementAllowedDepletionPercent: profile.managementAllowedDepletionPercent,
             soilLandscape: profile.soilLandscape,
+            soilLandscapeCode: profile.soilLandscapeCode,
+            australianSoilClassification: profile.australianSoilClassification,
+            australianSoilClassificationCode: profile.australianSoilClassificationCode,
+            landSoilCapability: profile.landSoilCapability,
+            landSoilCapabilityClass: profile.landSoilCapabilityClass,
             soilDescription: profile.soilDescription,
             soilTextureClass: profile.soilTextureClass,
             infiltrationRisk: profile.infiltrationRisk,

@@ -1,5 +1,12 @@
 import SwiftUI
 
+private extension String {
+    var nonEmptyOrNil: String? {
+        let t = trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? nil : t
+    }
+}
+
 /// Manual soil profile editor for a paddock. Used by the Irrigation Advisor
 /// soil buffer panel (Phase 1) and later by Block / Paddock detail.
 ///
@@ -207,24 +214,30 @@ struct SoilProfileEditorSheet: View {
     private func suggestionPreviewSection(_ s: NSWSeedSoilSuggestion) -> some View {
         Section {
             VStack(alignment: .leading, spacing: 8) {
-                if let name = s.sourceName ?? s.soilLandscape, !name.isEmpty {
-                    LabeledContent("Soil landscape") { Text(name).multilineTextAlignment(.trailing) }
+                LabeledContent("Soil landscape") {
+                    Text((s.sourceName ?? s.soilLandscape)?.nonEmptyOrNil ?? "Not available")
+                        .multilineTextAlignment(.trailing)
+                        .foregroundStyle((s.sourceName ?? s.soilLandscape) == nil ? .secondary : .primary)
                 }
-                if let code = s.soilLandscapeCode ?? s.sourceFeatureId, !code.isEmpty {
-                    LabeledContent("SALIS code") { Text(code).font(.caption.monospaced()) }
+                LabeledContent("SALIS code") {
+                    Text((s.soilLandscapeCode ?? s.sourceFeatureId)?.nonEmptyOrNil ?? "Not available")
+                        .font(.caption.monospaced())
+                        .foregroundStyle((s.soilLandscapeCode ?? s.sourceFeatureId) == nil ? .secondary : .primary)
                 }
-                if let asc = s.australianSoilClassification, !asc.isEmpty {
-                    LabeledContent("Australian Soil Classification") {
-                        Text(asc).multilineTextAlignment(.trailing)
-                    }
+                LabeledContent("Australian Soil Classification") {
+                    Text(s.australianSoilClassification?.nonEmptyOrNil ?? "Not available")
+                        .multilineTextAlignment(.trailing)
+                        .foregroundStyle(s.australianSoilClassification == nil ? .secondary : .primary)
                 }
-                if let lsc = s.landSoilCapability, !lsc.isEmpty {
-                    LabeledContent("Land and Soil Capability") {
+                LabeledContent("Land and Soil Capability") {
+                    if let lsc = s.landSoilCapability?.nonEmptyOrNil {
                         if let n = s.landSoilCapabilityClass {
                             Text("\(lsc) (class \(n))").multilineTextAlignment(.trailing)
                         } else {
                             Text(lsc).multilineTextAlignment(.trailing)
                         }
+                    } else {
+                        Text("Not available").foregroundStyle(.secondary)
                     }
                 }
                 if let cls = s.irrigationSoilClass,
@@ -233,6 +246,11 @@ struct SoilProfileEditorSheet: View {
                 }
                 if let conf = s.confidence, !conf.isEmpty {
                     LabeledContent("Confidence") { Text(conf.capitalized) }
+                }
+                if showRawDiagnostics, let mv = s.modelVersion, !mv.isEmpty {
+                    LabeledContent("Model version") {
+                        Text(mv).font(.caption.monospaced()).foregroundStyle(.secondary)
+                    }
                 }
                 if !s.matchedKeywords.isEmpty {
                     LabeledContent("Matched terms") {
@@ -361,17 +379,23 @@ struct SoilProfileEditorSheet: View {
             effectiveRootDepthM: Double(rootDepthText),
             managementAllowedDepletionPercent: Double(allowedDepletionText),
             soilLandscape: s.soilLandscape,
+            soilLandscapeCode: s.soilLandscapeCode ?? s.sourceFeatureId,
+            australianSoilClassification: s.australianSoilClassification,
+            australianSoilClassificationCode: s.australianSoilClassificationCode,
+            landSoilCapability: s.landSoilCapability,
+            landSoilCapabilityClass: s.landSoilCapabilityClass,
             soilDescription: s.sourceName,
             confidence: s.confidence,
             isManualOverride: false,
             manualNotes: notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : notes,
             source: "nsw_seed",
             sourceProvider: "nsw_seed",
-            sourceDataset: s.sourceDataset ?? "SoilLandscapes_CentralAndEasternNSW",
+            sourceDataset: s.sourceDataset ?? "SoilsNearMe_Combined",
             sourceFeatureId: s.sourceFeatureId,
             sourceName: s.sourceName,
             countryCode: s.countryCode ?? "AU",
-            regionCode: s.regionCode ?? "NSW"
+            regionCode: s.regionCode ?? "NSW",
+            modelVersion: s.modelVersion ?? SoilProfileUpsert.currentModelVersion
         )
         do {
             let saved = try await repository.upsertSoilProfile(payload)
