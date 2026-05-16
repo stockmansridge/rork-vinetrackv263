@@ -571,12 +571,18 @@ struct EditPaddockSheet: View {
                 Text("Row Spacing")
                     .font(.subheadline)
                 Spacer()
-                Text(rowWidth > 0 ? String(format: "%.2f", rowWidth) : "-")
-                    .font(.system(.subheadline, design: .monospaced).weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Text("m")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if rowWidth > 0 {
+                    Text(String(format: "%.2f", rowWidth))
+                        .font(.system(.subheadline, design: .monospaced).weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text("m")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Not set")
+                        .font(.subheadline.italic())
+                        .foregroundStyle(.secondary)
+                }
             }
 
             if let flow = irrigationFlowPerEmitter, let spacing = irrigationEmitterSpacing, rowWidth > 0 {
@@ -588,23 +594,34 @@ struct EditPaddockSheet: View {
                 Divider()
 
                 HStack {
-                    Label("ML/ha/hr", systemImage: "drop.fill")
-                        .font(.subheadline)
-                        .foregroundStyle(VineyardTheme.info)
+                    Label("Application Rate", systemImage: "ruler")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.teal)
                     Spacer()
-                    Text(String(format: "%.4f", mlPerHaHr))
+                    Text(String(format: "%.2f mm/hr", mmHr))
                         .font(.system(.subheadline, design: .monospaced).weight(.semibold))
-                        .foregroundStyle(VineyardTheme.info)
+                        .foregroundStyle(.teal)
                 }
 
                 HStack {
-                    Label("mm/hr", systemImage: "ruler")
-                        .font(.subheadline)
-                        .foregroundStyle(.teal)
+                    Label("ML/ha/hr", systemImage: "drop.fill")
+                        .font(.caption)
+                        .foregroundStyle(VineyardTheme.info)
                     Spacer()
-                    Text(String(format: "%.2f", mmHr))
-                        .font(.system(.subheadline, design: .monospaced).weight(.semibold))
-                        .foregroundStyle(.teal)
+                    Text(String(format: "%.4f", mlPerHaHr))
+                        .font(.system(.caption, design: .monospaced).weight(.semibold))
+                        .foregroundStyle(VineyardTheme.info)
+                }
+            } else {
+                Divider()
+                HStack {
+                    Label("Application Rate", systemImage: "ruler")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("Not calculable")
+                        .font(.subheadline.italic())
+                        .foregroundStyle(.secondary)
                 }
             }
         } header: {

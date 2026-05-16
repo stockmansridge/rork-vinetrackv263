@@ -35,6 +35,8 @@ struct VineyardSetupHubView: View {
     @State private var importErrorMessage: String?
 
     @State private var blockSortOption: BlockSortOption = .rowNumber
+    @State private var paddocksWithSoilProfile: Set<UUID> = []
+    private let soilProfileRepositoryForChecklist: any SoilProfileRepositoryProtocol = SupabaseSoilProfileRepository()
 
     private enum BlockSortOption: String, CaseIterable, Identifiable {
         case rowNumber
@@ -134,7 +136,13 @@ struct VineyardSetupHubView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Vineyard Setup")
         .navigationBarTitleDisplayMode(.large)
-        .onAppear { loadFromSettings() }
+        .onAppear {
+            loadFromSettings()
+            Task { await loadPaddockSoilProfileIds() }
+        }
+        .onChange(of: store.selectedVineyardId) { _, _ in
+            Task { await loadPaddockSoilProfileIds() }
+        }
         .sheet(isPresented: $showAddPaddock) {
             EditPaddockSheet(paddock: nil)
         }
@@ -302,9 +310,13 @@ struct VineyardSetupHubView: View {
                     Button {
                         paddockToEdit = paddock
                     } label: {
-                        BlockSummaryRow(paddock: paddock)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 12)
+                        BlockSummaryRow(
+                            paddock: paddock,
+                            varieties: store.grapeVarieties,
+                            hasSoilProfile: paddocksWithSoilProfile.contains(paddock.id)
+                        )
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
                     }
                     .buttonStyle(.plain)
                     if idx < sortedPaddocks.count - 1 {
@@ -762,6 +774,19 @@ struct VineyardSetupHubView: View {
         store.updateSettings(s)
     }
 
+    private func loadPaddockSoilProfileIds() async {
+        guard let vid = store.selectedVineyardId else {
+            paddocksWithSoilProfile = []
+            return
+        }
+        do {
+            let rows = try await soilProfileRepositoryForChecklist.listVineyardSoilProfiles(vineyardId: vid)
+            paddocksWithSoilProfile = Set(rows.compactMap { $0.paddockId })
+        } catch {
+            // Silent — checklist will show red cross for soil until reload.
+        }
+    }
+
     private func saveStationId() {
         let trimmed = stationIdInput.trimmingCharacters(in: .whitespaces)
         var s = store.settings
@@ -831,6 +856,8 @@ struct VineyardSetupHubView: View {
 
 private struct BlockSummaryRow: View {
     let paddock: Paddock
+    let varieties: [GrapeVariety]
+    let hasSoilProfile: Bool
 
     private var rowRange: String {
         let nums = paddock.rows.map { $0.number }.sorted()
@@ -883,12 +910,98 @@ private struct BlockSummaryRow: View {
                 .font(.subheadline)
                 .foregroundStyle(Color.accentColor)
             }
+
+            BlockSetupChecklist(
+                boundariesOk: boundariesComplete,
+                rowsOk: rowsComplete,
+                trellisOk: trellisComplete,
+                varietiesOk: varietiesComplete,
+                irrigationOk: irrigationComplete,
+                soilOk: hasSoilProfile
+            )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .overlay(alignment: .trailing) {
             Image(systemName: "chevron.right")
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(.tertiary)
+        }
+    }
+
+    // MARK: - Checklist completion logic
+
+    private var boundariesComplete: Bool {
+        paddock.polygonPoints.count >= 3
+    }
+
+    private var rowsComplete: Bool {
+        !paddock.rows.isEmpty
+    }
+
+    private var trellisComplete: Bool {
+        // Row spacing is the irrigation-critical trellis value.
+        paddock.rowWidth > 0
+    }
+
+    private var varietiesComplete: Bool {
+        let allocations = paddock.varietyAllocations
+        guard !allocations.isEmpty else { return false }
+        let totalPercent = allocations.reduce(0.0) { $0 + $1.percent }
+        guard abs(totalPercent - 100.0) < 0.5 else { return false }
+        // Every allocation must resolve to a real variety (built-in or custom with stable key + name).
+        for alloc in allocations {
+            let resolved = PaddockVarietyResolver.resolve(allocation: alloc, varieties: varieties)
+            guard resolved.isResolved else { return false }
+            let name = resolved.displayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if name.isEmpty || name.localizedCaseInsensitiveCompare("Unknown") == .orderedSame {
+                return false
+            }
+        }
+        return true
+    }
+
+    private var irrigationComplete: Bool {
+        guard let mm = paddock.mmPerHour, mm > 0 else { return false }
+        guard let flow = paddock.flowPerEmitter, flow > 0 else { return false }
+        guard let spacing = paddock.emitterSpacing, spacing > 0 else { return false }
+        return paddock.rowWidth > 0
+    }
+}
+
+// MARK: - Setup Checklist
+
+private struct BlockSetupChecklist: View {
+    let boundariesOk: Bool
+    let rowsOk: Bool
+    let trellisOk: Bool
+    let varietiesOk: Bool
+    let irrigationOk: Bool
+    let soilOk: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 10) {
+                item("Boundaries", ok: boundariesOk)
+                item("Rows", ok: rowsOk)
+                item("Trellis", ok: trellisOk)
+            }
+            HStack(spacing: 10) {
+                item("Varieties", ok: varietiesOk)
+                item("Irrigation", ok: irrigationOk)
+                item("Soil", ok: soilOk)
+            }
+        }
+        .padding(.top, 2)
+    }
+
+    private func item(_ label: String, ok: Bool) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: ok ? "checkmark.circle.fill" : "xmark.circle.fill")
+                .font(.caption)
+                .foregroundStyle(ok ? Color.green : Color.red)
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 }
