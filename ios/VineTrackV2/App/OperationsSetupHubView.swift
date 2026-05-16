@@ -762,15 +762,28 @@ struct VineyardSetupHubView: View {
     }
 
     private func saveLatLon() {
+        // Guard against saving before a vineyard is selected — would persist under
+        // a stray UUID key in SettingsRepository and silently disappear on next load.
+        guard let vid = store.selectedVineyardId else { return }
         var s = store.settings
+        s.vineyardId = vid
         s.vineyardLatitude = Double(latitudeText.trimmingCharacters(in: .whitespaces))
         s.vineyardLongitude = Double(longitudeText.trimmingCharacters(in: .whitespaces))
         store.updateSettings(s)
     }
 
     private func saveElevation() {
+        guard let vid = store.selectedVineyardId else { return }
         var s = store.settings
-        s.vineyardElevationMetres = Double(elevationText.trimmingCharacters(in: .whitespaces))
+        s.vineyardId = vid
+        let trimmed = elevationText.trimmingCharacters(in: .whitespaces)
+        // Strip any trailing unit suffix like "m" so values like "120m" still parse.
+        let numeric = trimmed.replacingOccurrences(
+            of: "[^0-9.\\-]",
+            with: "",
+            options: .regularExpression
+        )
+        s.vineyardElevationMetres = numeric.isEmpty ? nil : Double(numeric)
         store.updateSettings(s)
     }
 
@@ -892,24 +905,6 @@ private struct BlockSummaryRow: View {
             }
             .font(.subheadline)
             .foregroundStyle(Color.accentColor.opacity(0.75))
-
-            if let lph = paddock.litresPerHour,
-               let mlPerHa = paddock.mlPerHaPerHour,
-               let mmHr = paddock.mmPerHour {
-                HStack(spacing: 8) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "drop.fill")
-                            .font(.footnote)
-                        Text("\(Int(lph)) L/hr")
-                    }
-                    Text("\u{2022}")
-                    Text(String(format: "%.4f ML/ha/hr", mlPerHa))
-                    Text("\u{2022}")
-                    Text(String(format: "%.2f mm/hr", mmHr))
-                }
-                .font(.subheadline)
-                .foregroundStyle(Color.accentColor)
-            }
 
             BlockSetupChecklist(
                 boundariesOk: boundariesComplete,

@@ -1320,6 +1320,14 @@ struct EditPaddockSheet: View {
             varietyAllocations,
             varieties: store.grapeVarieties
         )
+        func parsedPlantingYear() -> Int? {
+            let trimmed = plantingYearText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            // Strip non-digit chars so accidental whitespace or stray characters don’t
+            // turn a valid year like "2018 " into nil.
+            let digits = trimmed.filter { $0.isNumber }
+            return digits.isEmpty ? nil : Int(digits)
+        }
         if var existing = paddock {
             existing.name = name
             existing.polygonPoints = polygonPoints
@@ -1338,7 +1346,7 @@ struct EditPaddockSheet: View {
             existing.floweringDate = hasFloweringDate ? floweringDate : nil
             existing.veraisonDate = hasVeraisonDate ? veraisonDate : nil
             existing.harvestDate = hasHarvestDate ? harvestDate : nil
-            existing.plantingYear = Int(plantingYearText)
+            existing.plantingYear = parsedPlantingYear()
             existing.calculationModeOverride = calculationModeOverride
             existing.resetModeOverride = resetModeOverride
             store.updatePaddock(existing)
@@ -1361,7 +1369,7 @@ struct EditPaddockSheet: View {
                 floweringDate: hasFloweringDate ? floweringDate : nil,
                 veraisonDate: hasVeraisonDate ? veraisonDate : nil,
                 harvestDate: hasHarvestDate ? harvestDate : nil,
-                plantingYear: Int(plantingYearText),
+                plantingYear: parsedPlantingYear(),
                 calculationModeOverride: calculationModeOverride,
                 resetModeOverride: resetModeOverride
             )

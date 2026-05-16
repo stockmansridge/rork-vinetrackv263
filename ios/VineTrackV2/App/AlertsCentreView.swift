@@ -211,7 +211,8 @@ private struct AlertRow: View {
                 Text(item.alert.message)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.leading)
                 if let badge = sourceBadge {
                     HStack(spacing: 4) {
                         Image(systemName: badge.icon)
