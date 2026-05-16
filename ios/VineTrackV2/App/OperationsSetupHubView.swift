@@ -36,6 +36,7 @@ struct VineyardSetupHubView: View {
 
     @State private var blockSortOption: BlockSortOption = .rowNumber
     @State private var paddocksWithSoilProfile: Set<UUID> = []
+    @State private var sharedCatalogCount: Int = 0
     private let soilProfileRepositoryForChecklist: any SoilProfileRepositoryProtocol = SupabaseSoilProfileRepository()
 
     private enum BlockSortOption: String, CaseIterable, Identifiable {
@@ -118,6 +119,15 @@ struct VineyardSetupHubView: View {
         return store.grapeVarieties.filter { $0.vineyardId == vid }.count
     }
 
+    /// Count for the master Grape Varieties card. Prefers the shared
+    /// catalogue (active built-ins from Supabase via
+    /// `SharedGrapeVarietyCatalogCache`) and falls back to the in-app
+    /// built-in catalogue size when the shared cache hasn't loaded yet.
+    private var masterVarietyCount: Int {
+        if sharedCatalogCount > 0 { return sharedCatalogCount }
+        return BuiltInGrapeVarietyCatalog.entries.count
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
@@ -139,9 +149,11 @@ struct VineyardSetupHubView: View {
         .onAppear {
             loadFromSettings()
             Task { await loadPaddockSoilProfileIds() }
+            Task { await loadSharedCatalogCount() }
         }
         .onChange(of: store.selectedVineyardId) { _, _ in
             Task { await loadPaddockSoilProfileIds() }
+            Task { await loadSharedCatalogCount() }
         }
         .sheet(isPresented: $showAddPaddock) {
             EditPaddockSheet(paddock: nil)
@@ -452,7 +464,7 @@ struct VineyardSetupHubView: View {
                             .font(.body)
                             .foregroundStyle(.primary)
                         Spacer()
-                        Text("\(currentVineyardVarieties)")
+                        Text("\(masterVarietyCount)")
                             .font(.body)
                             .foregroundStyle(.secondary)
                         Image(systemName: "chevron.right")
@@ -785,6 +797,23 @@ struct VineyardSetupHubView: View {
         )
         s.vineyardElevationMetres = numeric.isEmpty ? nil : Double(numeric)
         store.updateSettings(s)
+    }
+
+    /// Loads the active built-in count from the shared grape-variety
+    /// catalogue cache so the master Grape Varieties card reflects the
+    /// real catalogue size (currently ~67 active built-ins) rather than
+    /// only the vineyard-scoped selections.
+    private func loadSharedCatalogCount() async {
+        let cache = SharedGrapeVarietyCatalogCache.shared
+        let cached = cache.loadCached()
+        if !cached.isEmpty {
+            sharedCatalogCount = cached.filter { $0.isActive }.count
+        }
+        let fresh = await cache.refresh()
+        let active = fresh.filter { $0.isActive }.count
+        if active > 0 {
+            sharedCatalogCount = active
+        }
     }
 
     private func loadPaddockSoilProfileIds() async {

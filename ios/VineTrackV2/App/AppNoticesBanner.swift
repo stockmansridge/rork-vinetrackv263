@@ -26,7 +26,10 @@ struct AppNoticesBanner: View {
                 }
                 .tabViewStyle(.page(indexDisplayMode: visible.count > 1 ? .always : .never))
                 .indexViewStyle(.page(backgroundDisplayMode: .never))
-                .frame(height: visible.count > 1 ? 96 : 78)
+                // Allow the banner to grow vertically so longer messages
+                // wrap onto multiple lines instead of being clipped. The
+                // minimum height keeps short notices visually aligned.
+                .frame(minHeight: visible.count > 1 ? 96 : 78)
                 .animation(.easeInOut(duration: 0.18), value: visible.map(\.id))
             }
             .onAppear { ensureSelection(visible: visible) }
@@ -66,15 +69,18 @@ private struct NoticeBannerCard: View {
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(tint)
             }
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(notice.title)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.primary)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(notice.message)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 4)
             Button {
