@@ -102,9 +102,12 @@ struct VineyardSetupHubView: View {
         guard let allocation = paddock.varietyAllocations.max(by: { $0.percent < $1.percent }) else {
             return "\u{FFFF}"
         }
-        if let variety = store.grapeVarieties.first(where: { $0.id == allocation.varietyId }) {
-            return variety.name
-        }
+        let resolved = PaddockVarietyResolver.resolve(
+            allocation: allocation,
+            varieties: store.grapeVarieties
+        )
+        let trimmed = resolved.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let name = trimmed, !name.isEmpty { return name }
         return "\u{FFFF}"
     }
 

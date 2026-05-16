@@ -420,8 +420,12 @@ struct StartTripSheet: View {
     }
 
     private func allocationName(_ allocation: PaddockVarietyAllocation) -> String? {
-        let name = store.grapeVarieties.first(where: { $0.id == allocation.varietyId })?.name
-        return (name?.isEmpty == false) ? name : nil
+        let resolved = PaddockVarietyResolver.resolve(
+            allocation: allocation,
+            varieties: store.grapeVarieties
+        )
+        let trimmed = resolved.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (trimmed?.isEmpty == false) ? trimmed : nil
     }
 
     private func blockStatsRow(for paddock: Paddock) -> some View {

@@ -35,6 +35,14 @@ struct EditPaddockSheet: View {
     @State private var showBoundaryEditor: Bool = false
     @State private var showFullscreenRowConfig: Bool = false
 
+    // Soil profile state — loaded from Supabase paddock_soil_profiles.
+    // Edited via the shared SoilProfileEditorSheet so writes go through
+    // the existing upsert RPC (matches what the Irrigation Advisor uses).
+    @State private var soilProfile: BackendSoilProfile?
+    @State private var isLoadingSoilProfile: Bool = false
+    @State private var showSoilProfileEditor: Bool = false
+    private let soilProfileRepository: any SoilProfileRepositoryProtocol = SupabaseSoilProfileRepository()
+
     private var isEditing: Bool { paddock != nil }
 
     var body: some View {
@@ -51,6 +59,7 @@ struct EditPaddockSheet: View {
                 gddOverrideSection
                 varietiesSection
                 irrigationSection
+                soilSection
                 if polygonPoints.count > 2 && rowCount > 0 {
                     blockSummarySection
                 }
@@ -71,6 +80,19 @@ struct EditPaddockSheet: View {
             }
             .sheet(isPresented: $showAddVariety) {
                 addVarietyPickerSheet
+            }
+            .sheet(isPresented: $showSoilProfileEditor, onDismiss: {
+                Task { await loadSoilProfile(force: true) }
+            }) {
+                if let pid = paddock?.id, let vid = store.selectedVineyardId {
+                    SoilProfileEditorSheet(
+                        vineyardId: vid,
+                        paddockId: pid,
+                        paddockName: name.isEmpty ? "Block" : name
+                    ) { saved in
+                        soilProfile = saved
+                    }
+                }
             }
             .fullScreenCover(isPresented: $showBoundaryEditor) {
                 BoundaryMapEditor(
@@ -139,8 +161,166 @@ struct EditPaddockSheet: View {
                         rowNumberAscending = lastRow.number >= firstRow.number
                         rowStartNumber = min(firstRow.number, lastRow.number)
                     }
+                    Task { await loadSoilProfile() }
                 }
             }
+        }
+    }
+
+    // MARK: - Soil profile
+
+    private var soilSection: some View {
+        Section {
+            if paddock == nil {
+                Text("Save this block first to set up its soil profile.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if isLoadingSoilProfile && soilProfile == nil {
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text("Loading soil profile\u{2026}")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else if let soil = soilProfile {
+                soilProfileSummary(soil)
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("No soil profile set")
+                        .font(.subheadline.weight(.semibold))
+                    if isAustralianVineyard {
+                        Text("Tip: Use \u{201C}Fetch from NSW SEED\u{201D} in the editor to estimate the soil profile from your block centroid, or set it manually.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Add a soil class, available water capacity and root depth so the Irrigation Advisor can produce soil-aware recommendations.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            if paddock != nil {
+                Button {
+                    showSoilProfileEditor = true
+                } label: {
+                    Label(
+                        soilProfile == nil ? "Add soil profile" : "Edit soil profile",
+                        systemImage: soilProfile == nil ? "plus.circle" : "pencil.circle"
+                    )
+                    .foregroundStyle(VineyardTheme.info)
+                }
+            }
+        } header: {
+            HStack(spacing: 6) {
+                Image(systemName: "square.stack.3d.down.right.fill")
+                    .foregroundStyle(VineyardTheme.earthBrown)
+                    .font(.caption)
+                Text("Soil")
+            }
+        } footer: {
+            Text("Soil information feeds the Irrigation Advisor. Manual edits set a manual override so NSW SEED won't silently overwrite your values.")
+        }
+    }
+
+    @ViewBuilder
+    private func soilProfileSummary(_ soil: BackendSoilProfile) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            LabeledContent("Soil class") {
+                Text(soilClassDisplay(soil)).foregroundStyle(.primary)
+            }
+            if let landscape = soil.soilLandscape, !landscape.isEmpty {
+                LabeledContent("Soil landscape") { Text(landscape) }
+            }
+            if let code = soil.soilLandscapeCode, !code.isEmpty {
+                LabeledContent("SALIS code") {
+                    Text(code).font(.caption.monospaced()).foregroundStyle(.secondary)
+                }
+            }
+            if let asc = soil.australianSoilClassification, !asc.isEmpty {
+                LabeledContent("Australian Soil Classification") { Text(asc) }
+            }
+            if let lsc = soil.landSoilCapability, !lsc.isEmpty {
+                LabeledContent("Land and Soil Capability") {
+                    if let n = soil.landSoilCapabilityClass {
+                        Text("\(lsc) (class \(n))")
+                    } else {
+                        Text(lsc)
+                    }
+                }
+            }
+            if let awc = soil.availableWaterCapacityMmPerM, awc > 0 {
+                LabeledContent("AWC") { Text(String(format: "%.0f mm/m", awc)) }
+            }
+            if let depth = soil.effectiveRootDepthM, depth > 0 {
+                LabeledContent("Effective root depth") { Text(String(format: "%.2f m", depth)) }
+            }
+            if let depl = soil.managementAllowedDepletionPercent, depl > 0 {
+                LabeledContent("Allowed depletion") { Text(String(format: "%.0f%%", depl)) }
+            }
+            if let rzc = soil.rootZoneCapacityMm {
+                LabeledContent("Root-zone capacity") {
+                    Text(String(format: "%.0f mm", rzc)).foregroundStyle(.secondary)
+                }
+            }
+            if let raw = soil.readilyAvailableWaterMm {
+                LabeledContent("Readily available water") {
+                    Text(String(format: "%.0f mm", raw)).foregroundStyle(.secondary)
+                }
+            }
+            HStack {
+                if let conf = soil.confidence, !conf.isEmpty {
+                    Text("Confidence: \(conf.capitalized)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if soil.isManualOverride {
+                    Label("Manual override", systemImage: "pencil.tip")
+                        .font(.caption2)
+                        .foregroundStyle(VineyardTheme.info)
+                } else if soil.source == "nsw_seed" {
+                    Label("NSW SEED", systemImage: "square.stack.3d.down.right")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if let notes = soil.manualNotes, !notes.isEmpty {
+                Text(notes)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func soilClassDisplay(_ soil: BackendSoilProfile) -> String {
+        if let typed = soil.typedSoilClass { return typed.fallbackLabel }
+        if let raw = soil.irrigationSoilClass, !raw.isEmpty { return raw }
+        return "Unknown"
+    }
+
+    private var vineyardCountry: String {
+        store.vineyards.first(where: { $0.id == store.selectedVineyardId })?.country ?? ""
+    }
+
+    private var isAustralianVineyard: Bool {
+        let c = vineyardCountry.trimmingCharacters(in: .whitespaces).lowercased()
+        return c == "au" || c == "aus" || c == "australia"
+    }
+
+    private func loadSoilProfile(force: Bool = false) async {
+        guard let pid = paddock?.id else {
+            soilProfile = nil
+            return
+        }
+        if !force && soilProfile != nil { return }
+        isLoadingSoilProfile = true
+        defer { isLoadingSoilProfile = false }
+        do {
+            soilProfile = try await soilProfileRepository.fetchPaddockSoilProfile(paddockId: pid)
+        } catch {
+            soilProfile = nil
         }
     }
 
