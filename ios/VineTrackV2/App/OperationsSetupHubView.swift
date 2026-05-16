@@ -906,6 +906,12 @@ private struct BlockSummaryRow: View {
             .font(.subheadline)
             .foregroundStyle(Color.accentColor.opacity(0.75))
 
+            if !irrigationSummary.isEmpty {
+                Text(irrigationSummary)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.accentColor.opacity(0.75))
+            }
+
             BlockSetupChecklist(
                 boundariesOk: boundariesComplete,
                 rowsOk: rowsComplete,
@@ -953,6 +959,17 @@ private struct BlockSummaryRow: View {
             }
         }
         return true
+    }
+
+    private var irrigationSummary: String {
+        var parts: [String] = []
+        if let flow = paddock.flowPerEmitter, flow > 0 {
+            parts.append(String(format: "%.1f L/hr", flow))
+        }
+        if let mm = paddock.mmPerHour, mm > 0 {
+            parts.append(String(format: "%.2f mm/hr", mm))
+        }
+        return parts.joined(separator: " \u{2022} ")
     }
 
     private var irrigationComplete: Bool {
