@@ -26,6 +26,11 @@ final class PaddockSyncService {
     private let metadata: PaddockSyncMetadata
     private var isConfigured: Bool = false
     private var needsForceRepushMigration: Bool = false
+    /// When true, the next `sync(vineyardId:)` pulls remote paddocks BEFORE
+    /// pushing local changes, so any stale local `variety_allocations`
+    /// don't overwrite server data that was repaired by the grape variety
+    /// canonicalisation SQL migrations (067/068/069/070).
+    private var pendingPullFirstAfterVarietyRepair: Bool = false
 
     init(
         repository: (any PaddockSyncRepositoryProtocol)? = nil,
@@ -54,12 +59,20 @@ final class PaddockSyncService {
         // once so the next sync pulls the repaired `variety_allocations`
         // JSON for every vineyard, even when the local `updated_at` is
         // already past the server's repaired timestamps.
-        let varietyRepullKey = "vinetrack_paddock_sync_variety_repull_v1"
+        // NOTE: v1 of this key did not also clear pending dirty paddocks
+        // and ran push-before-pull, so stale local `variety_allocations`
+        // could overwrite server data that had just been repaired by
+        // SQL 067-070. v2 fixes both: it clears any pending upserts that
+        // existed at the moment the variety repair landed AND defers the
+        // push-first ordering until after a fresh pull.
+        let varietyRepullKey = "vinetrack_paddock_sync_variety_repull_v2"
         if !UserDefaults.standard.bool(forKey: varietyRepullKey) {
             self.metadata.resetAllLastSync()
+            self.metadata.clearAllPendingUpserts()
+            self.pendingPullFirstAfterVarietyRepair = true
             UserDefaults.standard.set(true, forKey: varietyRepullKey)
             #if DEBUG
-            print("[PaddockSync] variety-repair re-pull migration: cleared lastSync to force a fresh paddock pull")
+            print("[PaddockSync] variety-repair re-pull v2: cleared lastSync + pending upserts, will pull before push on next sync")
             #endif
         }
     }
@@ -116,14 +129,122 @@ final class PaddockSyncService {
         syncStatus = .syncing
         errorMessage = nil
         do {
-            try await pushLocalPaddocks(vineyardId: vineyardId)
-            try await pullRemotePaddocks(vineyardId: vineyardId)
+            if pendingPullFirstAfterVarietyRepair {
+                // First sync after the variety-repair migration: pull the
+                // canonicalised server rows BEFORE pushing anything local,
+                // so we don't clobber the repaired `variety_allocations`.
+                pendingPullFirstAfterVarietyRepair = false
+                try await pullRemotePaddocks(vineyardId: vineyardId)
+                try await pushLocalPaddocks(vineyardId: vineyardId)
+                try await pullRemotePaddocks(vineyardId: vineyardId)
+            } else {
+                try await pushLocalPaddocks(vineyardId: vineyardId)
+                try await pullRemotePaddocks(vineyardId: vineyardId)
+            }
             metadata.setLastSync(Date(), for: vineyardId)
             lastSyncDate = Date()
             syncStatus = .success
         } catch {
             errorMessage = error.localizedDescription
             syncStatus = .failure(error.localizedDescription)
+        }
+    }
+
+    // MARK: - Force refresh helpers (admin / diagnostics)
+
+    /// Result of a manual force refresh, surfaced to Sync Diagnostics.
+    struct ForceRefreshResult: Sendable, Equatable {
+        let vineyardId: UUID
+        let pulled: Int
+        let appliedUpserts: Int
+        let appliedDeletes: Int
+        let error: String?
+    }
+
+    /// Drop the `lastSync` watermark for the given vineyard and re-pull
+    /// every paddock from Supabase. Does NOT push local changes — useful
+    /// when local rows are suspected stale (e.g. after a server-side
+    /// canonicalisation repair) and we need authoritative server data.
+    @discardableResult
+    func forceRepullAllPaddocks(vineyardId: UUID) async -> ForceRefreshResult {
+        guard let store, SupabaseClientProvider.shared.isConfigured else {
+            return ForceRefreshResult(
+                vineyardId: vineyardId,
+                pulled: 0,
+                appliedUpserts: 0,
+                appliedDeletes: 0,
+                error: "Supabase not configured"
+            )
+        }
+        syncStatus = .syncing
+        errorMessage = nil
+        do {
+            metadata.resetAllLastSync()
+            let remote = try await repository.fetchAllPaddocks(vineyardId: vineyardId)
+            var upserts = 0
+            var deletes = 0
+            for backendPaddock in remote {
+                if backendPaddock.deletedAt != nil {
+                    store.applyRemotePaddockDelete(backendPaddock.id)
+                    metadata.clearDirty([backendPaddock.id])
+                    metadata.clearDeleted([backendPaddock.id])
+                    deletes += 1
+                } else {
+                    // Force-apply: ignore pending dirty so the server row wins.
+                    let mapped = backendPaddock.toPaddock()
+                    store.applyRemotePaddockUpsert(mapped)
+                    metadata.clearDirty([backendPaddock.id])
+                    upserts += 1
+                }
+            }
+            GrapeVarietyCanonicalization.run(store: store)
+            metadata.setLastSync(Date(), for: vineyardId)
+            lastSyncDate = Date()
+            syncStatus = .success
+            return ForceRefreshResult(
+                vineyardId: vineyardId,
+                pulled: remote.count,
+                appliedUpserts: upserts,
+                appliedDeletes: deletes,
+                error: nil
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+            syncStatus = .failure(error.localizedDescription)
+            return ForceRefreshResult(
+                vineyardId: vineyardId,
+                pulled: 0,
+                appliedUpserts: 0,
+                appliedDeletes: 0,
+                error: error.localizedDescription
+            )
+        }
+    }
+
+    /// Re-fetch a single paddock by id from Supabase and apply it
+    /// authoritatively (server wins). Used by `EditPaddockSheet` as a
+    /// safe fallback when a local allocation has no usable name snapshot
+    /// and resolves to "no-match".
+    @discardableResult
+    func refreshPaddock(id paddockId: UUID, vineyardId: UUID) async -> Bool {
+        guard let store, SupabaseClientProvider.shared.isConfigured else { return false }
+        do {
+            let remote = try await repository.fetchAllPaddocks(vineyardId: vineyardId)
+            guard let match = remote.first(where: { $0.id == paddockId }) else { return false }
+            if match.deletedAt != nil {
+                store.applyRemotePaddockDelete(match.id)
+            } else {
+                let mapped = match.toPaddock()
+                store.applyRemotePaddockUpsert(mapped)
+                metadata.clearDirty([match.id])
+                GrapeVarietyCanonicalization.run(store: store)
+            }
+            return true
+        } catch {
+            #if DEBUG
+            print("[PaddockSync] refreshPaddock(\(paddockId)) failed: \(error.localizedDescription)")
+            #endif
+            return false
         }
     }
 
@@ -313,6 +434,14 @@ final class PaddockSyncMetadata {
     /// paddock data or pending dirty/delete sets.
     func resetAllLastSync() {
         state.lastSyncByVineyard = [:]
+        save()
+    }
+
+    /// Clear every pending dirty upsert. Used by the variety-repair
+    /// migration so we don't re-push stale local `variety_allocations`
+    /// that were superseded by the server-side canonicalisation.
+    func clearAllPendingUpserts() {
+        state.pendingUpserts = [:]
         save()
     }
 

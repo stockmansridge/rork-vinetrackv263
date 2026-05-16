@@ -19,9 +19,13 @@ struct SyncDiagnosticsView: View {
     @Environment(WorkTaskPaddockSyncService.self) private var workTaskPaddockSync
     @Environment(GrowthStageRecordSyncService.self) private var growthStageRecordSync
     @Environment(SystemAdminService.self) private var systemAdmin
+    @Environment(PaddockSyncService.self) private var paddockSync
 
     @State private var copyConfirmation: String?
     @State private var isSyncingAll: Bool = false
+    @State private var isForceRepullingPaddocks: Bool = false
+    @State private var lastPaddockForceRefresh: PaddockSyncService.ForceRefreshResult?
+    @State private var lastPaddockForceRefreshAt: Date?
     @State private var isRepairingTrips: Bool = false
     @State private var lastRepairResult: TripSyncService.RepairResult?
     @State private var lastRepairAt: Date?
@@ -39,6 +43,7 @@ struct SyncDiagnosticsView: View {
             contextSection
             entitiesSection
             actionsSection
+            paddockForceRefreshSection
             if systemAdmin.isEnabled(SystemFeatureFlagKey.showPinDiagnostics) {
                 pinAuditSection
             }
@@ -106,6 +111,62 @@ struct SyncDiagnosticsView: View {
         } header: {
             Text("Actions")
         }
+    }
+
+    @ViewBuilder
+    private var paddockForceRefreshSection: some View {
+        Section {
+            Button {
+                Task { await forceRepullPaddocks() }
+            } label: {
+                HStack {
+                    Label(
+                        isForceRepullingPaddocks ? "Refreshing paddocks…" : "Force refresh paddocks from server",
+                        systemImage: "square.and.arrow.down.on.square"
+                    )
+                    Spacer()
+                    if isForceRepullingPaddocks { ProgressView() }
+                }
+            }
+            .disabled(isForceRepullingPaddocks || !auth.isSignedIn || store.selectedVineyardId == nil)
+
+            if let result = lastPaddockForceRefresh {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Last force refresh")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 14) {
+                        metric("Pulled", value: "\(result.pulled)")
+                        metric("Upserts", value: "\(result.appliedUpserts)", highlight: result.appliedUpserts > 0)
+                        metric("Deletes", value: "\(result.appliedDeletes)", highlight: result.appliedDeletes > 0)
+                    }
+                    if let err = result.error, !err.isEmpty {
+                        Text("Error: \(err)")
+                            .font(.caption2)
+                            .foregroundStyle(.red)
+                    }
+                    if let at = lastPaddockForceRefreshAt {
+                        Text("Ran: \(at.formatted(date: .abbreviated, time: .shortened))")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+        } header: {
+            Text("Paddock Force Refresh")
+        } footer: {
+            Text("Pulls every paddock for the selected vineyard from Supabase and overwrites the local cache, ignoring the local sync watermark. Use this after a server-side repair (e.g. grape variety canonicalisation) when local paddocks still show stale data such as `Unknown` varieties. Local changes that were already pushed are unaffected; unpushed local edits to those paddocks will be replaced by the server row.")
+        }
+    }
+
+    private func forceRepullPaddocks() async {
+        guard !isForceRepullingPaddocks, let vineyardId = store.selectedVineyardId else { return }
+        isForceRepullingPaddocks = true
+        defer { isForceRepullingPaddocks = false }
+        let result = await paddockSync.forceRepullAllPaddocks(vineyardId: vineyardId)
+        lastPaddockForceRefresh = result
+        lastPaddockForceRefreshAt = Date()
     }
 
     private var pinAuditSection: some View {

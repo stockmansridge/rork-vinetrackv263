@@ -4,7 +4,11 @@ import MapKit
 struct EditPaddockSheet: View {
     let paddock: Paddock?
     @Environment(MigratedDataStore.self) private var store
+    @Environment(PaddockSyncService.self) private var paddockSync
     @Environment(\.dismiss) private var dismiss
+    @State private var attemptedSafeRefetch: Bool = false
+    @State private var isSafeRefetching: Bool = false
+    @State private var lastSafeRefetchOutcome: String?
     @State private var name: String = ""
     @State private var polygonPoints: [CoordinatePoint] = []
     @State private var rowDirection: Double = 0
@@ -721,19 +725,28 @@ struct EditPaddockSheet: View {
         resolved: PaddockVarietyResolver.Resolved
     ) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("DIAG paddock=\(paddock?.id.uuidString.prefix(8) ?? "new")")
-            Text("alloc.id=\(allocation.id.uuidString.prefix(8))")
-            Text("alloc.varietyId=\(allocation.varietyId.uuidString.prefix(8))")
-            Text("alloc.name=\(allocation.name ?? "<nil>")")
-            Text("resolved.name=\(resolved.displayName ?? "<nil>") via \(resolved.reason)")
-            Text("master count=\(store.grapeVarieties.count)")
+            Text("paddock.id     = \(paddock?.id.uuidString ?? "new")")
+            Text("alloc.id       = \(allocation.id.uuidString)")
+            Text("alloc.varietyId = \(allocation.varietyId.uuidString)")
+            Text("alloc.name     = \(allocation.name ?? "<nil>")")
+            Text("resolved.name  = \(resolved.displayName ?? "<nil>") via \(resolved.reason)")
+            Text("master count   = \(store.grapeVarieties.count)")
             if let v = resolved.varietyId.flatMap({ id in store.grapeVarieties.first(where: { $0.id == id }) }) {
-                Text("matched master id=\(v.id.uuidString.prefix(8)) name=\(v.name) key=\(v.key ?? "<nil>")")
+                Text("matched master id   = \(v.id.uuidString)")
+                Text("matched master name = \(v.name)")
+                Text("matched master key  = \(v.key ?? "<nil>")")
+            }
+            Text("last paddock sync = \(paddockSync.lastSyncDate?.ISO8601Format() ?? "<nil>")")
+            if isSafeRefetching {
+                Text("safe-refetch: in progress…")
+            } else if let outcome = lastSafeRefetchOutcome {
+                Text("safe-refetch: \(outcome)")
             }
         }
         .font(.system(size: 10, design: .monospaced))
         .foregroundStyle(.secondary)
         .padding(.top, 2)
+        .textSelection(.enabled)
     }
     #endif
 
@@ -787,6 +800,14 @@ struct EditPaddockSheet: View {
                     #if DEBUG
                     varietyDiagnostics(allocation: allocation, resolved: resolved)
                     #endif
+                }
+                .task {
+                    // Safe repair fallback: if this allocation has no usable
+                    // name snapshot AND the resolver can't find anything,
+                    // force-refresh this paddock from Supabase once so we
+                    // pick up any server-side canonicalisation that the
+                    // local cache missed.
+                    await maybeSafeRefetchPaddock(allocation: allocation)
                 }
             }
 
@@ -855,6 +876,33 @@ struct EditPaddockSheet: View {
                     Button("Done") { showAddVariety = false }
                 }
             }
+        }
+    }
+
+    /// Trigger a one-shot Supabase re-fetch of the current paddock when a
+    /// variety allocation cannot be resolved locally and has no name
+    /// snapshot to fall back on. Idempotent per sheet presentation.
+    private func maybeSafeRefetchPaddock(
+        allocation: PaddockVarietyAllocation
+    ) async {
+        guard !attemptedSafeRefetch else { return }
+        guard let paddock else { return }
+        let resolved = PaddockVarietyResolver.resolve(
+            allocation: allocation,
+            varieties: store.grapeVarieties
+        )
+        let nameMissing = (allocation.name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        guard nameMissing, resolved.reason == "no-match" else { return }
+        attemptedSafeRefetch = true
+        isSafeRefetching = true
+        let vineyardId = paddock.vineyardId
+        let ok = await paddockSync.refreshPaddock(id: paddock.id, vineyardId: vineyardId)
+        isSafeRefetching = false
+        lastSafeRefetchOutcome = ok ? "applied server row" : "failed / no remote row"
+        if ok, let refreshed = store.paddocks.first(where: { $0.id == paddock.id }) {
+            // Replay onAppear's allocation hydration so the form reflects
+            // the freshly pulled server data.
+            varietyAllocations = refreshed.varietyAllocations
         }
     }
 
