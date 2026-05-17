@@ -52,6 +52,18 @@ class WeatherHourlyService {
     var isLoading: Bool = false
     var errorMessage: String?
     var forecast: HourlyForecast?
+    /// Configured forecast provider for the current vineyard
+    /// (auto / openMeteo / willyWeather). Updated by
+    /// `fetchWithDavisOverride` before the network call so UI can
+    /// show the expected source even while loading.
+    var resolvedProvider: ForecastProvider = .auto
+    /// Provider that actually supplied the hourly data. Currently
+    /// always Open-Meteo for hourly disease modelling — WillyWeather
+    /// does not yet expose hourly through the proxy.
+    var effectiveProvider: ForecastProvider = .openMeteo
+    /// User-facing reason describing why the configured provider was
+    /// not used for hourly data (e.g. WillyWeather hourly unavailable).
+    var fallbackReason: String?
 
     func fetch(
         latitude: Double,
@@ -146,6 +158,35 @@ class WeatherHourlyService {
         forecastDays: Int = 3,
         vineyardId: UUID?
     ) async {
+        // Resolve the same forecast provider used by Dashboard /
+        // Irrigation Advisor so Disease Risk respects the vineyard
+        // setting. WillyWeather does not currently expose hourly data
+        // through the proxy, so hourly disease modelling always uses
+        // Open-Meteo. We surface this transparently via
+        // `effectiveProvider` and `fallbackReason`.
+        var resolved: ForecastProvider = .auto
+        if let vid = vineyardId {
+            let cfg = WeatherProviderStore.shared.config(for: vid)
+            resolved = cfg.forecastProvider
+            if let backend = try? await VineyardWillyWeatherProxyService
+                .getProviderPreference(vineyardId: vid) {
+                switch backend {
+                case "auto": resolved = .auto
+                case "open_meteo": resolved = .openMeteo
+                case "willyweather": resolved = .willyWeather
+                default: break
+                }
+            }
+        }
+        resolvedProvider = resolved
+        effectiveProvider = .openMeteo
+        switch resolved {
+        case .willyWeather:
+            fallbackReason = "WillyWeather hourly data is not available — using Open-Meteo for disease risk hourly inputs."
+        case .auto, .openMeteo:
+            fallbackReason = nil
+        }
+
         await fetch(
             latitude: latitude,
             longitude: longitude,

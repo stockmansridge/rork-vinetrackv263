@@ -109,7 +109,14 @@ struct DiseaseRiskAdvisorView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             VStack(alignment: .leading, spacing: 4) {
-                diseaseSourceRow(label: "Forecast", value: "Open-Meteo Forecast", icon: "cloud.sun.fill", tint: Color.accentColor)
+                diseaseSourceRow(label: "Forecast", value: forecastSourceValue, icon: forecastSourceIcon, tint: Color.accentColor)
+                if let reason = hourlyService.fallbackReason {
+                    Text(reason)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.leading, 22)
+                }
                 diseaseSourceRow(label: "Wetness", value: wetnessSourceValue, icon: weatherStatus?.quality == .localStationWithMeasuredWetness ? "sensor.tag.radiowaves.forward.fill" : "drop.fill", tint: weatherStatus?.quality == .localStationWithMeasuredWetness ? VineyardTheme.leafGreen : .secondary)
                 diseaseSourceRow(label: "Fallback wetness", value: "Estimated from rain / RH / dew point", icon: "tray.full.fill", tint: .secondary)
                 if let last = lastCalculated {
@@ -123,6 +130,21 @@ struct DiseaseRiskAdvisorView: View {
         }
         .padding(14)
         .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 14))
+    }
+
+    private var forecastSourceValue: String {
+        switch hourlyService.resolvedProvider {
+        case .willyWeather:
+            return "WillyWeather (hourly via Open-Meteo)"
+        case .openMeteo:
+            return "Open-Meteo Forecast"
+        case .auto:
+            return "Automatic — Open-Meteo"
+        }
+    }
+
+    private var forecastSourceIcon: String {
+        hourlyService.resolvedProvider.symbol
     }
 
     private var wetnessSourceValue: String {
