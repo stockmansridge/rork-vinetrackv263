@@ -34,7 +34,7 @@ const CORS: Record<string, string> = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const PROXY_VERSION = "willyweather-proxy-2026-05-15-nearest-town";
+const PROXY_VERSION = "willyweather-proxy-2026-05-17-debug-capabilities";
 const WW_BASE = "https://api.willyweather.com.au/v2";
 const PROVIDER = "willyweather";
 
@@ -529,6 +529,140 @@ Deno.serve(async (req: Request) => {
         location_id: loc.id,
         location_name: loc.name,
         days: norm.days,
+      });
+    }
+
+    case "debug_capabilities": {
+      // System-admin / debugging only. Probes the WillyWeather API for the
+      // configured vineyard location to determine which forecast and
+      // observational fields are actually available on the current API plan.
+      // Used to decide whether Disease Risk Advisor can source hourly
+      // temperature / RH / dew point / rainfall / wind from WillyWeather
+      // instead of falling back to Open-Meteo.
+      if (!apiKey) {
+        return json({ error: "WillyWeather is not available — global API key not configured." }, 503);
+      }
+      const loc = await getLocation(admin, vineyardId);
+      if (!loc) return json({ error: "WillyWeather location is not selected for this vineyard." }, 400);
+
+      // Candidate forecast types to probe. WillyWeather rejects the whole
+      // request if any unsupported type is included, so we probe each
+      // independently and record which succeed.
+      const forecastTypes = [
+        "rainfall",
+        "rainfallprobability",
+        "temperature",
+        "wind",
+        "weather",
+        "precis",
+        "uv",
+        "sunrisesunset",
+        "dewpoint",
+        "humidity",
+        "relativehumidity",
+      ];
+
+      const forecastResults: Array<Record<string, unknown>> = [];
+      let combined: any = null;
+
+      for (const t of forecastTypes) {
+        const u = new URL(`${WW_BASE}/${encodeURIComponent(apiKey)}/locations/${encodeURIComponent(loc.id)}/weather.json`);
+        u.searchParams.set("forecasts", t);
+        u.searchParams.set("days", "2");
+        u.searchParams.set("units", "speed:km/h,temperature:c,distance:km");
+        const res = await fetch(u.toString());
+        const text = await res.text();
+        let parsed: any = null;
+        try { parsed = JSON.parse(text); } catch { /* keep raw */ }
+        const days = parsed?.forecasts?.[t]?.days;
+        const firstDay = Array.isArray(days) ? days[0] : null;
+        const entries = Array.isArray(firstDay?.entries) ? firstDay.entries : [];
+        const entryCount = entries.length;
+        const sampleEntry = entries[0] ?? null;
+        const sampleKeys = sampleEntry && typeof sampleEntry === "object"
+          ? Object.keys(sampleEntry as Record<string, unknown>)
+          : [];
+        // Estimate interval (minutes) from first two entries if dateTime present.
+        let intervalMinutes: number | null = null;
+        if (entries.length >= 2) {
+          const d0 = Date.parse(String(entries[0]?.dateTime ?? ""));
+          const d1 = Date.parse(String(entries[1]?.dateTime ?? ""));
+          if (isFinite(d0) && isFinite(d1) && d1 > d0) {
+            intervalMinutes = Math.round((d1 - d0) / 60000);
+          }
+        }
+        forecastResults.push({
+          type: t,
+          http_status: res.status,
+          ok: res.ok,
+          available: res.ok && entryCount > 0,
+          first_day_entry_count: entryCount,
+          interval_minutes: intervalMinutes,
+          sample_entry: sampleEntry,
+          sample_keys: sampleKeys,
+          error_message: res.ok ? null : (parsed?.error?.description ?? parsed?.error ?? text.slice(0, 200)),
+        });
+      }
+
+      // Also fetch the standard combined call we use today for comparison.
+      const combinedRes = await wwForecast(apiKey, loc.id, 2);
+      combined = {
+        http_status: combinedRes.status,
+        ok: combinedRes.ok,
+        forecast_keys: combinedRes.ok && combinedRes.body?.forecasts && typeof combinedRes.body.forecasts === "object"
+          ? Object.keys(combinedRes.body.forecasts)
+          : [],
+      };
+
+      // Probe observational endpoint (real-time values; useful for current
+      // RH / dew point even if forecast does not expose them).
+      const obsUrl = new URL(`${WW_BASE}/${encodeURIComponent(apiKey)}/locations/${encodeURIComponent(loc.id)}/weather.json`);
+      obsUrl.searchParams.set("observational", "true");
+      obsUrl.searchParams.set("units", "speed:km/h,temperature:c,distance:km");
+      const obsRes = await fetch(obsUrl.toString());
+      const obsText = await obsRes.text();
+      let obsParsed: any = null;
+      try { obsParsed = JSON.parse(obsText); } catch { /* keep raw */ }
+      const obs = obsParsed?.observational ?? null;
+      const observational = {
+        http_status: obsRes.status,
+        ok: obsRes.ok,
+        station_name: obs?.stations?.[0]?.name ?? null,
+        station_distance_km: num(obs?.stations?.[0]?.distance),
+        observation_keys: obs?.observations && typeof obs.observations === "object"
+          ? Object.keys(obs.observations)
+          : [],
+        sample: obs?.observations ?? null,
+      };
+
+      // Disease Risk Advisor decision summary.
+      const has = (t: string) => forecastResults.find((r) => r.type === t && r.available === true) != null;
+      const summary = {
+        has_forecast_temperature: has("temperature"),
+        has_forecast_rainfall: has("rainfall"),
+        has_forecast_rainfall_probability: has("rainfallprobability"),
+        has_forecast_wind: has("wind"),
+        has_forecast_dewpoint: has("dewpoint"),
+        has_forecast_humidity: has("humidity") || has("relativehumidity"),
+        has_observational_dewpoint: typeof observational.sample?.dewPoint !== "undefined"
+          || typeof observational.sample?.["dewpoint"] !== "undefined",
+        has_observational_humidity: typeof observational.sample?.humidity !== "undefined"
+          || typeof observational.sample?.["relativeHumidity"] !== "undefined",
+      };
+      const recommendation = (summary.has_forecast_temperature
+          && summary.has_forecast_rainfall
+          && (summary.has_forecast_dewpoint || summary.has_forecast_humidity))
+        ? "willyweather_can_drive_disease_risk"
+        : "keep_open_meteo_for_disease_risk";
+
+      return json({
+        success: true,
+        location: { id: loc.id, name: loc.name, latitude: loc.lat, longitude: loc.lon },
+        forecast_probes: forecastResults,
+        combined_forecast_call: combined,
+        observational,
+        summary,
+        recommendation,
       });
     }
 
