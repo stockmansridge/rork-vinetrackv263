@@ -8,14 +8,19 @@ import SwiftUI
 /// intentionally does NOT feed into vineyard health or alert severity.
 ///
 /// Refresh strategy:
-/// - On vineyard change / first appear: kick off a live Davis fetch (when a
-///   shared Davis station is configured) so today's mm reflects the current
-///   station reading, then read the cached snapshot the rest of the app uses.
-/// - On return from background (`.scenePhase == .active`): same refresh, so
-///   re-opening the app shows current rainfall without making the user dive
-///   into the Rain page and tap refresh.
-/// - Manual refresh in the Rain page still works and now shares the same
-///   `vineyard_weather_observations` cache as this card.
+/// - On vineyard change / first appear: kick off a provider-appropriate live
+///   refresh so today's mm reflects the latest available reading without
+///   making the user dive into the Rain page and tap refresh:
+///     * Davis: live `fetchCurrentConditions` (writes today's cache + daily row).
+///     * Weather Underground: server-side `backfill_rainfall` for recent days
+///       (refreshes yesterday — WU's daily summary excludes the in-progress
+///       day) and uses Open-Meteo forecast for today's running total.
+///     * Open-Meteo / Automatic: server-side `backfill_rainfall_gaps` to keep
+///       recent persisted rows current; today's value falls back to the
+///       Open-Meteo forecast first-day rain.
+/// - On return from background (`.scenePhase == .active`): same refresh.
+/// - Manual refresh in the Rain page still works and shares the same
+///   `rainfall_daily` / `vineyard_weather_observations` cache as this card.
 struct HomeRainSummaryCard: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(\.scenePhase) private var scenePhase
@@ -155,21 +160,22 @@ struct HomeRainSummaryCard: View {
         }
         refreshDidFail = false
 
-        // 1) Trigger a live Davis pull when a shared station is configured.
-        //    The proxy persists the latest observation into
-        //    `vineyard_weather_observations` (and today's row into
-        //    `rainfall_daily`), so the cached read below picks up the new
-        //    value. Errors are non-fatal — we'll fall back to the cache.
+        // 1) Provider-appropriate live refresh. We pick at most one
+        //    foreground refresh per call so this stays cheap; lower-priority
+        //    backfills (e.g. Open-Meteo gap fill) are scheduled detached.
+        await VineyardWeatherIntegrationCache.shared.ensureLoaded(for: vid)
         let cfg = WeatherProviderStore.shared.config(for: vid)
         let canUseDavis = (cfg.davisStationId?.isEmpty == false) &&
             ((cfg.davisIsVineyardShared && cfg.davisVineyardHasServerCredentials)
              || (cfg.davisHasCredentials && cfg.davisConnectionTested))
+        var didLivePull = false
+
         if canUseDavis, let sid = cfg.davisStationId {
             do {
                 _ = try await VineyardDavisProxyService.fetchCurrentConditions(
                     vineyardId: vid, stationId: sid
                 )
-                // Let other rain UIs (calendar) know fresh data landed.
+                didLivePull = true
                 NotificationCenter.default.post(
                     name: .rainfallCalendarShouldReload, object: nil
                 )
@@ -179,6 +185,13 @@ struct HomeRainSummaryCard: View {
                 refreshDidFail = true
                 print("[HomeRain] live Davis refresh failed — \(error.localizedDescription)")
             }
+        }
+
+        // If Davis isn't the active source, try the next-best server-side
+        // refresh so the Home card reflects today's available data without
+        // requiring the user to open the Rain page and tap refresh.
+        if !didLivePull {
+            await refreshNonDavis(vineyardId: vid)
         }
 
         // 2) Read the cached current snapshot (matches Rain page + Irrigation).
@@ -227,6 +240,87 @@ struct HomeRainSummaryCard: View {
         } else {
             forecastDays = []
             hasLoadedForecast = true
+        }
+
+        // 5) Last-resort fallback for today: when neither the cache nor the
+        //    persisted daily row has a value (typical for WU/Open-Meteo on
+        //    the in-progress day, which both proxies intentionally skip),
+        //    use the forecast first-day rain that matches today's date.
+        if todayMm == nil, let todayForecast = forecastDayMatchingToday() {
+            todayMm = todayForecast.forecastRainMm
+            if sourceLabel == nil {
+                sourceLabel = forecastSourceLabel()
+            }
+        }
+    }
+
+    /// Schedules a server-side refresh appropriate to the active non-Davis
+    /// provider. Both proxies intentionally skip the in-progress day, but
+    /// they keep recent persisted rows current and the daily row for today
+    /// fills in from the forecast fallback below.
+    private func refreshNonDavis(vineyardId vid: UUID) async {
+        // Weather Underground — backfill_rainfall(days: 2) refreshes the
+        // most-recent completed day. Returns 404 (notConfigured) if no
+        // WU integration exists, which we treat as "skip".
+        do {
+            _ = try await VineyardWundergroundProxyService.backfillRainfall(
+                vineyardId: vid, days: 2
+            )
+            NotificationCenter.default.post(
+                name: .rainfallCalendarShouldReload, object: nil
+            )
+        } catch VineyardWundergroundProxyError.notConfigured {
+            // No WU station for this vineyard — fall through to Open-Meteo.
+        } catch VineyardWundergroundProxyError.forbidden {
+            // Operator role — skip, the proxy refused. Cache/forecast still cover Home.
+        } catch {
+            print("[HomeRain] WU refresh failed — \(error.localizedDescription)")
+        }
+
+        // Open-Meteo gap fill — top-priority days are already covered by
+        // Manual / Davis / WU rows (the RPC honours that priority), so this
+        // only writes Open-Meteo rows where nothing better exists. Cheap
+        // and safe to run on every foreground.
+        do {
+            _ = try await VineyardOpenMeteoProxyService.backfillRainfallGaps(
+                vineyardId: vid, days: 7, timezone: TimeZone.current.identifier
+            )
+            NotificationCenter.default.post(
+                name: .rainfallCalendarShouldReload, object: nil
+            )
+        } catch VineyardOpenMeteoProxyError.forbidden {
+            // Operator role — skip silently.
+        } catch {
+            print("[HomeRain] Open-Meteo gap fill failed — \(error.localizedDescription)")
+        }
+    }
+
+    /// Returns the forecast day whose start-of-day matches today's, if any.
+    /// Used as a last-resort fallback for the Home card's today value when
+    /// WU/Open-Meteo proxies have intentionally skipped the in-progress day.
+    private func forecastDayMatchingToday() -> ForecastDay? {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        return forecastDays.first(where: { cal.isDate($0.date, inSameDayAs: today) })
+            ?? forecastDays.first.flatMap { d in
+                cal.isDate(d.date, inSameDayAs: today) ? d : nil
+            }
+    }
+
+    /// Display label for the forecast-derived fallback so the subtitle
+    /// makes the source transparent.
+    private func forecastSourceLabel() -> String? {
+        guard let vid = store.selectedVineyardId else { return "Open-Meteo forecast" }
+        let cfg = WeatherProviderStore.shared.config(for: vid)
+        switch cfg.forecastProvider {
+        case .willyWeather:
+            return "WillyWeather forecast (today)"
+        case .auto:
+            return (cfg.willyWeatherLocationId?.isEmpty == false)
+                ? "WillyWeather forecast (today)"
+                : "Open-Meteo forecast (today)"
+        case .openMeteo:
+            return "Open-Meteo forecast (today)"
         }
     }
 
