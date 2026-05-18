@@ -6,13 +6,33 @@ import SwiftUI
 ///
 /// Operationally important for spraying / irrigation / seeding decisions but
 /// intentionally does NOT feed into vineyard health or alert severity.
+///
+/// Refresh strategy:
+/// - On vineyard change / first appear: kick off a live Davis fetch (when a
+///   shared Davis station is configured) so today's mm reflects the current
+///   station reading, then read the cached snapshot the rest of the app uses.
+/// - On return from background (`.scenePhase == .active`): same refresh, so
+///   re-opening the app shows current rainfall without making the user dive
+///   into the Rain page and tap refresh.
+/// - Manual refresh in the Rain page still works and now shares the same
+///   `vineyard_weather_observations` cache as this card.
 struct HomeRainSummaryCard: View {
     @Environment(MigratedDataStore.self) private var store
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var todayMm: Double?
+    @State private var sourceLabel: String?
+    @State private var lastObservedAt: Date?
+    @State private var isStaleSnapshot: Bool = false
+    @State private var refreshDidFail: Bool = false
+
     @State private var forecastDays: [ForecastDay] = []
     @State private var hasLoadedForecast: Bool = false
     @State private var isLoading: Bool = false
+
+    /// Guards re-entrant refreshes when scenePhase fires while a load is
+    /// still in flight (e.g. cold launch → quickly background → foreground).
+    @State private var isRefreshInFlight: Bool = false
 
     private var latitude: Double? {
         store.settings.vineyardLatitude ?? store.paddockCentroidLatitude
@@ -40,6 +60,12 @@ struct HomeRainSummaryCard: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
+                    if let sub = subtitleLine {
+                        Text(sub)
+                            .font(.caption2)
+                            .foregroundStyle(isStaleSnapshot || refreshDidFail ? .orange : .secondary)
+                            .lineLimit(1)
+                    }
                     Text(forecastLine)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -67,7 +93,11 @@ struct HomeRainSummaryCard: View {
         }
         .buttonStyle(.plain)
         .padding(.horizontal)
-        .task(id: store.selectedVineyardId) { await load() }
+        .task(id: store.selectedVineyardId) { await refresh() }
+        .onChange(of: scenePhase) { _, newPhase in
+            guard newPhase == .active else { return }
+            Task { await refresh() }
+        }
     }
 
     // MARK: - Display
@@ -80,43 +110,115 @@ struct HomeRainSummaryCard: View {
         return String(format: "Today's rain: %.1f mm", mm)
     }
 
+    private var subtitleLine: String? {
+        if refreshDidFail, let source = sourceLabel {
+            return "\(source) · could not refresh"
+        }
+        guard let source = sourceLabel else { return nil }
+        var parts: [String] = [source]
+        if let observed = lastObservedAt {
+            parts.append("updated \(Self.formatTime(observed))")
+        }
+        if isStaleSnapshot { parts.append("stale") }
+        return parts.joined(separator: " · ")
+    }
+
     private var forecastLine: String {
         guard hasLoadedForecast else { return "Loading 7-day rain forecast…" }
         return Self.summarize(days: forecastDays)
     }
 
-    // MARK: - Load
+    // MARK: - Refresh
 
-    private func load() async {
+    /// Single entry point used by `.task`, vineyard switching, and
+    /// scenePhase transitions. Pulls the live Davis observation (when a
+    /// shared station is configured) so the cached snapshot reflects the
+    /// current station reading, then reads `get_vineyard_current_weather`
+    /// the same way the rest of the app does. Forecast is always reloaded.
+    private func refresh() async {
+        guard !isRefreshInFlight else { return }
         guard let vid = store.selectedVineyardId else {
             todayMm = nil
+            sourceLabel = nil
+            lastObservedAt = nil
+            isStaleSnapshot = false
+            refreshDidFail = false
             forecastDays = []
             hasLoadedForecast = false
             return
         }
+        isRefreshInFlight = true
         isLoading = true
-        defer { isLoading = false }
-
-        // Today's rain — prefer the cached current-weather snapshot
-        // (matches the Davis / Wunderground number the rest of the app uses).
-        var todayResolved: Double?
-        if let snap = try? await WeatherCurrentService().fetchCachedCurrent(vineyardId: vid),
-           let r = snap.rainTodayMm {
-            todayResolved = r
+        defer {
+            isRefreshInFlight = false
+            isLoading = false
         }
-        // Fallback: persisted daily rainfall row for today.
-        if todayResolved == nil {
+        refreshDidFail = false
+
+        // 1) Trigger a live Davis pull when a shared station is configured.
+        //    The proxy persists the latest observation into
+        //    `vineyard_weather_observations` (and today's row into
+        //    `rainfall_daily`), so the cached read below picks up the new
+        //    value. Errors are non-fatal — we'll fall back to the cache.
+        let cfg = WeatherProviderStore.shared.config(for: vid)
+        let canUseDavis = (cfg.davisStationId?.isEmpty == false) &&
+            ((cfg.davisIsVineyardShared && cfg.davisVineyardHasServerCredentials)
+             || (cfg.davisHasCredentials && cfg.davisConnectionTested))
+        if canUseDavis, let sid = cfg.davisStationId {
+            do {
+                _ = try await VineyardDavisProxyService.fetchCurrentConditions(
+                    vineyardId: vid, stationId: sid
+                )
+                // Let other rain UIs (calendar) know fresh data landed.
+                NotificationCenter.default.post(
+                    name: .rainfallCalendarShouldReload, object: nil
+                )
+            } catch {
+                // Network/auth/rate-limit issues shouldn't blank the card;
+                // we still read whatever's in the cache below.
+                refreshDidFail = true
+                print("[HomeRain] live Davis refresh failed — \(error.localizedDescription)")
+            }
+        }
+
+        // 2) Read the cached current snapshot (matches Rain page + Irrigation).
+        var resolvedToday: Double?
+        var resolvedSource: String?
+        var resolvedObserved: Date?
+        var resolvedStale = false
+        if let snap = try? await WeatherCurrentService().fetchCachedCurrent(vineyardId: vid) {
+            if let r = snap.rainTodayMm { resolvedToday = r }
+            resolvedObserved = snap.observedAt
+            resolvedStale = snap.isStale
+            resolvedSource = Self.displaySource(
+                rawSource: snap.source,
+                stationName: snap.stationName
+            )
+        }
+
+        // 3) Fallback: persisted daily rainfall row for today.
+        if resolvedToday == nil {
             let cal = Calendar.current
             let start = cal.startOfDay(for: Date())
             if let rows = try? await PersistedRainfallService.fetchDailyRainfall(
                 vineyardId: vid, from: start, to: start
             ), let r = rows.first?.rainfallMm {
-                todayResolved = r
+                resolvedToday = r
+                if resolvedSource == nil {
+                    resolvedSource = Self.displaySource(
+                        rawSource: rows.first?.source,
+                        stationName: rows.first?.stationName
+                    )
+                }
             }
         }
-        todayMm = todayResolved
 
-        // 7-day forecast rain (Open-Meteo).
+        todayMm = resolvedToday
+        sourceLabel = resolvedSource
+        lastObservedAt = resolvedObserved
+        isStaleSnapshot = resolvedStale
+
+        // 4) 7-day forecast rain.
         if let lat = latitude, let lon = longitude {
             let svc = IrrigationForecastService()
             await svc.fetchForecast(latitude: lat, longitude: lon, days: 7, vineyardId: vid)
@@ -164,5 +266,29 @@ struct HomeRainSummaryCard: View {
         f.locale = Locale.current
         f.dateFormat = "EEEE"
         return f.string(from: date)
+    }
+
+    private static func formatTime(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale.current
+        f.timeStyle = .short
+        f.dateStyle = .none
+        return f.string(from: date)
+    }
+
+    private static func displaySource(rawSource: String?, stationName: String?) -> String? {
+        guard let raw = rawSource, !raw.isEmpty else { return nil }
+        let label: String
+        switch raw {
+        case "davis_weatherlink": label = "Davis WeatherLink"
+        case "wunderground_pws": label = "Weather Underground"
+        case "manual": label = "Manual"
+        case "open_meteo": label = "Open-Meteo"
+        default: label = raw
+        }
+        if let name = stationName, !name.isEmpty {
+            return "\(label) · \(name)"
+        }
+        return label
     }
 }
