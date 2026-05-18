@@ -186,6 +186,12 @@ struct AlertsInfoSheet: View {
                             detail: "Days within your forecast window where forecast rainfall meets the rain threshold."
                         )
                         infoRow(
+                            icon: "drop.degreesign.fill",
+                            tint: .blue,
+                            title: "Rain recorded today",
+                            detail: "Today's recorded rainfall (from your station, persisted daily row, or forecast fallback) meets the rain threshold."
+                        )
+                        infoRow(
                             icon: "cloud.bolt.rain.fill",
                             tint: .blue,
                             title: "Rain started / recorded",
@@ -295,7 +301,7 @@ extension HomeAlertsCard {
             counts[t, default: 0] += 1
         }
         let order: [AlertType] = [
-            .rainStarted, .rain24hSummary, .weatherRisk, .irrigationNeeded,
+            .rainTodayThresholdExceeded, .rainStarted, .rain24hSummary, .weatherRisk, .irrigationNeeded,
             .agedPins, .manyOpenPins, .workTaskOverdue, .sprayJobDue,
             .diseaseDownyMildew, .diseasePowderyMildew, .diseaseBotrytis,
             .costingSetupIncomplete, .forecastSetupMissingGeometry, .syncIssue
@@ -317,6 +323,7 @@ extension HomeAlertsCard {
             case .diseaseBotrytis: return "Botrytis"
             case .rainStarted: return "Rain started"
             case .rain24hSummary: return "24h rain"
+            case .rainTodayThresholdExceeded: return "Rain today"
             }
         }
     }

@@ -206,6 +206,14 @@ final class AlertService {
             )
             bySource["rainDavis"] = rain.count
             generated.append(contentsOf: rain)
+            let rainToday = await generateRainTodayThresholdAlerts(
+                store: store,
+                vineyardId: vineyardId,
+                prefs: prefs,
+                userId: userId
+            )
+            bySource["rainToday"] = rainToday.count
+            generated.append(contentsOf: rainToday)
         }
 
         // Costing setup incomplete — owner/manager only because it surfaces
@@ -647,6 +655,130 @@ final class AlertService {
             ))
         }
         return upserts
+    }
+
+    // MARK: - Rain today threshold (actual rainfall recorded so far today)
+
+    /// Fires when today's *recorded* rainfall (so far) meets or exceeds the
+    /// configured rain threshold. Independent of the forecast-rain weather
+    /// alert, which scans the multi-day forecast.
+    ///
+    /// Data priority mirrors the Home rain card and Rain page:
+    ///   1. `get_vineyard_current_weather` cached snapshot (`rain_today_mm`).
+    ///   2. Persisted `rainfall_daily` row for today.
+    ///   3. Forecast first-day rain (last-resort, when WU/Open-Meteo skip the
+    ///      in-progress day).
+    ///
+    /// Dedup key is per local date so a single row per day stays in sync
+    /// with the latest reading via upsert. If the threshold drops below the
+    /// current reading the upsert overwrites the same row with an expired
+    /// `expiresAt` so the alert clears without leaving a stale entry.
+    private func generateRainTodayThresholdAlerts(
+        store: MigratedDataStore,
+        vineyardId: UUID,
+        prefs: BackendAlertPreferences,
+        userId: UUID?
+    ) async -> [BackendAlertUpsert] {
+        let timezone = vineyardTimeZone(store: store, vineyardId: vineyardId)
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = timezone
+        let now = Date()
+        let startOfDay = cal.startOfDay(for: now)
+        let endOfDay = cal.date(byAdding: .day, value: 1, to: startOfDay) ?? now
+        let localDate: String = {
+            let comps = cal.dateComponents([.year, .month, .day], from: now)
+            return String(format: "%04d-%02d-%02d", comps.year ?? 0, comps.month ?? 0, comps.day ?? 0)
+        }()
+        let dedupKey = "rain_today_threshold:\(localDate)"
+        let alertId = deterministicUUID(vineyardId: vineyardId, dedupKey: dedupKey)
+
+        // 1. Cached current observation.
+        var todayMm: Double?
+        var sourceLabel: String?
+        if let snap = try? await WeatherCurrentService().fetchCachedCurrent(vineyardId: vineyardId) {
+            todayMm = snap.rainTodayMm
+            sourceLabel = Self.displaySource(rawSource: snap.source, stationName: snap.stationName)
+        }
+        // 2. Persisted daily row for today.
+        if todayMm == nil {
+            if let rows = try? await PersistedRainfallService.fetchDailyRainfall(
+                vineyardId: vineyardId, from: startOfDay, to: startOfDay
+            ), let row = rows.first, let mm = row.rainfallMm {
+                todayMm = mm
+                if sourceLabel == nil {
+                    sourceLabel = Self.displaySource(rawSource: row.source, stationName: row.stationName)
+                }
+            }
+        }
+        // 3. Forecast first-day (last-resort fallback).
+        if todayMm == nil, let day = forecastService.forecast?.days.first(where: { cal.isDate($0.date, inSameDayAs: now) }) {
+            todayMm = day.forecastRainMm
+            if sourceLabel == nil { sourceLabel = "Forecast" }
+        }
+
+        guard let mm = todayMm else { return [] }
+        let threshold = prefs.rainAlertThresholdMm
+
+        if mm >= threshold && threshold > 0 {
+            let severity: AlertSeverity = mm >= threshold * 2 ? .warning : .info
+            let title = "Rain threshold exceeded"
+            let sourceSuffix = sourceLabel.map { " (\($0))" } ?? ""
+            let message = String(
+                format: "%.1f mm recorded today%@. Threshold: %.1f mm.",
+                mm, sourceSuffix, threshold
+            )
+            return [BackendAlertUpsert(
+                id: alertId,
+                vineyardId: vineyardId,
+                alertType: AlertType.rainTodayThresholdExceeded.rawValue,
+                severity: severity.rawValue,
+                title: title,
+                message: message,
+                relatedTable: nil,
+                relatedId: nil,
+                paddockId: nil,
+                action: AlertAction.openWeather.rawValue,
+                dedupKey: dedupKey,
+                generatedForDate: startOfDay,
+                expiresAt: endOfDay,
+                createdBy: userId
+            )]
+        } else {
+            // Threshold no longer met — overwrite the same row with an
+            // expired timestamp so the previous alert clears on refresh.
+            return [BackendAlertUpsert(
+                id: alertId,
+                vineyardId: vineyardId,
+                alertType: AlertType.rainTodayThresholdExceeded.rawValue,
+                severity: AlertSeverity.info.rawValue,
+                title: "Rain threshold not exceeded",
+                message: String(format: "%.1f mm recorded today (threshold %.1f mm).", mm, threshold),
+                relatedTable: nil,
+                relatedId: nil,
+                paddockId: nil,
+                action: AlertAction.openWeather.rawValue,
+                dedupKey: dedupKey,
+                generatedForDate: startOfDay,
+                expiresAt: now.addingTimeInterval(-1),
+                createdBy: userId
+            )]
+        }
+    }
+
+    private static func displaySource(rawSource: String?, stationName: String?) -> String? {
+        guard let raw = rawSource, !raw.isEmpty else { return nil }
+        let label: String
+        switch raw {
+        case "davis_weatherlink": label = "Davis WeatherLink"
+        case "wunderground_pws": label = "Weather Underground"
+        case "manual": label = "Manual"
+        case "open_meteo": label = "Open-Meteo"
+        default: label = raw
+        }
+        if let name = stationName, !name.isEmpty {
+            return "\(label) · \(name)"
+        }
+        return label
     }
 
     // MARK: - Rain alerts (Davis cached current)

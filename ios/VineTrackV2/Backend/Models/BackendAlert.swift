@@ -37,6 +37,7 @@ nonisolated enum AlertType: String, Codable, Sendable {
     case diseaseBotrytis = "disease_botrytis"
     case rainStarted = "rain_started"
     case rain24hSummary = "rain_24h_summary"
+    case rainTodayThresholdExceeded = "rain_today_threshold_exceeded"
     case workTaskOverdue = "work_task_overdue"
     case manyOpenPins = "many_open_pins"
     case forecastSetupMissingGeometry = "forecast_setup_missing_geometry"

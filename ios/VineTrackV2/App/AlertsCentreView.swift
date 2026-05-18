@@ -321,6 +321,7 @@ private struct AlertRow: View {
         case .diseaseBotrytis: return "allergens"
         case .rainStarted: return "cloud.rain.fill"
         case .rain24hSummary: return "cloud.heavyrain.fill"
+        case .rainTodayThresholdExceeded: return "drop.degreesign.fill"
         case .workTaskOverdue: return "person.2.badge.gearshape.fill"
         case .manyOpenPins: return "mappin.and.ellipse"
         case .forecastSetupMissingGeometry: return "map"
