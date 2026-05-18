@@ -692,6 +692,14 @@ final class AlertService {
         let dedupKey = "rain_today_threshold:\(localDate)"
         let alertId = deterministicUUID(vineyardId: vineyardId, dedupKey: dedupKey)
 
+        // 0. Provider-appropriate live refresh so the cached snapshot we
+        //    read below reflects the latest available reading. Mirrors
+        //    `HomeRainSummaryCard.refresh()` — without this step the alert
+        //    generator races the Home card on cold launch and sees the
+        //    pre-refresh cache (often empty / zero), so today's actual rain
+        //    never triggers the threshold alert.
+        await refreshTodayRainSources(vineyardId: vineyardId)
+
         // 1. Cached current observation.
         var todayMm: Double?
         var sourceLabel: String?
@@ -762,6 +770,53 @@ final class AlertService {
                 expiresAt: now.addingTimeInterval(-1),
                 createdBy: userId
             )]
+        }
+    }
+
+    /// Mirrors `HomeRainSummaryCard.refresh()` so today's rainfall threshold
+    /// alert evaluates against the same data the Home card displays. Picks at
+    /// most one foreground refresh per call; all failures are swallowed so a
+    /// transient network issue can never block alert generation.
+    private func refreshTodayRainSources(vineyardId: UUID) async {
+        await VineyardWeatherIntegrationCache.shared.ensureLoaded(for: vineyardId)
+        let cfg = WeatherProviderStore.shared.config(for: vineyardId)
+        let canUseDavis = (cfg.davisStationId?.isEmpty == false) &&
+            ((cfg.davisIsVineyardShared && cfg.davisVineyardHasServerCredentials)
+             || (cfg.davisHasCredentials && cfg.davisConnectionTested))
+
+        if canUseDavis, let sid = cfg.davisStationId {
+            do {
+                _ = try await VineyardDavisProxyService.fetchCurrentConditions(
+                    vineyardId: vineyardId, stationId: sid
+                )
+                return
+            } catch {
+                print("[AlertService] rain-today live Davis refresh failed — \(error.localizedDescription)")
+            }
+        }
+
+        // Non-Davis path: WU backfill (recent days) then Open-Meteo gap fill.
+        // Both intentionally skip the in-progress day server-side; today's
+        // value still falls back to the forecast first-day reading below.
+        do {
+            _ = try await VineyardWundergroundProxyService.backfillRainfall(
+                vineyardId: vineyardId, days: 2
+            )
+        } catch VineyardWundergroundProxyError.notConfigured {
+            // No WU station — fall through.
+        } catch VineyardWundergroundProxyError.forbidden {
+            // Operator role — skip silently.
+        } catch {
+            print("[AlertService] rain-today WU refresh failed — \(error.localizedDescription)")
+        }
+        do {
+            _ = try await VineyardOpenMeteoProxyService.backfillRainfallGaps(
+                vineyardId: vineyardId, days: 7, timezone: TimeZone.current.identifier
+            )
+        } catch VineyardOpenMeteoProxyError.forbidden {
+            // Operator role — skip silently.
+        } catch {
+            print("[AlertService] rain-today Open-Meteo gap fill failed — \(error.localizedDescription)")
         }
     }
 
