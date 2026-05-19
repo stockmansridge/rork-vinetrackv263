@@ -692,6 +692,9 @@ final class AlertService {
         let dedupKey = "rain_today_threshold:\(localDate)"
         let alertId = deterministicUUID(vineyardId: vineyardId, dedupKey: dedupKey)
 
+        let threshold = prefs.rainAlertThresholdMm
+        print("[AlertService][rainToday] start vineyard=\(vineyardId.uuidString.prefix(8)) localDate=\(localDate) threshold=\(threshold) weatherAlertsEnabled=\(prefs.weatherAlertsEnabled)")
+
         // 0. Provider-appropriate live refresh so the cached snapshot we
         //    read below reflects the latest available reading. Mirrors
         //    `HomeRainSummaryCard.refresh()` — without this step the alert
@@ -706,6 +709,9 @@ final class AlertService {
         if let snap = try? await WeatherCurrentService().fetchCachedCurrent(vineyardId: vineyardId) {
             todayMm = snap.rainTodayMm
             sourceLabel = Self.displaySource(rawSource: snap.source, stationName: snap.stationName)
+            print("[AlertService][rainToday] step1 cached snapshot source=\(snap.source) status=\(snap.status) stale=\(snap.isStale) rainTodayMm=\(snap.rainTodayMm.map { String(format: "%.2f", $0) } ?? "nil")")
+        } else {
+            print("[AlertService][rainToday] step1 cached snapshot: nil/failed")
         }
         // 2. Persisted daily row for today.
         if todayMm == nil {
@@ -716,16 +722,37 @@ final class AlertService {
                 if sourceLabel == nil {
                     sourceLabel = Self.displaySource(rawSource: row.source, stationName: row.stationName)
                 }
+                print("[AlertService][rainToday] step2 persisted daily row mm=\(mm) source=\(row.source ?? "nil")")
+            } else {
+                print("[AlertService][rainToday] step2 persisted daily row: none for today")
             }
         }
-        // 3. Forecast first-day (last-resort fallback).
-        if todayMm == nil, let day = forecastService.forecast?.days.first(where: { cal.isDate($0.date, inSameDayAs: now) }) {
-            todayMm = day.forecastRainMm
-            if sourceLabel == nil { sourceLabel = "Forecast" }
+        // 3. Forecast first-day (last-resort fallback). Fetch the forecast
+        //    here directly using vineyard lat/lon so this path works even
+        //    when `forecastService.forecast` hasn't been populated upstream
+        //    (e.g. paddock polygons missing, so irrigation alerts skipped).
+        //    This mirrors `HomeRainSummaryCard` which fetches via vineyard
+        //    settings lat/lon → paddock centroid.
+        if todayMm == nil {
+            if let (lat, lon) = vineyardCoordinates(store: store, vineyardId: vineyardId) {
+                await forecastService.fetchForecast(latitude: lat, longitude: lon, days: 7, vineyardId: vineyardId)
+                if let day = forecastService.forecast?.days.first(where: { cal.isDate($0.date, inSameDayAs: now) }) {
+                    todayMm = day.forecastRainMm
+                    if sourceLabel == nil { sourceLabel = "Forecast" }
+                    print("[AlertService][rainToday] step3 forecast fallback mm=\(day.forecastRainMm)")
+                } else {
+                    print("[AlertService][rainToday] step3 forecast fallback: no matching day")
+                }
+            } else {
+                print("[AlertService][rainToday] step3 forecast fallback skipped — no vineyard coordinates")
+            }
         }
 
-        guard let mm = todayMm else { return [] }
-        let threshold = prefs.rainAlertThresholdMm
+        guard let mm = todayMm else {
+            print("[AlertService][rainToday] NO VALUE resolved — emitting no alert (Home may have value via different path)")
+            return []
+        }
+        print("[AlertService][rainToday] resolvedMm=\(String(format: "%.2f", mm)) source=\(sourceLabel ?? "nil") threshold=\(threshold) condition=\(mm >= threshold && threshold > 0)")
 
         if mm >= threshold && threshold > 0 {
             let severity: AlertSeverity = mm >= threshold * 2 ? .warning : .info
@@ -771,6 +798,20 @@ final class AlertService {
                 createdBy: userId
             )]
         }
+    }
+
+    /// Returns vineyard lat/lon from settings, falling back to paddock
+    /// centroid. Mirrors the path used by `HomeRainSummaryCard`, the Rain
+    /// page and other forecast-driven views.
+    private func vineyardCoordinates(store: MigratedDataStore, vineyardId: UUID) -> (Double, Double)? {
+        if let lat = store.settings.vineyardLatitude, let lon = store.settings.vineyardLongitude {
+            return (lat, lon)
+        }
+        let paddocks = store.paddocks.filter { $0.vineyardId == vineyardId && !$0.polygonPoints.isEmpty }
+        guard let first = paddocks.first else { return nil }
+        let lat = first.polygonPoints.map(\.latitude).reduce(0, +) / Double(first.polygonPoints.count)
+        let lon = first.polygonPoints.map(\.longitude).reduce(0, +) / Double(first.polygonPoints.count)
+        return (lat, lon)
     }
 
     /// Mirrors `HomeRainSummaryCard.refresh()` so today's rainfall threshold
