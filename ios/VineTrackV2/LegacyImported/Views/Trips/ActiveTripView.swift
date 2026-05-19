@@ -453,21 +453,30 @@ struct ActiveTripView: View {
                     autoRealignBanner
                 }
             }
-
-            if store.settings.rowTrackingEnabled {
-                currentRowBanner
-            } else {
-                rowTrackingDisabledBanner
-            }
-
-            if let record = sprayRecord {
-                sprayBanner(record: record)
-                tankControls(record: record)
-            }
-
-            tripControls
         }
         .background(Color(.systemGroupedBackground))
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            // Pin the action buttons (row banner, spray banner, tank
+            // controls and pause/end controls) above the floating tab bar
+            // and home-indicator safe area. Without this the iOS 26 tab
+            // bar overlays the bottom action buttons and makes End/Pause
+            // hard or impossible to tap in the cab.
+            VStack(spacing: 0) {
+                if store.settings.rowTrackingEnabled {
+                    currentRowBanner
+                } else {
+                    rowTrackingDisabledBanner
+                }
+
+                if let record = sprayRecord {
+                    sprayBanner(record: record)
+                    tankControls(record: record)
+                }
+
+                tripControls
+            }
+            .background(Color(.systemGroupedBackground))
+        }
         .navigationTitle(navTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
