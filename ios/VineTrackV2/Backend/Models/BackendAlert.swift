@@ -96,6 +96,108 @@ nonisolated struct BackendAlert: Codable, Sendable, Identifiable, Hashable {
     var typedSeverity: AlertSeverity { AlertSeverity(rawValue: severity) ?? .info }
     var typedAlertType: AlertType? { AlertType(rawValue: alertType) }
     var typedAction: AlertAction? { action.flatMap { AlertAction(rawValue: $0) } }
+
+    init(
+        id: UUID,
+        vineyardId: UUID,
+        alertType: String,
+        severity: String,
+        title: String,
+        message: String,
+        relatedTable: String?,
+        relatedId: UUID?,
+        paddockId: UUID?,
+        action: String?,
+        dedupKey: String,
+        generatedForDate: Date?,
+        createdAt: Date?,
+        updatedAt: Date?,
+        expiresAt: Date?,
+        createdBy: UUID?
+    ) {
+        self.id = id
+        self.vineyardId = vineyardId
+        self.alertType = alertType
+        self.severity = severity
+        self.title = title
+        self.message = message
+        self.relatedTable = relatedTable
+        self.relatedId = relatedId
+        self.paddockId = paddockId
+        self.action = action
+        self.dedupKey = dedupKey
+        self.generatedForDate = generatedForDate
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.expiresAt = expiresAt
+        self.createdBy = createdBy
+    }
+
+    /// Tolerant decoder so the alerts fetch survives:
+    /// - Postgres `date` columns (`generated_for_date` returns `"2026-05-19"`)
+    ///   which the Supabase Swift SDK's default ISO8601 strategy can't parse.
+    /// - Timestamps with or without fractional seconds.
+    /// - Unknown `alert_type` / `severity` values (kept as raw strings so the
+    ///   row is still surfaced; the `typed*` helpers fall back gracefully).
+    /// - Missing optional columns on older rows.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(UUID.self, forKey: .id)
+        self.vineyardId = try c.decode(UUID.self, forKey: .vineyardId)
+        self.alertType = try c.decode(String.self, forKey: .alertType)
+        self.severity = (try? c.decode(String.self, forKey: .severity)) ?? "info"
+        self.title = (try? c.decode(String.self, forKey: .title)) ?? ""
+        self.message = (try? c.decode(String.self, forKey: .message)) ?? ""
+        self.relatedTable = try c.decodeIfPresent(String.self, forKey: .relatedTable)
+        self.relatedId = try? c.decodeIfPresent(UUID.self, forKey: .relatedId)
+        self.paddockId = try? c.decodeIfPresent(UUID.self, forKey: .paddockId)
+        self.action = try c.decodeIfPresent(String.self, forKey: .action)
+        self.dedupKey = (try? c.decode(String.self, forKey: .dedupKey)) ?? ""
+        self.generatedForDate = BackendAlert.flexibleDate(c, .generatedForDate)
+        self.createdAt = BackendAlert.flexibleDate(c, .createdAt)
+        self.updatedAt = BackendAlert.flexibleDate(c, .updatedAt)
+        self.expiresAt = BackendAlert.flexibleDate(c, .expiresAt)
+        self.createdBy = try? c.decodeIfPresent(UUID.self, forKey: .createdBy)
+    }
+
+    private static func flexibleDate(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> Date? {
+        if let d = try? c.decodeIfPresent(Date.self, forKey: key) { return d }
+        guard let s = try? c.decodeIfPresent(String.self, forKey: key), !s.isEmpty else { return nil }
+        return BackendAlertDateParser.parse(s)
+    }
+}
+
+nonisolated enum BackendAlertDateParser {
+    static let isoFractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f
+    }()
+    static let isoBasic: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime]; return f
+    }()
+    static let dateOnly: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .iso8601)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(secondsFromGMT: 0)
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+    static let timestampNoTZ: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .iso8601)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(secondsFromGMT: 0)
+        f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        return f
+    }()
+
+    static func parse(_ s: String) -> Date? {
+        if let d = isoFractional.date(from: s) { return d }
+        if let d = isoBasic.date(from: s) { return d }
+        if let d = timestampNoTZ.date(from: s) { return d }
+        if let d = dateOnly.date(from: s) { return d }
+        return nil
+    }
 }
 
 nonisolated struct BackendAlertUpsert: Encodable, Sendable {
