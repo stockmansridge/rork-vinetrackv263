@@ -257,10 +257,10 @@ private struct NewHomeTabView: View {
                         .padding(.horizontal)
                     }
                     todaySection
-                    vineyardOverviewSection
                     if accessControl.canCreateOperationalRecords {
                         quickActionsSection
                     }
+                    vineyardOverviewSection
                     operationsSection
                     managementSection
                     summarySection
