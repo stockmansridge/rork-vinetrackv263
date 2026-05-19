@@ -25,6 +25,11 @@ final class AlertService {
     /// to switch tabs / present the relevant screen, then cleared.
     var pendingNavigation: AlertAction?
 
+    /// In-app diagnostics for the alerts pipeline. Surfaced via
+    /// `AlertDiagnosticsView` (system admin only) so we can see exactly what
+    /// the generator is doing without parsing console logs.
+    var diagnostics: AlertDiagnosticsSnapshot = AlertDiagnosticsSnapshot()
+
     private weak var store: MigratedDataStore?
     private weak var auth: NewBackendAuthService?
     private weak var accessControl: BackendAccessControl?
@@ -105,8 +110,13 @@ final class AlertService {
               let vineyardId = store.selectedVineyardId,
               SupabaseClientProvider.shared.isConfigured else {
             print("[AlertService] generateAndRefresh skipped — not signed in / no vineyard / supabase unconfigured")
+            diagnostics.lastSkipReason = "not signed in / no vineyard / supabase unconfigured"
+            diagnostics.lastRunAt = Date()
             return
         }
+        diagnostics = AlertDiagnosticsSnapshot()
+        diagnostics.vineyardId = vineyardId
+        diagnostics.lastRunStartedAt = Date()
 
         // Make sure we have preferences first.
         if preferences == nil {
@@ -115,6 +125,7 @@ final class AlertService {
         }
         let prefs = preferences ?? BackendAlertPreferences.defaults(for: vineyardId)
         let userId = auth.userId
+        diagnostics.preferences = prefs
 
         print("[AlertService] generateAndRefresh vineyard=\(vineyardId.uuidString.prefix(8)) prefs: agedPins=\(prefs.agedPinAlertsEnabled)(>=\(prefs.agedPinDays)d) irrigation=\(prefs.irrigationAlertsEnabled)(\(prefs.irrigationDeficitThresholdMm)mm) weather=\(prefs.weatherAlertsEnabled)(rain\(prefs.rainAlertThresholdMm)/wind\(prefs.windAlertThresholdKmh)/frost\(prefs.frostAlertThresholdC)/heat\(prefs.heatAlertThresholdC)) spray=\(prefs.sprayJobRemindersEnabled) disease=\(prefs.diseaseAlertsEnabled)")
 
@@ -240,18 +251,102 @@ final class AlertService {
         }
 
         print("[AlertService] generated=\(generated.count) bySource=\(bySource)")
+        diagnostics.generatedCount = generated.count
+        diagnostics.bySource = bySource
 
         if !generated.isEmpty {
             do {
                 try await repository.upsertAlerts(generated)
                 print("[AlertService] upserted \(generated.count) alerts to Supabase")
+                diagnostics.upsertStatus = "success (\(generated.count))"
             } catch {
                 print("[AlertService] upsert failed — \(error.localizedDescription)")
+                diagnostics.upsertStatus = "failed"
+                diagnostics.upsertError = error.localizedDescription
             }
+        } else {
+            diagnostics.upsertStatus = "no rows generated"
         }
 
         await refresh()
+        diagnostics.fetchedCount = alerts.count
+        diagnostics.activeCount = activeAlerts.count
+        diagnostics.unreadCount = unreadAlerts.count
+        diagnostics.dismissedCount = alerts.filter { $0.isDismissed }.count
+        diagnostics.expiredCount = alerts.filter { isExpired($0.alert) }.count
+        diagnostics.activeTypes = Array(Set(activeAlerts.compactMap { $0.alert.typedAlertType?.rawValue })).sorted()
+        if case .failure(let msg) = status {
+            diagnostics.fetchError = msg
+        }
+        diagnostics.lastRunAt = Date()
         print("[AlertService] post-refresh fetched=\(alerts.count) active=\(activeAlerts.count) unread=\(unreadAlerts.count)")
+    }
+
+    // MARK: - Diagnostics helpers (system admin only)
+
+    /// Create a harmless temporary alert for the selected vineyard so we can
+    /// confirm the Supabase write / read / display path independently of any
+    /// generator rule. Expires after 1 hour.
+    func createTestAlert() async -> String {
+        guard let store, let auth, auth.isSignedIn,
+              let vineyardId = store.selectedVineyardId,
+              SupabaseClientProvider.shared.isConfigured else {
+            return "skipped — not signed in / no vineyard / supabase unconfigured"
+        }
+        let now = Date()
+        let dedupKey = "test_alert:\(Int(now.timeIntervalSince1970))"
+        let id = deterministicUUID(vineyardId: vineyardId, dedupKey: dedupKey)
+        let upsert = BackendAlertUpsert(
+            id: id,
+            vineyardId: vineyardId,
+            alertType: "test_alert",
+            severity: AlertSeverity.info.rawValue,
+            title: "Test alert",
+            message: "Diagnostic test alert. Safe to dismiss.",
+            relatedTable: nil,
+            relatedId: nil,
+            paddockId: nil,
+            action: nil,
+            dedupKey: dedupKey,
+            generatedForDate: Calendar.current.startOfDay(for: now),
+            expiresAt: now.addingTimeInterval(60 * 60),
+            createdBy: auth.userId
+        )
+        do {
+            try await repository.upsertAlerts([upsert])
+        } catch {
+            return "upsert failed: \(error.localizedDescription)"
+        }
+        await refresh()
+        let nowVisible = alerts.contains { $0.alert.id == id }
+        return nowVisible
+            ? "created \(id.uuidString.prefix(8)) — visible in active alerts"
+            : "created \(id.uuidString.prefix(8)) — upsert ok but NOT fetched back (check RLS / expires_at filter)"
+    }
+
+    /// Expire any rows created by `createTestAlert` so they disappear from
+    /// the active list. Safe to call repeatedly.
+    func clearTestAlerts() async -> String {
+        guard let store, let vineyardId = store.selectedVineyardId,
+              SupabaseClientProvider.shared.isConfigured else {
+            return "skipped — not signed in / no vineyard / supabase unconfigured"
+        }
+        let testRows = alerts.filter { $0.alert.alertType == "test_alert" && $0.alert.vineyardId == vineyardId }
+        guard !testRows.isEmpty else {
+            await refresh()
+            return "no test alerts found"
+        }
+        var cleared = 0
+        for row in testRows {
+            do {
+                try await repository.deleteAlert(id: row.alert.id)
+                cleared += 1
+            } catch {
+                print("[AlertService] clearTestAlerts delete failed — \(error.localizedDescription)")
+            }
+        }
+        await refresh()
+        return "cleared \(cleared) test alert(s)"
     }
 
     // MARK: - Aged pins
@@ -694,6 +789,9 @@ final class AlertService {
 
         let threshold = prefs.rainAlertThresholdMm
         print("[AlertService][rainToday] start vineyard=\(vineyardId.uuidString.prefix(8)) localDate=\(localDate) threshold=\(threshold) weatherAlertsEnabled=\(prefs.weatherAlertsEnabled)")
+        diagnostics.rain.threshold = threshold
+        diagnostics.rain.dedupKey = dedupKey
+        diagnostics.rain.localDate = localDate
 
         // 0. Provider-appropriate live refresh so the cached snapshot we
         //    read below reflects the latest available reading. Mirrors
@@ -748,13 +846,18 @@ final class AlertService {
             }
         }
 
+        diagnostics.rain.resolvedMm = todayMm
+        diagnostics.rain.source = sourceLabel
         guard let mm = todayMm else {
             print("[AlertService][rainToday] NO VALUE resolved — emitting no alert (Home may have value via different path)")
+            diagnostics.rain.note = "no value resolved from any source"
             return []
         }
-        print("[AlertService][rainToday] resolvedMm=\(String(format: "%.2f", mm)) source=\(sourceLabel ?? "nil") threshold=\(threshold) condition=\(mm >= threshold && threshold > 0)")
+        let condition = mm >= threshold && threshold > 0
+        diagnostics.rain.condition = condition
+        print("[AlertService][rainToday] resolvedMm=\(String(format: "%.2f", mm)) source=\(sourceLabel ?? "nil") threshold=\(threshold) condition=\(condition)")
 
-        if mm >= threshold && threshold > 0 {
+        if condition {
             let severity: AlertSeverity = mm >= threshold * 2 ? .warning : .info
             let title = "Rain threshold exceeded"
             let sourceSuffix = sourceLabel.map { " (\($0))" } ?? ""
@@ -762,6 +865,9 @@ final class AlertService {
                 format: "%.1f mm recorded today%@. Threshold: %.1f mm.",
                 mm, sourceSuffix, threshold
             )
+            diagnostics.rain.generatedAlertId = alertId
+            diagnostics.rain.generatedAlertExpiresAt = endOfDay
+            diagnostics.rain.note = "alert generated"
             return [BackendAlertUpsert(
                 id: alertId,
                 vineyardId: vineyardId,
@@ -781,6 +887,9 @@ final class AlertService {
         } else {
             // Threshold no longer met — overwrite the same row with an
             // expired timestamp so the previous alert clears on refresh.
+            diagnostics.rain.note = threshold <= 0
+                ? "threshold is 0 — disabled"
+                : "below threshold (\(String(format: "%.1f", mm)) < \(String(format: "%.1f", threshold)))"
             return [BackendAlertUpsert(
                 id: alertId,
                 vineyardId: vineyardId,

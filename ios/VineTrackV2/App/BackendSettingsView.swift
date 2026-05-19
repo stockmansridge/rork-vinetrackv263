@@ -445,6 +445,16 @@ struct BackendSettingsView: View {
                     color: .purple
                 )
             }
+            NavigationLink {
+                AlertDiagnosticsView()
+            } label: {
+                SettingsRow(
+                    title: "Alert Diagnostics",
+                    subtitle: "Inspect alert preferences, generation & fetch",
+                    symbol: "stethoscope.circle.fill",
+                    color: .purple
+                )
+            }
         } header: {
             SettingsSectionHeader(title: "System Admin", symbol: "key.fill", color: .purple)
         } footer: {

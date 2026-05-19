@@ -12,40 +12,45 @@ struct HomeAlertsCard: View {
     private let maxPreviewRows: Int = 3
 
     var body: some View {
-        NavigationLink {
-            AlertsCentreView()
-        } label: {
-            VStack(alignment: .leading, spacing: 10) {
-                headerRow
-                if !previewAlerts.isEmpty {
-                    Divider()
-                    VStack(spacing: 8) {
-                        ForEach(previewAlerts) { item in
-                            alertPreviewRow(item)
+        // Only surface the alerts card on Home when there are active alerts
+        // that need attention. "All clear" wastes vertical space and hides
+        // genuine signal.
+        if hasAlerts {
+            NavigationLink {
+                AlertsCentreView()
+            } label: {
+                VStack(alignment: .leading, spacing: 10) {
+                    headerRow
+                    if !previewAlerts.isEmpty {
+                        Divider()
+                        VStack(spacing: 8) {
+                            ForEach(previewAlerts) { item in
+                                alertPreviewRow(item)
+                            }
+                        }
+                        if alertService.activeAlerts.count > previewAlerts.count {
+                            Text("+ \(alertService.activeAlerts.count - previewAlerts.count) more")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
                         }
                     }
-                    if alertService.activeAlerts.count > previewAlerts.count {
-                        Text("+ \(alertService.activeAlerts.count - previewAlerts.count) more")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    }
                 }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color(.secondarySystemBackground))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(tint.opacity(0.25), lineWidth: 1)
+                )
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color(.secondarySystemBackground))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(tint.opacity(hasAlerts ? 0.25 : 0.12), lineWidth: 1)
-            )
+            .buttonStyle(.plain)
+            .padding(.horizontal)
+            .accessibilityLabel(accessibilityLabel)
         }
-        .buttonStyle(.plain)
-        .padding(.horizontal)
-        .accessibilityLabel(accessibilityLabel)
     }
 
     // MARK: - Header

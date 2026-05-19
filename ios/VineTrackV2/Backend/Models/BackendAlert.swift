@@ -276,6 +276,41 @@ nonisolated struct BackendAlertPreferences: Codable, Sendable, Hashable {
     }
 }
 
+/// In-app diagnostics snapshot for the alerts pipeline. Captured during
+/// `AlertService.generateAndRefresh` so an admin can see exactly what the
+/// generator computed without parsing console logs.
+nonisolated struct AlertDiagnosticsSnapshot: Sendable {
+    var vineyardId: UUID?
+    var preferences: BackendAlertPreferences?
+    var lastRunStartedAt: Date?
+    var lastRunAt: Date?
+    var lastSkipReason: String?
+    var generatedCount: Int = 0
+    var bySource: [String: Int] = [:]
+    var upsertStatus: String?
+    var upsertError: String?
+    var fetchedCount: Int = 0
+    var activeCount: Int = 0
+    var unreadCount: Int = 0
+    var dismissedCount: Int = 0
+    var expiredCount: Int = 0
+    var activeTypes: [String] = []
+    var fetchError: String?
+    var rain: RainDiagnostics = RainDiagnostics()
+
+    struct RainDiagnostics: Sendable {
+        var threshold: Double?
+        var resolvedMm: Double?
+        var source: String?
+        var condition: Bool?
+        var dedupKey: String?
+        var localDate: String?
+        var generatedAlertId: UUID?
+        var generatedAlertExpiresAt: Date?
+        var note: String?
+    }
+}
+
 /// Combined view-model for the UI: alert + user-specific status.
 nonisolated struct AlertWithStatus: Sendable, Identifiable, Hashable {
     let alert: BackendAlert
