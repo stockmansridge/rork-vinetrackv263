@@ -19,33 +19,18 @@ struct HomeAlertsCard: View {
             NavigationLink {
                 AlertsCentreView()
             } label: {
-                VStack(alignment: .leading, spacing: 10) {
-                    headerRow
-                    if !previewAlerts.isEmpty {
-                        Divider()
-                        VStack(spacing: 8) {
-                            ForEach(previewAlerts) { item in
-                                alertPreviewRow(item)
-                            }
-                        }
-                        if alertService.activeAlerts.count > previewAlerts.count {
-                            Text("+ \(alertService.activeAlerts.count - previewAlerts.count) more")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color(.secondarySystemBackground))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(tint.opacity(0.25), lineWidth: 1)
-                )
+                headerRow
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color(.secondarySystemBackground))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(tint.opacity(0.25), lineWidth: 1)
+                    )
             }
             .buttonStyle(.plain)
             .padding(.horizontal)

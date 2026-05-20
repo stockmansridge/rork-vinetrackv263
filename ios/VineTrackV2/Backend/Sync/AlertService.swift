@@ -30,6 +30,12 @@ final class AlertService {
     /// the generator is doing without parsing console logs.
     var diagnostics: AlertDiagnosticsSnapshot = AlertDiagnosticsSnapshot()
 
+    /// Serializes overlapping `refresh()` / `generateAndRefresh()` calls.
+    /// Without this, Home + Diagnostics + foreground sweep can race and
+    /// cancel each other, leaving stale `CancellationError` strings in the
+    /// diagnostics snapshot even though data loaded fine.
+    private var inFlight: Task<Void, Never>?
+
     private weak var store: MigratedDataStore?
     private weak var auth: NewBackendAuthService?
     private weak var accessControl: BackendAccessControl?
@@ -98,14 +104,49 @@ final class AlertService {
             self.alerts = fetched.map { AlertWithStatus(alert: $0, status: statusByAlert[$0.id]) }
             self.lastRefresh = Date()
             self.status = .success
+        } catch is CancellationError {
+            // Cancellation is expected when navigation/foreground sweep
+            // supersedes an in-flight fetch — don't treat as failure.
+            if case .loading = status { status = .idle }
         } catch {
-            self.status = .failure(error.localizedDescription)
+            if Self.isCancellation(error) {
+                if case .loading = status { status = .idle }
+            } else {
+                self.status = .failure(error.localizedDescription)
+            }
         }
+    }
+
+    /// Returns true for Swift `CancellationError` and the URLSession
+    /// `NSURLErrorCancelled` flavour both Supabase and our proxies surface
+    /// when an enclosing Task is cancelled.
+    nonisolated static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        let ns = error as NSError
+        if ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled { return true }
+        if ns.domain == "NSPOSIXErrorDomain" && ns.code == 89 { return true } // ECANCELED
+        return false
     }
 
     /// Run local alert generation for the selected vineyard, push generated
     /// alerts (deduped by dedup_key), then refresh from server.
     func generateAndRefresh() async {
+        // Coalesce overlapping calls. If a run is already in flight, await
+        // it instead of starting a competing one (which would cancel the
+        // first and leave a misleading CancellationError in diagnostics).
+        if let existing = inFlight {
+            await existing.value
+            return
+        }
+        let task = Task { @MainActor in
+            await self._generateAndRefresh()
+        }
+        inFlight = task
+        await task.value
+        inFlight = nil
+    }
+
+    private func _generateAndRefresh() async {
         guard let store, let auth, auth.isSignedIn,
               let vineyardId = store.selectedVineyardId,
               SupabaseClientProvider.shared.isConfigured else {
@@ -259,13 +300,21 @@ final class AlertService {
                 try await repository.upsertAlerts(generated)
                 print("[AlertService] upserted \(generated.count) alerts to Supabase")
                 diagnostics.upsertStatus = "success (\(generated.count))"
+                diagnostics.upsertError = nil
             } catch {
-                print("[AlertService] upsert failed — \(error.localizedDescription)")
-                diagnostics.upsertStatus = "failed"
-                diagnostics.upsertError = error.localizedDescription
+                if Self.isCancellation(error) {
+                    print("[AlertService] upsert cancelled (superseded) — ignoring")
+                    diagnostics.upsertStatus = "cancelled"
+                    diagnostics.upsertError = nil
+                } else {
+                    print("[AlertService] upsert failed — \(error.localizedDescription)")
+                    diagnostics.upsertStatus = "failed"
+                    diagnostics.upsertError = error.localizedDescription
+                }
             }
         } else {
             diagnostics.upsertStatus = "no rows generated"
+            diagnostics.upsertError = nil
         }
 
         await refresh()
@@ -275,8 +324,13 @@ final class AlertService {
         diagnostics.dismissedCount = alerts.filter { $0.isDismissed }.count
         diagnostics.expiredCount = alerts.filter { isExpired($0.alert) }.count
         diagnostics.activeTypes = Array(Set(activeAlerts.compactMap { $0.alert.typedAlertType?.rawValue })).sorted()
-        if case .failure(let msg) = status {
+        // Only surface fetch errors when there was a real failure AND no
+        // data made it through. A succeeded-then-cancelled sequence should
+        // not show a red error once active alerts are populated.
+        if case .failure(let msg) = status, alerts.isEmpty {
             diagnostics.fetchError = msg
+        } else {
+            diagnostics.fetchError = nil
         }
         diagnostics.lastRunAt = Date()
         print("[AlertService] post-refresh fetched=\(alerts.count) active=\(activeAlerts.count) unread=\(unreadAlerts.count)")
