@@ -7,6 +7,11 @@ protocol PaddockSyncRepositoryProtocol: Sendable {
     /// vineyards (RLS gates the result). Used by the admin trip audit tool to
     /// resolve `paddock_id` -> `vineyard_id` across vineyards.
     func fetchAllAccessiblePaddocks() async throws -> [BackendPaddock]
+    /// Lightweight reconciliation fetch: returns id + deleted_at for every
+    /// paddock row currently in Supabase for the given vineyard. Used to
+    /// detect hard-deletes (rows that no longer exist remotely) which the
+    /// incremental `fetchPaddocks(since:)` pull cannot surface.
+    func fetchPaddockIds(vineyardId: UUID) async throws -> [BackendPaddockIdRow]
     func upsertPaddock(_ paddock: BackendPaddockUpsert) async throws
     func upsertPaddocks(_ paddocks: [BackendPaddockUpsert]) async throws
     func softDeletePaddock(id: UUID) async throws
@@ -64,5 +69,16 @@ nonisolated struct PaddockReferenceCounts: Decodable, Sendable, Equatable {
         add(sprayJobPaddocks,    "spray job link",     "spray job links")
         add(paddockSoilProfiles, "soil profile",       "soil profiles")
         return lines
+    }
+}
+
+/// Lightweight row used by `fetchPaddockIds` for hard-delete reconciliation.
+nonisolated struct BackendPaddockIdRow: Decodable, Sendable, Equatable {
+    let id: UUID
+    let deletedAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case deletedAt = "deleted_at"
     }
 }

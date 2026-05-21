@@ -44,6 +44,16 @@ final class SupabasePaddockSyncRepository: PaddockSyncRepositoryProtocol {
             .value
     }
 
+    func fetchPaddockIds(vineyardId: UUID) async throws -> [BackendPaddockIdRow] {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        return try await provider.client
+            .from("paddocks")
+            .select("id,deleted_at")
+            .eq("vineyard_id", value: vineyardId.uuidString)
+            .execute()
+            .value
+    }
+
     func upsertPaddock(_ paddock: BackendPaddockUpsert) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         try await provider.client

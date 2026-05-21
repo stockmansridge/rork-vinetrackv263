@@ -183,6 +183,7 @@ final class PaddockSyncService {
             let remote = try await repository.fetchAllPaddocks(vineyardId: vineyardId)
             var upserts = 0
             var deletes = 0
+            let remoteIds = Set(remote.map { $0.id })
             for backendPaddock in remote {
                 if backendPaddock.deletedAt != nil {
                     store.applyRemotePaddockDelete(backendPaddock.id)
@@ -196,6 +197,16 @@ final class PaddockSyncService {
                     metadata.clearDirty([backendPaddock.id])
                     upserts += 1
                 }
+            }
+            // Sweep hard-deleted local paddocks (no longer present remotely).
+            let pendingLocalCreates = Set(metadata.pendingUpserts.keys)
+            for local in store.paddocks where local.vineyardId == vineyardId {
+                if remoteIds.contains(local.id) { continue }
+                if pendingLocalCreates.contains(local.id) { continue }
+                store.applyRemotePaddockDelete(local.id)
+                metadata.clearDirty([local.id])
+                metadata.clearDeleted([local.id])
+                deletes += 1
             }
             GrapeVarietyCanonicalization.run(store: store)
             metadata.setLastSync(Date(), for: vineyardId)
@@ -342,6 +353,46 @@ final class PaddockSyncService {
 
         for backendPaddock in remote {
             applyRemote(backendPaddock, vineyardId: vineyardId, store: store)
+        }
+
+        // Reconcile against the authoritative remote id set. Catches:
+        //   * hard deletes (row removed entirely on Supabase) — incremental
+        //     pull can never see these because `fetchPaddocks(since:)` only
+        //     returns rows that still exist.
+        //   * soft deletes whose `updated_at` predates `lastSync` for any
+        //     reason (defensive — the `paddocks_set_updated_at` trigger
+        //     normally bumps it, but we don't want to rely on that alone).
+        // Local rows that haven't been pushed yet (pendingUpserts) are
+        // preserved so we don't delete a freshly-created local paddock that
+        // is still in flight.
+        do {
+            let idRows = try await repository.fetchPaddockIds(vineyardId: vineyardId)
+            let liveRemoteIds = Set(idRows.filter { $0.deletedAt == nil }.map { $0.id })
+            let pendingLocalCreates = Set(metadata.pendingUpserts.keys)
+            let localForVineyard = store.paddocks.filter { $0.vineyardId == vineyardId }
+            var sweptHardDeletes = 0
+            var sweptSoftDeletes = 0
+            for local in localForVineyard {
+                if liveRemoteIds.contains(local.id) { continue }
+                if pendingLocalCreates.contains(local.id) { continue }
+                store.applyRemotePaddockDelete(local.id)
+                metadata.clearDirty([local.id])
+                metadata.clearDeleted([local.id])
+                if idRows.contains(where: { $0.id == local.id }) {
+                    sweptSoftDeletes += 1
+                } else {
+                    sweptHardDeletes += 1
+                }
+            }
+            #if DEBUG
+            if sweptHardDeletes > 0 || sweptSoftDeletes > 0 {
+                print("[PaddockSync] reconciliation removed \(sweptHardDeletes) hard-deleted and \(sweptSoftDeletes) soft-deleted local paddock(s)")
+            }
+            #endif
+        } catch {
+            #if DEBUG
+            print("[PaddockSync] reconciliation id-sweep failed: \(error.localizedDescription)")
+            #endif
         }
 
         // After a pull, re-run the local grape variety canonicalisation
