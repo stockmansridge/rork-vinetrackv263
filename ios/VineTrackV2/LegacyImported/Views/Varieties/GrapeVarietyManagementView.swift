@@ -153,14 +153,16 @@ struct EditGrapeVarietySheet: View {
                     optimalGDDText = "\(Int(variety.optimalGDD))"
                 }
             }
-            .overlay(alignment: .bottom) {
+            .safeAreaInset(edge: .bottom) {
                 if let saveError {
                     Text(saveError)
-                        .font(.caption)
+                        .font(.footnote)
                         .foregroundStyle(.red)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(.regularMaterial, in: Capsule())
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .background(.regularMaterial, in: .rect(cornerRadius: 12))
+                        .padding(.horizontal, 16)
                         .padding(.bottom, 12)
                 }
             }
@@ -208,10 +210,7 @@ struct EditGrapeVarietySheet: View {
         }
 
         guard let vid = store.selectedVineyardId else {
-            // No vineyard selected — fall back to local-only add.
-            let new = GrapeVariety(name: trimmedName, optimalGDD: gdd)
-            store.addGrapeVariety(new)
-            dismiss()
+            saveError = "No vineyard selected. Open a vineyard before adding a custom variety so it can sync to Lovable."
             return
         }
 
@@ -235,14 +234,14 @@ struct EditGrapeVarietySheet: View {
             store.addGrapeVariety(new)
             dismiss()
         } catch {
-            // Offline / RPC missing — degrade gracefully to a local add so
-            // the user can keep working. The next sync/repair pass will
-            // reconcile the key.
-            let new = GrapeVariety(name: trimmedName, optimalGDD: gdd)
-            store.addGrapeVariety(new)
-            saveError = "Saved locally; couldn't reach catalogue server."
-            try? await Task.sleep(for: .seconds(1))
-            dismiss()
+            // RPC failed (offline, auth, or RLS). Surface a sticky error and
+            // do NOT fall back to a local-only row — a local row would silently
+            // diverge from Lovable, which is exactly the bug we're guarding
+            // against. User can retry once connectivity / role is fixed.
+            #if DEBUG
+            print("[GrapeVariety] upsert_vineyard_grape_variety failed: \(error)")
+            #endif
+            saveError = "Couldn't save to shared catalogue: \(error.localizedDescription). Tap Save to retry."
         }
     }
 }
