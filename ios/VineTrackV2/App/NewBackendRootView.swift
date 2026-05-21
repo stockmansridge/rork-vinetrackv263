@@ -244,11 +244,25 @@ struct NewBackendRootView: View {
 
     private func evaluateInvitationsSheet() {
         guard isInMainAppShell else { return }
-        let pending = auth.pendingInvitations.map { $0.id }
+        // Apply the same filtering rules used by PendingInvitationsSheet so we
+        // don't surface the modal with an empty card list (e.g. an invite for
+        // a vineyard the caller already owns, or an alias email that doesn't
+        // match the active auth email). Matches sql/081 RLS guard.
+        let authEmail = (auth.userEmail ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let memberIds = Set(store.vineyards.map { $0.id })
+        let surfaceable = auth.pendingInvitations.filter { invitation in
+            guard invitation.status.lowercased() == "pending" else { return false }
+            if !authEmail.isEmpty && invitation.email.lowercased() != authEmail { return false }
+            if memberIds.contains(invitation.vineyardId) { return false }
+            return true
+        }
+        let pendingIds = surfaceable.map { $0.id }
         // Drop any deferrals for invites that are no longer pending so a
         // fresh invite created later in the session still surfaces.
-        deferredInvitationIds.formIntersection(pending)
-        let undeferred = pending.contains { !deferredInvitationIds.contains($0) }
+        deferredInvitationIds.formIntersection(pendingIds)
+        let undeferred = pendingIds.contains { !deferredInvitationIds.contains($0) }
         if undeferred && !showInvitationsSheet {
             showInvitationsSheet = true
         }

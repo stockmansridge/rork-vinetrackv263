@@ -21,8 +21,28 @@ struct PendingInvitationsSheet: View {
     @State private var processingId: UUID?
     @State private var errorMessage: String?
 
+    /// Filters the raw `auth.pendingInvitations` so the sheet never offers an
+    /// invite the caller can't (or shouldn't) accept:
+    ///   - `status` must still be pending
+    ///   - invite email must match the active authenticated email exactly
+    ///     (lowercased + trimmed). Linked / alias emails are intentionally
+    ///     excluded until the verified-alias model lands.
+    ///   - the user must not already be a member of that vineyard. Mirrors
+    ///     `BackendVineyardListView.visiblePendingInvitations` and the SQL
+    ///     RLS guard in `sql/081_invitation_membership_guard.sql`.
+    ///   - dedupe by vineyard, keeping the most recent invite per vineyard.
     private var invitations: [BackendInvitation] {
-        auth.pendingInvitations
+        let authEmail = (auth.userEmail ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let memberIds = Set(store.vineyards.map { $0.id })
+        var seenVineyards = Set<UUID>()
+        return auth.pendingInvitations
+            .filter { $0.status.lowercased() == "pending" }
+            .filter { authEmail.isEmpty || $0.email.lowercased() == authEmail }
+            .filter { !memberIds.contains($0.vineyardId) }
+            .sorted { ($0.createdAt ?? .distantPast) > ($1.createdAt ?? .distantPast) }
+            .filter { seenVineyards.insert($0.vineyardId).inserted }
     }
 
     var body: some View {
