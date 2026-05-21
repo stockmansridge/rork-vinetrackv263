@@ -67,6 +67,32 @@ final class SupabasePaddockSyncRepository: PaddockSyncRepositoryProtocol {
             .rpc("soft_delete_paddock", params: SoftDeletePaddockRequest(paddockId: id))
             .execute()
     }
+
+    func paddockReferenceCounts(id: UUID) async throws -> PaddockReferenceCounts {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let rows: [PaddockReferenceCounts] = try await provider.client
+            .rpc("paddock_reference_counts", params: SoftDeletePaddockRequest(paddockId: id))
+            .execute()
+            .value
+        guard let first = rows.first else {
+            throw BackendRepositoryError.missingSupabaseConfiguration
+        }
+        return first
+    }
+
+    func hardDeletePaddock(id: UUID) async throws {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        try await provider.client
+            .rpc("hard_delete_paddock", params: SoftDeletePaddockRequest(paddockId: id))
+            .execute()
+    }
+
+    func restorePaddock(id: UUID) async throws {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        try await provider.client
+            .rpc("restore_paddock", params: SoftDeletePaddockRequest(paddockId: id))
+            .execute()
+    }
 }
 
 nonisolated private struct SoftDeletePaddockRequest: Encodable, Sendable {
