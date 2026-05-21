@@ -11,6 +11,7 @@ private extension String {
 struct WeatherDataSettingsView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(BackendAccessControl.self) private var accessControl
+    @Environment(SystemAdminService.self) private var systemAdmin
 
     @State private var config: WeatherProviderConfig = .default
     @State private var showStationPicker: Bool = false
@@ -183,7 +184,10 @@ struct WeatherDataSettingsView: View {
                 davisHelpSection
             }
 
-            davisDiagnosticsSection
+            if systemAdmin.isSystemAdmin
+                && systemAdmin.isEnabled(SystemFeatureFlagKey.showWeatherDiagnostics) {
+                davisDiagnosticsSection
+            }
 
             weatherUndergroundVineyardSection
 
