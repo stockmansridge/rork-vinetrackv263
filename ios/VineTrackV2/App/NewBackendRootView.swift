@@ -20,6 +20,8 @@ struct NewBackendRootView: View {
     @State private var isLoadingVineyards: Bool = false
     @State private var lastScenePhase: ScenePhase = .active
     @State private var didEnterBackground: Bool = false
+    @State private var showInvitationsSheet: Bool = false
+    @State private var deferredInvitationIds: Set<UUID> = []
 
     private let disclaimerRepository: any DisclaimerRepositoryProtocol = SupabaseDisclaimerRepository(currentVersion: DisclaimerInfo.version)
     private let vineyardRepository: any VineyardRepositoryProtocol = SupabaseVineyardRepository()
@@ -73,6 +75,26 @@ struct NewBackendRootView: View {
         }
         .sheet(isPresented: $showBiometricEnrollment) {
             BiometricEnrollmentSheet()
+        }
+        .sheet(isPresented: $showInvitationsSheet) {
+            PendingInvitationsSheet(
+                onAccepted: { invitation in
+                    await loadVineyardsAndApplyDefault(forceReload: true)
+                    if store.vineyards.contains(where: { $0.id == invitation.vineyardId }),
+                       let joined = store.vineyards.first(where: { $0.id == invitation.vineyardId }) {
+                        store.selectVineyard(joined)
+                    }
+                },
+                onDeferred: {
+                    deferredInvitationIds.formUnion(auth.pendingInvitations.map { $0.id })
+                }
+            )
+        }
+        .onChange(of: auth.pendingInvitations.map { $0.id }) { _, _ in
+            evaluateInvitationsSheet()
+        }
+        .onChange(of: isInMainAppShell) { _, _ in
+            evaluateInvitationsSheet()
         }
         .task(id: auth.isSignedIn) {
             if auth.isSignedIn {
@@ -179,13 +201,15 @@ struct NewBackendRootView: View {
         }
     }
 
-    private func loadVineyardsAndApplyDefault() async {
+    private func loadVineyardsAndApplyDefault(forceReload: Bool = false) async {
         isLoadingVineyards = true
         defer { isLoadingVineyards = false }
         do {
             let backendVineyards = try await vineyardRepository.listMyVineyards()
             store.mapBackendVineyardsIntoLocal(backendVineyards)
-            store.applyDefaultVineyardSelection(defaultId: auth.defaultVineyardId)
+            if !forceReload {
+                store.applyDefaultVineyardSelection(defaultId: auth.defaultVineyardId)
+            }
             // If profile pointed at a vineyard the user no longer belongs to, clear it remotely.
             if let defaultId = auth.defaultVineyardId,
                !store.vineyards.contains(where: { $0.id == defaultId }) {
@@ -193,9 +217,38 @@ struct NewBackendRootView: View {
             }
         } catch {
             // Network/listing failed — fall back to whatever local state exists.
-            store.applyDefaultVineyardSelection(defaultId: auth.defaultVineyardId)
+            if !forceReload {
+                store.applyDefaultVineyardSelection(defaultId: auth.defaultVineyardId)
+            }
         }
         didApplyDefaultVineyard = true
+    }
+
+    /// True once the user has cleared auth/onboarding/disclaimer/vineyard
+    /// gates and is viewing the main tab shell. Invitations should only
+    /// surface as a modal once we're past these gates — the no-vineyard
+    /// case is already covered by `BackendVineyardListView`.
+    private var isInMainAppShell: Bool {
+        auth.isSignedIn
+            && !biometric.requiresUnlock
+            && onboardingCompleted
+            && didCheckDisclaimer
+            && disclaimerAccepted
+            && didApplyDefaultVineyard
+            && store.selectedVineyard != nil
+            && subscription.hasAccess
+    }
+
+    private func evaluateInvitationsSheet() {
+        guard isInMainAppShell else { return }
+        let pending = auth.pendingInvitations.map { $0.id }
+        // Drop any deferrals for invites that are no longer pending so a
+        // fresh invite created later in the session still surfaces.
+        deferredInvitationIds.formIntersection(pending)
+        let undeferred = pending.contains { !deferredInvitationIds.contains($0) }
+        if undeferred && !showInvitationsSheet {
+            showInvitationsSheet = true
+        }
     }
 
     private var loadingView: some View {
