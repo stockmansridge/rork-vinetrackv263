@@ -6,6 +6,7 @@ struct EditPaddockSheet: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(PaddockSyncService.self) private var paddockSync
     @Environment(SystemAdminService.self) private var systemAdmin
+    @Environment(BackendAccessControl.self) private var accessControl
     @Environment(\.dismiss) private var dismiss
     @State private var attemptedSafeRefetch: Bool = false
     @State private var isSafeRefetching: Bool = false
@@ -52,6 +53,18 @@ struct EditPaddockSheet: View {
     @State private var showSoilProfileEditor: Bool = false
     private let soilProfileRepository: any SoilProfileRepositoryProtocol = SupabaseSoilProfileRepository()
 
+    // Danger Zone state — reference counts gate the visibility of
+    // "Delete permanently"; archive is always available for an existing block.
+    @State private var referenceCounts: PaddockReferenceCounts?
+    @State private var isLoadingReferenceCounts: Bool = false
+    @State private var referenceCountsError: String?
+    @State private var showArchiveConfirm: Bool = false
+    @State private var showPermanentDeleteConfirm: Bool = false
+    @State private var permanentDeleteNameInput: String = ""
+    @State private var isPerformingDestructiveAction: Bool = false
+    @State private var destructiveActionError: String?
+    private let paddockRepository: any PaddockSyncRepositoryProtocol = SupabasePaddockSyncRepository()
+
     private var isEditing: Bool { paddock != nil }
 
     var body: some View {
@@ -71,6 +84,9 @@ struct EditPaddockSheet: View {
                 soilSection
                 if polygonPoints.count > 2 && rowCount > 0 {
                     blockSummarySection
+                }
+                if isEditing && accessControl.canDeleteOperationalRecords {
+                    dangerZoneSection
                 }
             }
             .navigationTitle(isEditing ? "Edit Block" : "New Block")
@@ -171,7 +187,169 @@ struct EditPaddockSheet: View {
                         rowStartNumber = min(firstRow.number, lastRow.number)
                     }
                     Task { await loadSoilProfile() }
+                    Task { await loadReferenceCounts() }
                 }
+            }
+            .confirmationDialog(
+                archiveDialogTitle,
+                isPresented: $showArchiveConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Archive paddock", role: .destructive) { performArchive() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(archiveDialogMessage)
+            }
+            .alert(
+                permanentDeleteDialogTitle,
+                isPresented: $showPermanentDeleteConfirm
+            ) {
+                TextField("Type paddock name", text: $permanentDeleteNameInput)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                Button("Delete permanently", role: .destructive) {
+                    performPermanentDelete()
+                }
+                .disabled(!permanentDeleteNameMatches)
+                Button("Cancel", role: .cancel) {
+                    permanentDeleteNameInput = ""
+                }
+            } message: {
+                Text("This cannot be undone. Type \u{201C}\(paddock?.name ?? "")\u{201D} to confirm.")
+            }
+            .alert(
+                "Action Failed",
+                isPresented: Binding(
+                    get: { destructiveActionError != nil },
+                    set: { if !$0 { destructiveActionError = nil } }
+                ),
+                presenting: destructiveActionError
+            ) { _ in
+                Button("OK", role: .cancel) { destructiveActionError = nil }
+            } message: { message in
+                Text(message)
+            }
+        }
+    }
+
+    // MARK: - Danger Zone
+
+    private var dangerZoneSection: some View {
+        Section {
+            if isLoadingReferenceCounts && referenceCounts == nil {
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text("Checking linked records\u{2026}")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else if let counts = referenceCounts {
+                if counts.isEmpty {
+                    Label("No linked records — safe to delete permanently.", systemImage: "checkmark.seal")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label("Linked records found", systemImage: "link")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text(counts.summaryLines.joined(separator: ", "))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Text("This paddock has linked records, so it cannot be permanently deleted. Archiving will remove it from active lists while keeping historical records intact.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 2)
+                    }
+                }
+            } else if let err = referenceCountsError {
+                Label("Couldn\u{2019}t check linked records (\(err)).", systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+
+            Button(role: .destructive) {
+                showArchiveConfirm = true
+            } label: {
+                Label("Archive paddock", systemImage: "archivebox")
+            }
+            .disabled(isPerformingDestructiveAction)
+
+            if let counts = referenceCounts, counts.isEmpty {
+                Button(role: .destructive) {
+                    permanentDeleteNameInput = ""
+                    showPermanentDeleteConfirm = true
+                } label: {
+                    Label("Delete permanently", systemImage: "trash")
+                }
+                .disabled(isPerformingDestructiveAction)
+            }
+        } header: {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                    .font(.caption)
+                Text("Danger Zone")
+            }
+        } footer: {
+            Text("Archive removes the paddock from active selectors but keeps its history. Permanent delete is only offered when no linked records remain.")
+        }
+    }
+
+    private var archiveDialogTitle: String {
+        "Archive \(paddock?.name ?? "paddock")?"
+    }
+
+    private var archiveDialogMessage: String {
+        if let counts = referenceCounts, !counts.isEmpty {
+            let preview = counts.summaryLines.prefix(4).joined(separator: ", ")
+            return "This paddock has linked records (\(preview)). Archiving keeps it available for historical reports but hides it from active selectors."
+        }
+        return "Archiving keeps this paddock available for historical reports but hides it from active selectors."
+    }
+
+    private var permanentDeleteDialogTitle: String {
+        "Delete \(paddock?.name ?? "paddock") permanently?"
+    }
+
+    private var permanentDeleteNameMatches: Bool {
+        guard let name = paddock?.name else { return false }
+        return permanentDeleteNameInput.trimmingCharacters(in: .whitespacesAndNewlines)
+            .caseInsensitiveCompare(name) == .orderedSame
+    }
+
+    private func loadReferenceCounts() async {
+        guard let pid = paddock?.id else { return }
+        isLoadingReferenceCounts = true
+        defer { isLoadingReferenceCounts = false }
+        do {
+            let counts = try await paddockRepository.paddockReferenceCounts(id: pid)
+            referenceCounts = counts
+            referenceCountsError = nil
+        } catch {
+            referenceCountsError = error.localizedDescription
+        }
+    }
+
+    private func performArchive() {
+        guard let paddock else { return }
+        isPerformingDestructiveAction = true
+        store.deletePaddock(paddock.id)
+        isPerformingDestructiveAction = false
+        dismiss()
+    }
+
+    private func performPermanentDelete() {
+        guard let paddock, permanentDeleteNameMatches else { return }
+        isPerformingDestructiveAction = true
+        Task {
+            defer { isPerformingDestructiveAction = false }
+            do {
+                try await paddockRepository.hardDeletePaddock(id: paddock.id)
+                store.applyRemotePaddockDelete(paddock.id)
+                dismiss()
+            } catch {
+                destructiveActionError = error.localizedDescription
             }
         }
     }
