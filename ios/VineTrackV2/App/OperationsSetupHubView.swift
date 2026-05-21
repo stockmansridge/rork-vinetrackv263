@@ -20,9 +20,8 @@ struct VineyardSetupHubView: View {
     @State private var calculationMode: GDDCalculationMode = .bedd
     @State private var resetMode: GDDResetMode = .budburst
 
-    @State private var stationIdInput: String = ""
-    @State private var showWeatherStationPicker: Bool = false
     @State private var showGrowthStagesPicker: Bool = false
+    @State private var weatherSummary: WeatherSummaryInfo = .empty
 
     @State private var showRepairButtons: Bool = false
     @State private var showRepairTemplates: Bool = false
@@ -148,7 +147,7 @@ struct VineyardSetupHubView: View {
                 exportImportSection
                 buttonCustomizationSection
                 growthStagesSection
-                weatherStationSection
+                weatherDataSection
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 24)
@@ -158,10 +157,12 @@ struct VineyardSetupHubView: View {
         .navigationBarTitleDisplayMode(.large)
         .onAppear {
             loadFromSettings()
+            reloadWeatherSummary()
             Task { await loadPaddockSoilProfileIds() }
             Task { await loadSharedCatalogCount() }
         }
         .onChange(of: store.selectedVineyardId) { _, _ in
+            reloadWeatherSummary()
             Task { await loadPaddockSoilProfileIds() }
             Task { await loadSharedCatalogCount() }
         }
@@ -173,9 +174,6 @@ struct VineyardSetupHubView: View {
         }
         .sheet(item: $selectedPaddockOnMap) { paddock in
             EditPaddockSheet(paddock: paddock)
-        }
-        .sheet(isPresented: $showWeatherStationPicker) {
-            WeatherStationPickerSheet()
         }
         .sheet(isPresented: $showGrowthStagesPicker) {
             GrowthStageConfigSheet()
@@ -698,71 +696,31 @@ struct VineyardSetupHubView: View {
         }
     }
 
-    // MARK: - Weather Station
+    // MARK: - Weather Data & Forecasting (drill-in)
 
-    private var weatherStationSection: some View {
+    private var weatherDataSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeader("Weather Station", symbol: "cloud.sun.fill", color: .orange)
+            sectionHeader("Weather", symbol: "cloud.sun.fill", color: .orange)
 
             cardBackground {
-                HStack(spacing: 14) {
-                    Image(systemName: "antenna.radiowaves.left.and.right")
-                        .font(.title3)
-                        .foregroundStyle(.primary)
-                        .frame(width: 28, height: 28)
-                    Text("Station ID")
-                        .font(.body)
-                    Spacer()
-                    TextField("e.g. INEWSOUT1775", text: $stationIdInput)
-                        .multilineTextAlignment(.trailing)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.characters)
-                        .foregroundStyle(.secondary)
-                        .onSubmit { saveStationId() }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-
-                if let stationId = store.settings.weatherStationId, !stationId.isEmpty {
-                    Divider().padding(.leading, 56)
-                    HStack(spacing: 14) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.title3)
-                            .foregroundStyle(.green)
-                            .frame(width: 28, height: 28)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Using station")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                            Text(stationId)
-                                .font(.body.weight(.semibold))
-                        }
-                        Spacer()
-                        Button("Clear") {
-                            var s = store.settings
-                            s.weatherStationId = nil
-                            store.updateSettings(s)
-                            stationIdInput = ""
-                        }
-                        .font(.body)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                }
-
-                Divider().padding(.leading, 56)
-
-                Button {
-                    showWeatherStationPicker = true
+                NavigationLink {
+                    WeatherDataSettingsView()
                 } label: {
                     HStack(spacing: 14) {
-                        Image(systemName: "location.magnifyingglass")
+                        Image(systemName: weatherSummary.symbol)
                             .font(.title3)
                             .foregroundStyle(Color.accentColor)
                             .frame(width: 28, height: 28)
-                        Text("Find Nearest Station")
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(Color.accentColor)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Weather Data & Forecasting")
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(.primary)
+                            Text(weatherSummary.detail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                        }
                         Spacer()
                         Image(systemName: "chevron.right")
                             .font(.footnote.weight(.semibold))
@@ -774,8 +732,17 @@ struct VineyardSetupHubView: View {
                 .buttonStyle(.plain)
             }
 
-            sectionFooter("Enter your Weather Underground PWS Station ID, or find the nearest station to your location.")
+            sectionFooter("Manage forecast and local observation sources, station credentials and rainfall backfill from a single place.")
         }
+    }
+
+    private func reloadWeatherSummary() {
+        guard let vid = store.selectedVineyardId else {
+            weatherSummary = .empty
+            return
+        }
+        let cfg = WeatherProviderStore.shared.config(for: vid)
+        weatherSummary = WeatherSummaryInfo.from(config: cfg)
     }
 
     // MARK: - Settings IO
@@ -787,7 +754,6 @@ struct VineyardSetupHubView: View {
         elevationText = s.vineyardElevationMetres.map { String(format: "%.0f", $0) } ?? ""
         calculationMode = s.calculationMode
         resetMode = s.resetMode
-        stationIdInput = s.weatherStationId ?? ""
     }
 
     private func saveLatLon() {
@@ -866,13 +832,6 @@ struct VineyardSetupHubView: View {
         } catch {
             // Silent — checklist will show red cross for soil until reload.
         }
-    }
-
-    private func saveStationId() {
-        let trimmed = stationIdInput.trimmingCharacters(in: .whitespaces)
-        var s = store.settings
-        s.weatherStationId = trimmed.isEmpty ? nil : trimmed
-        store.updateSettings(s)
     }
 
     // MARK: - Import/Export
@@ -1362,5 +1321,71 @@ struct TeamOperationsHubView: View {
     private var currentVineyardOperatorCategories: Int {
         guard let vid = store.selectedVineyardId else { return 0 }
         return store.operatorCategories.filter { $0.vineyardId == vid }.count
+    }
+}
+
+// MARK: - Weather summary helper
+
+/// Compact summary of the active weather provider configuration for
+/// the Vineyard Setup drill-in row. The full configuration UI lives
+/// in WeatherDataSettingsView. This is purely a glanceable label so
+/// users know which source is active without opening the screen.
+private struct WeatherSummaryInfo {
+    let symbol: String
+    let detail: String
+
+    static let empty = WeatherSummaryInfo(
+        symbol: "cloud.sun.fill",
+        detail: "Tap to configure forecast and local station sources."
+    )
+
+    static func from(config: WeatherProviderConfig) -> WeatherSummaryInfo {
+        var parts: [String] = []
+
+        switch config.forecastProvider {
+        case .auto:
+            if let name = config.willyWeatherLocationName, !name.isEmpty {
+                parts.append("WillyWeather · \(name)")
+            } else {
+                parts.append("Auto forecast (Open-Meteo)")
+            }
+        case .willyWeather:
+            if let name = config.willyWeatherLocationName, !name.isEmpty {
+                parts.append("WillyWeather · \(name)")
+            } else {
+                parts.append("WillyWeather (no location)")
+            }
+        case .openMeteo:
+            parts.append("Open-Meteo forecast")
+        }
+
+        switch config.localObservationProvider {
+        case .none:
+            break
+        case .davis:
+            if let name = config.davisStationName, !name.isEmpty {
+                parts.append("Davis · \(name)")
+            } else {
+                parts.append("Davis WeatherLink")
+            }
+        case .wunderground:
+            parts.append("Weather Underground PWS")
+        }
+
+        let symbol: String
+        switch config.localObservationProvider {
+        case .davis: symbol = "sensor.tag.radiowaves.forward.fill"
+        case .wunderground: symbol = "antenna.radiowaves.left.and.right"
+        case .none:
+            symbol = config.forecastProvider == .willyWeather
+                ? "sun.rain.fill"
+                : "cloud.sun.fill"
+        }
+
+        let detail = parts.isEmpty
+            ? "Tap to configure forecast and local station sources."
+            : parts.joined(separator: " • ")
+
+        return WeatherSummaryInfo(symbol: symbol, detail: detail)
     }
 }
