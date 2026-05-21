@@ -166,12 +166,36 @@ final class SupabaseGrapeVarietyCatalogRepository: Sendable {
         isActive: Bool = true
     ) async throws -> VineyardGrapeVarietyRow {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        struct Params: Encodable, Sendable {
+        // NOTE: We MUST write an explicit `encode(to:)` so that nil optionals
+            // are emitted as JSON `null` rather than omitted. Swift's auto-
+            // synthesised Encodable uses `encodeIfPresent` for Optional
+            // properties, which strips the keys entirely — and PostgREST then
+            // resolves the RPC overload using only the keys actually sent. The
+            // live `upsert_vineyard_grape_variety` is a 5-arg function, so
+            // omitting `p_variety_key` (when creating a custom variety) made
+            // PostgREST report:
+            //   Could not find the function public.upsert_vineyard_grape_variety(
+            //       p_display_name, p_is_active, p_optimal_gdd_override, p_vineyard_id)
+            // Forcing nil → null keeps all five argument names on the wire.
+            struct Params: Encodable, Sendable {
             let p_vineyard_id: UUID
             let p_variety_key: String?
             let p_display_name: String
             let p_optimal_gdd_override: Double?
             let p_is_active: Bool
+
+            enum CodingKeys: String, CodingKey {
+                case p_vineyard_id, p_variety_key, p_display_name, p_optimal_gdd_override, p_is_active
+            }
+
+            func encode(to encoder: Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encode(p_vineyard_id, forKey: .p_vineyard_id)
+                try c.encode(p_variety_key, forKey: .p_variety_key)
+                try c.encode(p_display_name, forKey: .p_display_name)
+                try c.encode(p_optimal_gdd_override, forKey: .p_optimal_gdd_override)
+                try c.encode(p_is_active, forKey: .p_is_active)
+            }
         }
         let row: VineyardGrapeVarietyRow = try await provider.client
             .rpc("upsert_vineyard_grape_variety", params: Params(
