@@ -7,7 +7,14 @@
 //   { "brand": string, "model": string, "year"?: number }
 //
 // Response 200 JSON:
-//   { fuelUsageLPerHour: number, notes?: string, confidence?: string }
+//   {
+//     fuelUsageLPerHour: number,
+//     notes?: string,
+//     confidence?: string,        // "low" | "medium" | "high"
+//     matchedBrand?: string,      // brand AI actually referenced
+//     matchedModel?: string,      // model AI actually referenced
+//     matchedYearRange?: string   // e.g. "2018-2021" or "2020"
+//   }
 //
 // Errors return { error: string } with appropriate HTTP status.
 
@@ -122,9 +129,11 @@ Deno.serve(async (req: Request) => {
 I need the figure for real field working conditions — for example, pulling a sprayer or implement through a vineyard at typical PTO operating RPM.
 Do NOT provide the idle or stationary fuel consumption. Provide the average consumption under moderate to heavy working load.
 Use the model year to narrow down the specific engine/spec variant if relevant.
+Also echo back the exact brand, model and production year range you used so the user can confirm you referenced the correct tractor.
 Return ONLY a JSON object with no other text, in this exact format:
-{"fuelUsageLPerHour": 8.5, "confidence": "low|medium|high", "notes": "short caveat"}
-If you are unsure of the exact model or year, provide your best estimate for a similar tractor in that brand's lineup under working load.
+{"fuelUsageLPerHour": 8.5, "confidence": "low|medium|high", "notes": "short caveat", "matchedBrand": "John Deere", "matchedModel": "5075E", "matchedYearRange": "2018-2021"}
+If you cannot identify the tractor at all, set confidence to "low" and matchedModel to an empty string.
+If you are unsure of the exact model or year, provide your best estimate for a similar tractor in that brand's lineup under working load and set confidence to "low".
 Return ONLY valid JSON, nothing else.`;
 
   try {
@@ -146,6 +155,15 @@ Return ONLY valid JSON, nothing else.`;
         ? parsed.confidence
         : null,
       notes: typeof parsed?.notes === "string" ? parsed.notes : null,
+      matchedBrand: typeof parsed?.matchedBrand === "string"
+        ? parsed.matchedBrand
+        : null,
+      matchedModel: typeof parsed?.matchedModel === "string"
+        ? parsed.matchedModel
+        : null,
+      matchedYearRange: typeof parsed?.matchedYearRange === "string"
+        ? parsed.matchedYearRange
+        : null,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

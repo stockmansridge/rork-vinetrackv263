@@ -390,9 +390,17 @@ struct TractorFormSheet: View {
     @State private var modelYearText: String = ""
     @State private var fuelUsage: String = ""
     @State private var fuelLookupLoading: Bool = false
-    @State private var fuelLookupError: String?
-    @State private var fuelLookupNotes: String?
-    @State private var fuelLookupConfidence: String?
+
+    /// One of three mutually-exclusive lookup outcomes, shown as an inline
+    /// confirmation panel above the fuel-usage field. The AI never silently
+    /// overwrites the user's entered value — they must explicitly apply.
+    private enum LookupOutcome {
+        case match(FuelLookupResult)          // reliable AI match — confirm before applying
+        case uncertain(FuelLookupResult)      // AI returned low-confidence / no model echo
+        case noMatch(String?)                 // AI ran but couldn't identify the tractor
+        case unavailable(String)              // network/API failure — manual entry only
+    }
+    @State private var lookupOutcome: LookupOutcome?
 
     init(tractor: Tractor?) {
         self.tractor = tractor
@@ -436,33 +444,22 @@ struct TractorFormSheet: View {
                             HStack {
                                 if fuelLookupLoading {
                                     ProgressView()
-                                    Text("Estimating…")
+                                    Text("Searching…")
                                 } else {
-                                    Label("Estimate Fuel Use", systemImage: "sparkles")
+                                    Label((lookupOutcome != nil) ? "Search Again" : "Estimate Fuel Use", systemImage: "sparkles")
                                 }
                             }
                         }
                         .disabled(fuelLookupLoading || brand.trimmingCharacters(in: .whitespaces).isEmpty || model.trimmingCharacters(in: .whitespaces).isEmpty)
-                        if let fuelLookupError {
-                            Text(fuelLookupError)
-                                .font(.caption)
-                                .foregroundStyle(.red)
-                        }
-                        if let confidence = fuelLookupConfidence, !confidence.isEmpty {
-                            Text("Confidence: \(confidence.capitalized)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        if let notes = fuelLookupNotes, !notes.isEmpty {
-                            Text(notes)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
                     }
                 } header: {
                     Text("Fuel Usage (L/hr)")
                 } footer: {
                     Text("Fuel consumption rate in litres per hour under working load. AI estimates are approximate — actual fuel use varies by load, terrain, implement, speed, and conditions.")
+                }
+
+                if let outcome = lookupOutcome {
+                    lookupOutcomeSection(outcome)
                 }
             }
             .navigationTitle(tractor == nil ? "New Tractor" : "Edit Tractor")
@@ -484,9 +481,7 @@ struct TractorFormSheet: View {
 
     @MainActor
     private func estimateFuel() async {
-        fuelLookupError = nil
-        fuelLookupNotes = nil
-        fuelLookupConfidence = nil
+        lookupOutcome = nil
         fuelLookupLoading = true
         defer { fuelLookupLoading = false }
         do {
@@ -495,11 +490,164 @@ struct TractorFormSheet: View {
                 model: model.trimmingCharacters(in: .whitespaces),
                 year: parsedYear
             )
-            fuelUsage = String(format: "%.1f", result.fuelUsageLPerHour)
-            fuelLookupConfidence = result.confidence
-            fuelLookupNotes = result.notes
+            // Do NOT auto-fill — show a confirmation panel so the user can
+            // verify what tractor the AI actually referenced before applying.
+            lookupOutcome = result.isReliableMatch ? .match(result) : .uncertain(result)
+        } catch let err as TractorLookupError {
+            switch err {
+            case .noReliableMatch(let msg):
+                lookupOutcome = .noMatch(msg)
+            case .unavailable(let msg):
+                lookupOutcome = .unavailable(msg)
+            case .notConfigured, .missingProviderKey:
+                lookupOutcome = .unavailable(err.errorDescription ?? "Lookup unavailable")
+            }
         } catch {
-            fuelLookupError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            lookupOutcome = .unavailable(error.localizedDescription)
+        }
+    }
+
+    /// Friendly summary of what the AI referenced, e.g. "John Deere 5075E · 2018–2021".
+    private func matchedTractorLabel(_ result: FuelLookupResult) -> String {
+        let b = result.matchedBrand?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let m = result.matchedModel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let head = [b, m].filter { !$0.isEmpty }.joined(separator: " ")
+        let entered = "\(brand) \(model)".trimmingCharacters(in: .whitespaces)
+        let primary = head.isEmpty ? entered : head
+        if let yr = result.matchedYearRange?.trimmingCharacters(in: .whitespacesAndNewlines), !yr.isEmpty {
+            return "\(primary) · \(yr)"
+        }
+        return primary
+    }
+
+    @ViewBuilder
+    private func lookupOutcomeSection(_ outcome: LookupOutcome) -> some View {
+        switch outcome {
+        case .match(let result):
+            Section {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Tractor match found", systemImage: "checkmark.seal.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(VineyardTheme.olive)
+                    Text(matchedTractorLabel(result))
+                        .font(.body.weight(.medium))
+                    Text("Estimated fuel use: \(String(format: "%.1f", result.fuelUsageLPerHour)) L/hr")
+                        .font(.subheadline)
+                    if let conf = result.confidence, !conf.isEmpty {
+                        Text("Confidence: \(conf.capitalized)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let notes = result.notes, !notes.isEmpty {
+                        Text(notes)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("Please confirm this looks correct before saving.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 2)
+                }
+                Button {
+                    fuelUsage = String(format: "%.1f", result.fuelUsageLPerHour)
+                    lookupOutcome = nil
+                } label: {
+                    Label("Use this match", systemImage: "checkmark.circle.fill")
+                }
+                Button(role: .cancel) {
+                    lookupOutcome = nil
+                } label: {
+                    Label("Edit manually", systemImage: "pencil")
+                }
+            } header: {
+                Text("AI Suggestion")
+            }
+
+        case .uncertain(let result):
+            Section {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Uncertain match", systemImage: "questionmark.circle.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.orange)
+                    Text("We couldn’t find a reliable tractor match. We’ve kept the details you entered. Please enter an estimated fuel rate to finish setting up this tractor.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if result.fuelUsageLPerHour > 0 {
+                        Divider().padding(.vertical, 2)
+                        Text("Closest guess: \(matchedTractorLabel(result))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text("Approx. \(String(format: "%.1f", result.fuelUsageLPerHour)) L/hr")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("If unsure, enter an estimate. You can edit this later from Tractors.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .padding(.top, 2)
+                }
+                if result.fuelUsageLPerHour > 0 {
+                    Button {
+                        fuelUsage = String(format: "%.1f", result.fuelUsageLPerHour)
+                        lookupOutcome = nil
+                    } label: {
+                        Label("Use closest guess", systemImage: "sparkles")
+                    }
+                }
+                Button(role: .cancel) {
+                    lookupOutcome = nil
+                } label: {
+                    Label("Enter fuel rate manually", systemImage: "pencil")
+                }
+            } header: {
+                Text("AI Suggestion")
+            }
+
+        case .noMatch(let msg):
+            Section {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("No reliable match", systemImage: "questionmark.circle.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.orange)
+                    Text(msg ?? "We couldn’t find a reliable tractor match. We’ve kept the details you entered. Please enter an estimated fuel rate to finish setting up this tractor.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("If unsure, enter an estimate. You can edit this later from Tractors.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                Button(role: .cancel) {
+                    lookupOutcome = nil
+                } label: {
+                    Label("Enter fuel rate manually", systemImage: "pencil")
+                }
+            } header: {
+                Text("AI Suggestion")
+            }
+
+        case .unavailable(let msg):
+            Section {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Lookup unavailable", systemImage: "wifi.exclamationmark")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.red)
+                    Text("Tractor lookup is unavailable right now. You can still enter the tractor manually.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if !msg.isEmpty {
+                        Text(msg)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                Button(role: .cancel) {
+                    lookupOutcome = nil
+                } label: {
+                    Label("Enter fuel rate manually", systemImage: "pencil")
+                }
+            } header: {
+                Text("AI Suggestion")
+            }
         }
     }
 
