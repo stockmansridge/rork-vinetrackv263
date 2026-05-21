@@ -530,9 +530,22 @@ final class AlertService {
     ) -> [BackendAlertUpsert] {
         let cal = Calendar.current
         let startOfToday = cal.startOfDay(for: Date())
+        // Work tasks in this app are primarily a *log* of work already performed.
+        // Only treat a row as an outstanding scheduled job when it carries an
+        // explicit scheduling status (e.g. "scheduled", "planned", "todo",
+        // "in_progress"). Rows with no status, or a terminal status
+        // (completed/done/logged/cancelled), are historical records and must
+        // not generate overdue alerts.
+        let scheduledStatuses: Set<String> = [
+            "scheduled", "planned", "todo", "to_do", "pending", "in_progress", "in-progress", "active"
+        ]
         let overdue = store.workTasks.filter { task in
             guard task.vineyardId == vineyardId else { return false }
             if task.isArchived || task.isFinalized { return false }
+            let normalised = (task.status ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            guard scheduledStatuses.contains(normalised) else { return false }
             // Prefer endDate when set, otherwise fall back to date.
             let due = task.endDate ?? task.date
             return due < startOfToday
