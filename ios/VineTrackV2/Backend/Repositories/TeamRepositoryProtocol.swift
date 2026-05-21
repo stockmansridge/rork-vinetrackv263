@@ -8,6 +8,15 @@ protocol TeamRepositoryProtocol: Sendable {
     func updateMemberOperatorCategory(vineyardId: UUID, userId: UUID, operatorCategoryId: UUID?) async throws
     func removeMember(vineyardId: UUID, userId: UUID) async throws
     func inviteMember(vineyardId: UUID, email: String, role: BackendRole) async throws -> BackendInvitation
+    /// Owner/manager-only invite with an optional default operator category and
+    /// optional expiry. Mirrors the shared SQL 79 `create_invitation` RPC.
+    func inviteMember(
+        vineyardId: UUID,
+        email: String,
+        role: BackendRole,
+        operatorCategoryId: UUID?,
+        expiresAt: Date?
+    ) async throws -> BackendInvitation
     func listPendingInvitations() async throws -> [BackendInvitation]
     func acceptInvitation(invitationId: UUID) async throws
     func declineInvitation(invitationId: UUID) async throws

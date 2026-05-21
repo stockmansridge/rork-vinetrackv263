@@ -174,12 +174,32 @@ struct BackendTeamAccessView: View {
                         .foregroundStyle(.white)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(member.displayName ?? "Member")
+                    Text(memberPrimaryName(member))
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(.primary)
-                    Text(member.role.rawValue.capitalized)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    if let email = memberSecondaryEmail(member) {
+                        Text(email)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    HStack(spacing: 6) {
+                        Text(member.role.rawValue.capitalized)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(roleColor(member.role))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(roleColor(member.role).opacity(0.12), in: Capsule())
+                        if let categoryName = member.operatorCategoryName, !categoryName.isEmpty {
+                            Text(categoryName)
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.secondary.opacity(0.12), in: Capsule())
+                        }
+                    }
                 }
                 Spacer()
                 if member.userId == auth.userId {
@@ -283,6 +303,31 @@ struct BackendTeamAccessView: View {
         }
     }
 
+    /// Display priority: profiles.full_name → vineyard_members.display_name →
+    /// email → "Member". Matches the resolved display name returned by the
+    /// `get_vineyard_team_members` RPC.
+    private func memberPrimaryName(_ member: BackendVineyardMember) -> String {
+        if let fullName = member.fullName?.trimmingCharacters(in: .whitespacesAndNewlines), !fullName.isEmpty {
+            return fullName
+        }
+        if let displayName = member.displayName?.trimmingCharacters(in: .whitespacesAndNewlines), !displayName.isEmpty {
+            return displayName
+        }
+        if let email = member.email?.trimmingCharacters(in: .whitespacesAndNewlines), !email.isEmpty {
+            return email
+        }
+        return "Member"
+    }
+
+    /// Returns the email when it would add information not already shown as the
+    /// primary line — avoids duplicating the email as both name and subtitle.
+    private func memberSecondaryEmail(_ member: BackendVineyardMember) -> String? {
+        guard let email = member.email?.trimmingCharacters(in: .whitespacesAndNewlines), !email.isEmpty else {
+            return nil
+        }
+        return email == memberPrimaryName(member) ? nil : email
+    }
+
     private func roleColor(_ role: BackendRole) -> Color {
         switch role {
         case .owner: return .orange
@@ -338,6 +383,19 @@ private struct EditMemberRoleSheet: View {
         BackendRole.allCases.filter { $0 != .owner }
     }
 
+    private var memberDisplayName: String {
+        if let fullName = member.fullName?.trimmingCharacters(in: .whitespacesAndNewlines), !fullName.isEmpty {
+            return fullName
+        }
+        if let displayName = member.displayName?.trimmingCharacters(in: .whitespacesAndNewlines), !displayName.isEmpty {
+            return displayName
+        }
+        if let email = member.email?.trimmingCharacters(in: .whitespacesAndNewlines), !email.isEmpty {
+            return email
+        }
+        return "—"
+    }
+
     private var hasChanges: Bool {
         selectedRole != member.role || selectedOperatorCategoryId != member.operatorCategoryId
     }
@@ -346,7 +404,10 @@ private struct EditMemberRoleSheet: View {
         NavigationStack {
             Form {
                 Section("Member") {
-                    LabeledContent("Name", value: member.displayName ?? "—")
+                    LabeledContent("Name", value: memberDisplayName)
+                    if let email = member.email?.trimmingCharacters(in: .whitespacesAndNewlines), !email.isEmpty {
+                        LabeledContent("Email", value: email)
+                    }
                     LabeledContent("Current Role", value: member.role.rawValue.capitalized)
                 }
 

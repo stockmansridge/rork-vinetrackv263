@@ -6,8 +6,10 @@ struct BackendInviteMemberSheet: View {
     var onSent: (() -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(MigratedDataStore.self) private var store
     @State private var email: String = ""
     @State private var role: BackendRole = .operator
+    @State private var operatorCategoryId: UUID?
     @State private var isSending: Bool = false
     @State private var errorMessage: String?
     @State private var showSuccess: Bool = false
@@ -16,6 +18,12 @@ struct BackendInviteMemberSheet: View {
 
     private var availableRoles: [BackendRole] {
         BackendRole.allCases.filter { $0 != .owner }
+    }
+
+    private var vineyardOperatorCategories: [OperatorCategory] {
+        store.operatorCategories
+            .filter { $0.vineyardId == vineyardId }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     var body: some View {
@@ -49,10 +57,27 @@ struct BackendInviteMemberSheet: View {
                 }
 
                 Section {
+                    Picker("Operator Category", selection: $operatorCategoryId) {
+                        Text("None").tag(UUID?.none)
+                        ForEach(vineyardOperatorCategories) { cat in
+                            Text(cat.name).tag(UUID?.some(cat.id))
+                        }
+                    }
+                } header: {
+                    Text("Default Operator Category")
+                } footer: {
+                    if vineyardOperatorCategories.isEmpty {
+                        Text("Create operator categories in Spray Management → Operator Categories to assign a default hourly rate at invite time.")
+                    } else {
+                        Text("Optional. Applied to the new member's profile on accept and used as a fallback for trip cost calculations.")
+                    }
+                }
+
+                Section {
                     HStack(alignment: .top, spacing: 10) {
                         Image(systemName: "info.circle")
                             .foregroundStyle(VineyardTheme.info)
-                        Text("The invited person will need to sign up or log in with this email to access \(vineyardName).")
+                        Text("No email is sent yet. The invited person will see the invite for \(vineyardName) when they sign in with this email address.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -112,9 +137,16 @@ struct BackendInviteMemberSheet: View {
         isSending = true
         defer { isSending = false }
         do {
-            _ = try await teamRepository.inviteMember(vineyardId: vineyardId, email: trimmed, role: role)
+            _ = try await teamRepository.inviteMember(
+                vineyardId: vineyardId,
+                email: trimmed,
+                role: role,
+                operatorCategoryId: operatorCategoryId,
+                expiresAt: nil
+            )
             showSuccess = true
             email = ""
+            operatorCategoryId = nil
             onSent?()
             // First-invite milestone: surface the web portal prompt for
             // managers so they discover desktop team management.
