@@ -10,8 +10,15 @@
 --
 -- All other behaviour is unchanged: SECURITY DEFINER, vineyard membership
 -- check, ordered by joined_at asc, id asc.
+--
+-- Postgres cannot change the OUT/return type of an existing function via
+-- CREATE OR REPLACE, so we DROP the prior signature first. The function is
+-- only called from authenticated clients via RPC, so dropping and recreating
+-- in the same migration is safe.
 
-create or replace function public.get_vineyard_team_members(p_vineyard_id uuid)
+drop function if exists public.get_vineyard_team_members(uuid);
+
+create function public.get_vineyard_team_members(p_vineyard_id uuid)
 returns table (
   membership_id uuid,
   vineyard_id uuid,
