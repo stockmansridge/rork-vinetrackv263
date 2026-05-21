@@ -38,6 +38,7 @@ struct VineyardSetupHubView: View {
     @State private var paddocksWithSoilProfile: Set<UUID> = []
     @State private var sharedCatalogCount: Int = 0
     private let soilProfileRepositoryForChecklist: any SoilProfileRepositoryProtocol = SupabaseSoilProfileRepository()
+    private let vineyardRepositoryForLocation: any VineyardRepositoryProtocol = SupabaseVineyardRepository()
 
     private enum BlockSortOption: String, CaseIterable, Identifiable {
         case rowNumber
@@ -798,6 +799,7 @@ struct VineyardSetupHubView: View {
         s.vineyardLatitude = Double(latitudeText.trimmingCharacters(in: .whitespaces))
         s.vineyardLongitude = Double(longitudeText.trimmingCharacters(in: .whitespaces))
         store.updateSettings(s)
+        pushLocationToBackend(vineyardId: vid, settings: s)
     }
 
     private func saveElevation() {
@@ -813,6 +815,27 @@ struct VineyardSetupHubView: View {
         )
         s.vineyardElevationMetres = numeric.isEmpty ? nil : Double(numeric)
         store.updateSettings(s)
+        pushLocationToBackend(vineyardId: vid, settings: s)
+    }
+
+    /// Persist the vineyard's lat/long/elevation/timezone to Supabase so other
+    /// devices and the Lovable portal see the same values. Local AppSettings
+    /// still acts as an offline cache via `SettingsRepository`.
+    private func pushLocationToBackend(vineyardId: UUID, settings: AppSettings) {
+        let repo = vineyardRepositoryForLocation
+        let lat = settings.vineyardLatitude
+        let lon = settings.vineyardLongitude
+        let elev = settings.vineyardElevationMetres
+        let tz = settings.timezone.isEmpty ? nil : settings.timezone
+        Task.detached {
+            _ = try? await repo.setVineyardLocation(
+                vineyardId: vineyardId,
+                latitude: lat,
+                longitude: lon,
+                elevationMetres: elev,
+                timezone: tz
+            )
+        }
     }
 
     /// Loads the active built-in count from the shared grape-variety

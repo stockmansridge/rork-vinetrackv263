@@ -567,6 +567,74 @@ extension MigratedDataStore {
         }
     }
 
+    // MARK: - Vineyard Location (lat/long/elevation/timezone)
+
+    /// Result of merging server-side vineyard location into local `AppSettings`.
+    /// `needsBackfill` is true when the server has nulls but the local copy has
+    /// values — the caller should push the local values back to Supabase as a
+    /// one-time migration.
+    nonisolated struct VineyardLocationMergeResult: Sendable {
+        let needsBackfill: Bool
+        let latitude: Double?
+        let longitude: Double?
+        let elevationMetres: Double?
+        let timezone: String?
+    }
+
+    /// Merge the server-side vineyard location into the local `AppSettings`.
+    /// Server values win whenever they are non-nil; nil server fields preserve
+    /// the existing local value (no destructive overwrites). When the server is
+    /// missing a value the local copy has, the result flags `needsBackfill`.
+    @discardableResult
+    func applyRemoteVineyardLocation(
+        _ remote: BackendVineyardLocation,
+        vineyardId: UUID
+    ) -> VineyardLocationMergeResult {
+        guard selectedVineyardId == vineyardId else {
+            return VineyardLocationMergeResult(
+                needsBackfill: false,
+                latitude: remote.latitude,
+                longitude: remote.longitude,
+                elevationMetres: remote.elevationMetres,
+                timezone: remote.timezone
+            )
+        }
+
+        var s = settings
+        s.vineyardId = vineyardId
+        var changed = false
+
+        if let lat = remote.latitude {
+            if s.vineyardLatitude != lat { s.vineyardLatitude = lat; changed = true }
+        }
+        if let lon = remote.longitude {
+            if s.vineyardLongitude != lon { s.vineyardLongitude = lon; changed = true }
+        }
+        if let elev = remote.elevationMetres {
+            if s.vineyardElevationMetres != elev { s.vineyardElevationMetres = elev; changed = true }
+        }
+        if let tz = remote.timezone, !tz.isEmpty {
+            if s.timezone != tz { s.timezone = tz; changed = true }
+        }
+
+        if changed {
+            saveSettings(s)
+        }
+
+        let needsBackfill =
+            (remote.latitude == nil && s.vineyardLatitude != nil) ||
+            (remote.longitude == nil && s.vineyardLongitude != nil) ||
+            (remote.elevationMetres == nil && s.vineyardElevationMetres != nil)
+
+        return VineyardLocationMergeResult(
+            needsBackfill: needsBackfill,
+            latitude: s.vineyardLatitude,
+            longitude: s.vineyardLongitude,
+            elevationMetres: s.vineyardElevationMetres,
+            timezone: s.timezone
+        )
+    }
+
     // MARK: - Button Templates
 
     private func saveButtonTemplatesToDisk() {

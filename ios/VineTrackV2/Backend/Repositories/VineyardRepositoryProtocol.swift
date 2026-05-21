@@ -12,6 +12,38 @@ protocol VineyardRepositoryProtocol: Sendable {
     func archiveVineyard(id: UUID) async throws
     func accountDeletionPreflight() async throws -> AccountDeletionPreflight
     func submitAccountDeletionRequest(reason: String?) async throws -> AccountDeletionRequestResult
+
+    /// Fetch the vineyard-scoped location (lat/long/elevation/timezone) from
+    /// `public.vineyards` via `get_vineyard_location`. Returns nil if the
+    /// caller is not a member (RPC throws) or the vineyard has no row.
+    func getVineyardLocation(vineyardId: UUID) async throws -> BackendVineyardLocation?
+
+    /// Owner/manager only. Writes all four location fields atomically.
+    /// Passing `nil` for a field clears it server-side.
+    @discardableResult
+    func setVineyardLocation(
+        vineyardId: UUID,
+        latitude: Double?,
+        longitude: Double?,
+        elevationMetres: Double?,
+        timezone: String?
+    ) async throws -> BackendVineyardLocation
+}
+
+nonisolated struct BackendVineyardLocation: Decodable, Sendable {
+    let vineyardId: UUID
+    let latitude: Double?
+    let longitude: Double?
+    let elevationMetres: Double?
+    let timezone: String?
+
+    enum CodingKeys: String, CodingKey {
+        case vineyardId = "vineyard_id"
+        case latitude
+        case longitude
+        case elevationMetres = "elevation_metres"
+        case timezone
+    }
 }
 
 nonisolated struct AccountDeletionPreflight: Decodable, Sendable {

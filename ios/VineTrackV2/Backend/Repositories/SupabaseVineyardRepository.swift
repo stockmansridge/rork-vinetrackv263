@@ -106,6 +106,75 @@ final class SupabaseVineyardRepository: VineyardRepositoryProtocol {
             .value
         return result
     }
+
+    func getVineyardLocation(vineyardId: UUID) async throws -> BackendVineyardLocation? {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let rows: [BackendVineyardLocation] = try await provider.client
+            .rpc("get_vineyard_location", params: GetVineyardLocationRequest(vineyardId: vineyardId))
+            .execute()
+            .value
+        return rows.first
+    }
+
+    @discardableResult
+    func setVineyardLocation(
+        vineyardId: UUID,
+        latitude: Double?,
+        longitude: Double?,
+        elevationMetres: Double?,
+        timezone: String?
+    ) async throws -> BackendVineyardLocation {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let params = SetVineyardLocationRequest(
+            vineyardId: vineyardId,
+            latitude: latitude,
+            longitude: longitude,
+            elevationMetres: elevationMetres,
+            timezone: timezone
+        )
+        let rows: [BackendVineyardLocation] = try await provider.client
+            .rpc("set_vineyard_location", params: params)
+            .execute()
+            .value
+        guard let row = rows.first else { throw BackendRepositoryError.emptyResponse }
+        return row
+    }
+}
+
+nonisolated private struct GetVineyardLocationRequest: Encodable, Sendable {
+    let vineyardId: UUID
+
+    enum CodingKeys: String, CodingKey {
+        case vineyardId = "p_vineyard_id"
+    }
+}
+
+/// Custom `encode(to:)` so `nil` values are sent as JSON `null` rather than
+/// being omitted (PostgREST overload resolution needs all named params to
+/// be present — see grape variety `p_variety_key` regression).
+nonisolated private struct SetVineyardLocationRequest: Encodable, Sendable {
+    let vineyardId: UUID
+    let latitude: Double?
+    let longitude: Double?
+    let elevationMetres: Double?
+    let timezone: String?
+
+    enum CodingKeys: String, CodingKey {
+        case vineyardId = "p_vineyard_id"
+        case latitude = "p_latitude"
+        case longitude = "p_longitude"
+        case elevationMetres = "p_elevation_metres"
+        case timezone = "p_timezone"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(vineyardId, forKey: .vineyardId)
+        try c.encode(latitude, forKey: .latitude)
+        try c.encode(longitude, forKey: .longitude)
+        try c.encode(elevationMetres, forKey: .elevationMetres)
+        try c.encode(timezone, forKey: .timezone)
+    }
 }
 
 nonisolated private struct ArchiveVineyardRequest: Encodable, Sendable {

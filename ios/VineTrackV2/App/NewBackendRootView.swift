@@ -123,6 +123,7 @@ struct NewBackendRootView: View {
                 // source of truth. Falls back to the cached/built-in copy.
                 await SharedGrapeVarietyCatalogCache.shared.refresh()
                 await syncVineyardGrapeVarieties(vineyardId: vid)
+                await syncVineyardLocation(vineyardId: vid)
             }
         }
         .task(id: auth.isSignedIn) {
@@ -284,6 +285,43 @@ struct NewBackendRootView: View {
                     .padding(.horizontal, 40)
                 }
             }
+        }
+    }
+
+    /// Pull the vineyard-scoped location (lat/long/elevation/timezone) from
+    /// Supabase and merge it into local `AppSettings`. If the server still has
+    /// nulls but the local copy has values (e.g. legacy device with the old
+    /// local-only elevation), push them back as a one-time backfill so other
+    /// devices and Lovable see them.
+    private func syncVineyardLocation(vineyardId: UUID) async {
+        do {
+            let remote = try await vineyardRepository.getVineyardLocation(vineyardId: vineyardId)
+            let merged: MigratedDataStore.VineyardLocationMergeResult
+            if let remote {
+                merged = store.applyRemoteVineyardLocation(remote, vineyardId: vineyardId)
+            } else {
+                let s = store.settings
+                merged = MigratedDataStore.VineyardLocationMergeResult(
+                    needsBackfill: s.vineyardLatitude != nil
+                        || s.vineyardLongitude != nil
+                        || s.vineyardElevationMetres != nil,
+                    latitude: s.vineyardLatitude,
+                    longitude: s.vineyardLongitude,
+                    elevationMetres: s.vineyardElevationMetres,
+                    timezone: s.timezone
+                )
+            }
+            if merged.needsBackfill {
+                _ = try? await vineyardRepository.setVineyardLocation(
+                    vineyardId: vineyardId,
+                    latitude: merged.latitude,
+                    longitude: merged.longitude,
+                    elevationMetres: merged.elevationMetres,
+                    timezone: merged.timezone
+                )
+            }
+        } catch {
+            // Offline / RPC missing / not a member — keep existing local settings.
         }
     }
 
