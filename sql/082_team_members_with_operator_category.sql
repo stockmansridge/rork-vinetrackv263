@@ -81,4 +81,4 @@ revoke all on function public.get_vineyard_team_members(uuid) from public;
 grant execute on function public.get_vineyard_team_members(uuid) to authenticated;
 
 comment on function public.get_vineyard_team_members(uuid) is
-  'Returns display-safe team member info (membership_id, vineyard_id, user_id, role, joined_at, display_name, full_name, email, avatar_url, operator_category_id, operator_category_name) for a vineyard the caller is a member of. SECURITY DEFINER; reads public.profiles and auth.users for email fallback. operator_category_name is NULL when no category is assigned or the category has been soft-deleted.';
+  $c$Returns display-safe team member info (membership_id, vineyard_id, user_id, role, joined_at, display_name, full_name, email, avatar_url, operator_category_id, operator_category_name) for a vineyard the caller is a member of. SECURITY DEFINER; reads public.profiles and auth.users for email fallback. operator_category_name is NULL when no category is assigned or the category has been soft-deleted.$c$;
