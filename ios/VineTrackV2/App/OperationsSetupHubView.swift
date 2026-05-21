@@ -128,6 +128,15 @@ struct VineyardSetupHubView: View {
         return BuiltInGrapeVarietyCatalog.entries.count
     }
 
+    /// Number of vineyard-scoped custom (non built-in) varieties for the
+    /// currently selected vineyard. Used to surface custom varieties
+    /// created via Supabase (e.g. by the Lovable web portal) on the
+    /// Vineyard Setup card.
+    private var customVarietyCount: Int {
+        guard let vid = store.selectedVineyardId else { return 0 }
+        return store.grapeVarieties.filter { $0.vineyardId == vid && !$0.isBuiltIn }.count
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
@@ -464,9 +473,16 @@ struct VineyardSetupHubView: View {
                             .font(.body)
                             .foregroundStyle(.primary)
                         Spacer()
-                        Text("\(masterVarietyCount)")
-                            .font(.body)
-                            .foregroundStyle(.secondary)
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text("\(masterVarietyCount)")
+                                .font(.body)
+                                .foregroundStyle(.secondary)
+                            if customVarietyCount > 0 {
+                                Text("+ \(customVarietyCount) custom")
+                                    .font(.caption2)
+                                    .foregroundStyle(Color.accentColor)
+                            }
+                        }
                         Image(systemName: "chevron.right")
                             .font(.footnote.weight(.semibold))
                             .foregroundStyle(.tertiary)

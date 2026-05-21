@@ -68,9 +68,19 @@ struct GrapeVarietyManagementView: View {
     private func varietyRow(_ variety: GrapeVariety, showChevron: Bool = true) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 3) {
-                Text(variety.name)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
+                HStack(spacing: 6) {
+                    Text(variety.name)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    if !variety.isBuiltIn {
+                        Text("Custom")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.accentColor.opacity(0.15), in: .capsule)
+                    }
+                }
                 Text("Optimal: \(Int(variety.optimalGDD)) GDD")
                     .font(.caption)
                     .foregroundStyle(.secondary)

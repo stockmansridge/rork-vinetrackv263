@@ -25,6 +25,7 @@ struct NewBackendRootView: View {
 
     private let disclaimerRepository: any DisclaimerRepositoryProtocol = SupabaseDisclaimerRepository(currentVersion: DisclaimerInfo.version)
     private let vineyardRepository: any VineyardRepositoryProtocol = SupabaseVineyardRepository()
+    private let grapeVarietyRepository = SupabaseGrapeVarietyCatalogRepository()
 
     var body: some View {
         Group {
@@ -115,12 +116,13 @@ struct NewBackendRootView: View {
             }
         }
         .task(id: store.selectedVineyardId) {
-            if store.selectedVineyardId != nil {
+            if let vid = store.selectedVineyardId {
                 DefaultDataSeeder.seedIfNeeded(store: store)
                 // Refresh shared grape-variety catalogue when a vineyard is
                 // selected so pickers and resolvers can use Supabase as the
                 // source of truth. Falls back to the cached/built-in copy.
                 await SharedGrapeVarietyCatalogCache.shared.refresh()
+                await syncVineyardGrapeVarieties(vineyardId: vid)
             }
         }
         .task(id: auth.isSignedIn) {
@@ -282,6 +284,19 @@ struct NewBackendRootView: View {
                     .padding(.horizontal, 40)
                 }
             }
+        }
+    }
+
+    /// Pull the vineyard's custom + selected grape varieties from Supabase
+    /// (`list_vineyard_grape_varieties`) and merge them into the local store
+    /// so custom varieties created elsewhere (e.g. the Lovable web portal)
+    /// appear in iOS pickers and the Grape Varieties screen.
+    private func syncVineyardGrapeVarieties(vineyardId: UUID) async {
+        do {
+            let rows = try await grapeVarietyRepository.listVineyardVarieties(vineyardId: vineyardId)
+            store.applyRemoteVineyardGrapeVarieties(rows, vineyardId: vineyardId)
+        } catch {
+            // Offline / RPC missing — keep existing local varieties.
         }
     }
 

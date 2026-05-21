@@ -470,6 +470,103 @@ extension MigratedDataStore {
         saveGrapeVarietiesToDisk()
     }
 
+    /// Merge custom + active vineyard grape varieties pulled from Supabase
+    /// (`list_vineyard_grape_varieties`) into the local `grapeVarieties`
+    /// array for the given vineyard. Built-in selections are mirrored too
+    /// so the resolver can use the server-stamped `optimal_gdd_override`.
+    /// Archived (`is_active == false`) rows are removed locally.
+    /// No-op when `vineyardId` is not the currently selected vineyard.
+    func applyRemoteVineyardGrapeVarieties(
+        _ rows: [VineyardGrapeVarietyRow],
+        vineyardId: UUID
+    ) {
+        guard selectedVineyardId == vineyardId else { return }
+
+        var changed = false
+        let activeRows = rows.filter { $0.isActive }
+        let archivedKeys = Set(rows.filter { !$0.isActive }.map { $0.varietyKey })
+
+        for row in activeRows {
+            let key = row.varietyKey
+            let deterministicId = GrapeVariety.deterministicID(vineyardId: vineyardId, key: key)
+            let trimmedName = row.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let resolvedName: String = {
+                if !row.isCustom, let builtin = BuiltInGrapeVarietyCatalog.entries.first(where: { $0.key == key }) {
+                    return builtin.name
+                }
+                return trimmedName.isEmpty ? key : trimmedName
+            }()
+            let resolvedGDD: Double = {
+                if let override = row.optimalGDDOverride { return override }
+                if let builtin = BuiltInGrapeVarietyCatalog.entries.first(where: { $0.key == key }) {
+                    return builtin.optimalGDD
+                }
+                return 1400
+            }()
+
+            if let idx = grapeVarieties.firstIndex(where: {
+                $0.vineyardId == vineyardId && ($0.key == key || $0.id == deterministicId)
+            }) {
+                var existing = grapeVarieties[idx]
+                var localChanged = false
+                if existing.id != deterministicId { existing.id = deterministicId; localChanged = true }
+                if existing.key != key { existing.key = key; localChanged = true }
+                if existing.name != resolvedName { existing.name = resolvedName; localChanged = true }
+                if existing.isBuiltIn != !row.isCustom { existing.isBuiltIn = !row.isCustom; localChanged = true }
+                if existing.optimalGDD != resolvedGDD { existing.optimalGDD = resolvedGDD; localChanged = true }
+                if localChanged {
+                    grapeVarieties[idx] = existing
+                    changed = true
+                }
+            } else {
+                // Skip name-duplicate of an existing local row to avoid
+                // showing the same variety twice when the local row was
+                // created before keys were available.
+                let canonical = BuiltInGrapeVarietyCatalog.canonical(resolvedName)
+                if !canonical.isEmpty,
+                   let idx = grapeVarieties.firstIndex(where: {
+                       $0.vineyardId == vineyardId &&
+                       BuiltInGrapeVarietyCatalog.canonical($0.name) == canonical
+                   }) {
+                    var existing = grapeVarieties[idx]
+                    existing.id = deterministicId
+                    existing.key = key
+                    existing.name = resolvedName
+                    existing.isBuiltIn = !row.isCustom
+                    existing.optimalGDD = resolvedGDD
+                    grapeVarieties[idx] = existing
+                    changed = true
+                    continue
+                }
+                grapeVarieties.append(GrapeVariety(
+                    id: deterministicId,
+                    vineyardId: vineyardId,
+                    name: resolvedName,
+                    optimalGDD: resolvedGDD,
+                    isBuiltIn: !row.isCustom,
+                    key: key
+                ))
+                changed = true
+            }
+        }
+
+        // Remove local rows that match an archived custom key for this vineyard.
+        if !archivedKeys.isEmpty {
+            let before = grapeVarieties.count
+            grapeVarieties.removeAll { v in
+                guard v.vineyardId == vineyardId,
+                      let k = v.key,
+                      archivedKeys.contains(k) else { return false }
+                return true
+            }
+            if grapeVarieties.count != before { changed = true }
+        }
+
+        if changed {
+            saveGrapeVarietiesToDisk()
+        }
+    }
+
     // MARK: - Button Templates
 
     private func saveButtonTemplatesToDisk() {
