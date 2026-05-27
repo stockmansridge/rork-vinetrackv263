@@ -417,9 +417,10 @@ struct SprayCalculatorView: View {
                         }
                     } else {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("\(selectedPaddockIds.count) paddock\(selectedPaddockIds.count == 1 ? "" : "s") selected")
+                            Text(collapsedPaddockSummary)
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(.primary)
+                                .lineLimit(2)
                             Text(selectedPaddocks.map(\.name).joined(separator: ", "))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -448,8 +449,6 @@ struct SprayCalculatorView: View {
                     paddockStatCell(value: String(format: "%.2f", totalAreaHectares), label: "Hectares")
                     Divider().frame(height: 32)
                     paddockStatCell(value: "\(totalRowsAcrossSelection)", label: "Rows")
-                    Divider().frame(height: 32)
-                    paddockStatCell(value: "\(totalVinesAcrossSelection)", label: "Vines")
                 }
                 .padding(.vertical, 10)
                 .background(Color(.secondarySystemGroupedBackground))
@@ -459,6 +458,51 @@ struct SprayCalculatorView: View {
         .sheet(isPresented: $showSprayPaddockPicker) {
             SprayPaddockPickerSheet(selectedIds: $selectedPaddockIds)
         }
+    }
+
+    /// Contiguous row-number ranges across the currently selected paddocks.
+    /// Sorted, deduplicated, and collapsed so e.g. [1,2,3,5,6] -> [(1,3),(5,6)].
+    private func contiguousRowRanges(_ numbers: [Int]) -> [(Int, Int)] {
+        let sorted = Array(Set(numbers)).sorted()
+        guard !sorted.isEmpty else { return [] }
+        var ranges: [(Int, Int)] = []
+        var start = sorted[0]
+        var prev = sorted[0]
+        for n in sorted.dropFirst() {
+            if n == prev + 1 { prev = n; continue }
+            ranges.append((start, prev))
+            start = n
+            prev = n
+        }
+        ranges.append((start, prev))
+        return ranges
+    }
+
+    /// Human-friendly row range across every selected paddock. Returns a
+    /// single "Rows lo–hi" string when contiguous, a comma-separated list
+    /// when there's room, or "Multiple row ranges" as a safe fallback.
+    private var selectedRowRangeSummary: String {
+        let nums = selectedPaddocks.flatMap { $0.rows.map(\.number) }
+        let ranges = contiguousRowRanges(nums)
+        guard !ranges.isEmpty else { return "Rows not set" }
+        if ranges.count == 1 {
+            let (lo, hi) = ranges[0]
+            return lo == hi ? "Row \(lo)" : "Rows \(lo)–\(hi)"
+        }
+        let parts = ranges.map { $0.0 == $0.1 ? "\($0.0)" : "\($0.0)–\($0.1)" }
+        let joined = "Rows " + parts.joined(separator: ", ")
+        return joined.count <= 48 ? joined : "Multiple row ranges"
+    }
+
+    /// Collapsed summary line shown in the paddock selector button after
+    /// selection, e.g. "2 paddocks · 2.04 ha · 46 rows · Rows 1–46".
+    private var collapsedPaddockSummary: String {
+        var parts: [String] = []
+        parts.append("\(selectedPaddockIds.count) paddock\(selectedPaddockIds.count == 1 ? "" : "s")")
+        parts.append(String(format: "%.2f ha", totalAreaHectares))
+        parts.append("\(totalRowsAcrossSelection) row\(totalRowsAcrossSelection == 1 ? "" : "s")")
+        parts.append(selectedRowRangeSummary)
+        return parts.joined(separator: " · ")
     }
 
     private func paddockStatCell(value: String, label: String) -> some View {
@@ -2434,6 +2478,19 @@ private struct SprayPaddockPickerSheet: View {
     @Binding var selectedIds: Set<UUID>
     @State private var searchText: String = ""
 
+    /// Per-row meta line: "1.20 ha · 12 rows · Rows 1–12". Falls back to
+    /// "Rows not set" when the paddock has no row geometry.
+    static func metaLine(for paddock: Paddock) -> String {
+        let ha = String(format: "%.2f ha", paddock.areaHectares)
+        let rowCount = paddock.rows.count
+        let nums = paddock.rows.map(\.number)
+        guard let lo = nums.min(), let hi = nums.max() else {
+            return "\(ha) · Rows not set"
+        }
+        let range = lo == hi ? "Row \(lo)" : "Rows \(lo)–\(hi)"
+        return "\(ha) · \(rowCount) row\(rowCount == 1 ? "" : "s") · \(range)"
+    }
+
     private var sortedPaddocks: [Paddock] {
         store.paddocks.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
@@ -2496,9 +2553,10 @@ private struct SprayPaddockPickerSheet: View {
                                             Text(paddock.name)
                                                 .font(.subheadline.weight(.semibold))
                                                 .foregroundStyle(.primary)
-                                            Text("\(paddock.rows.count) rows · \(String(format: "%.2f", paddock.areaHectares)) ha")
+                                            Text(SprayPaddockPickerSheet.metaLine(for: paddock))
                                                 .font(.caption)
                                                 .foregroundStyle(.secondary)
+                                                .lineLimit(2)
                                         }
                                         Spacer()
                                     }
