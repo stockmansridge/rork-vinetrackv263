@@ -6,6 +6,7 @@ struct ChemicalsManagementView: View {
     @State private var showAddSheet: Bool = false
     @State private var editingChemical: SavedChemical?
     @State private var searchText: String = ""
+    @State private var deleteCoordinator = ChemicalDeleteCoordinator()
 
     private var canManageSetup: Bool { accessControl?.canManageSetup ?? false }
 
@@ -43,9 +44,10 @@ struct ChemicalsManagementView: View {
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                     if canManageSetup {
                         Button(role: .destructive) {
-                            store.deleteSavedChemical(chemical)
+                            deleteCoordinator.pending = chemical
                         } label: {
-                            Label("Delete", systemImage: "trash")
+                            let inUse = store.isSavedChemicalInUseLocally(chemical.id)
+                            Label(inUse ? "Archive" : "Delete", systemImage: inUse ? "archivebox" : "trash")
                         }
                     }
                 }
@@ -81,6 +83,7 @@ struct ChemicalsManagementView: View {
         .sheet(item: $editingChemical) { chem in
             EditSavedChemicalSheet(chemical: chem)
         }
+        .chemicalDeletionActions(coordinator: deleteCoordinator, store: store)
     }
 }
 

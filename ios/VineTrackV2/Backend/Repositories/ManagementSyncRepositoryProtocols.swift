@@ -4,6 +4,30 @@ protocol SavedChemicalSyncRepositoryProtocol: Sendable {
     func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendSavedChemical]
     func upsertMany(_ items: [BackendSavedChemicalUpsert]) async throws
     func softDelete(id: UUID) async throws
+    /// Calls the `soft_delete_saved_chemicals` RPC and returns the structured result.
+    func softDeleteRPC(id: UUID) async throws -> SoftDeleteSavedChemicalResult
+    /// Calls the `hard_delete_unused_saved_chemical` RPC. Backend rejects when the
+    /// chemical has been used in any operational/historical record.
+    func hardDeleteUnused(id: UUID) async throws -> HardDeleteSavedChemicalResult
+}
+
+nonisolated struct SoftDeleteSavedChemicalResult: Decodable, Sendable {
+    let ok: Bool
+    let reason: String?
+    let archived: Bool?
+    let alreadyArchived: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, reason, archived
+        case alreadyArchived = "already_archived"
+    }
+}
+
+nonisolated struct HardDeleteSavedChemicalResult: Decodable, Sendable {
+    let ok: Bool
+    let deleted: Bool?
+    let reason: String?
+    let message: String?
 }
 
 protocol SavedSprayPresetSyncRepositoryProtocol: Sendable {

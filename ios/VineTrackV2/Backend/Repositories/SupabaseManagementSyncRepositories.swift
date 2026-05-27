@@ -37,6 +37,24 @@ final class SupabaseSavedChemicalSyncRepository: SavedChemicalSyncRepositoryProt
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         try await provider.client.rpc("soft_delete_saved_chemical", params: SoftDeleteByIdRequest(id: id)).execute()
     }
+
+    func softDeleteRPC(id: UUID) async throws -> SoftDeleteSavedChemicalResult {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let result: SoftDeleteSavedChemicalResult = try await provider.client
+            .rpc("soft_delete_saved_chemicals", params: SoftDeleteByIdRequest(id: id))
+            .execute()
+            .value
+        return result
+    }
+
+    func hardDeleteUnused(id: UUID) async throws -> HardDeleteSavedChemicalResult {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let result: HardDeleteSavedChemicalResult = try await provider.client
+            .rpc("hard_delete_unused_saved_chemical", params: SoftDeleteByIdRequest(id: id))
+            .execute()
+            .value
+        return result
+    }
 }
 
 // MARK: - Saved Spray Presets

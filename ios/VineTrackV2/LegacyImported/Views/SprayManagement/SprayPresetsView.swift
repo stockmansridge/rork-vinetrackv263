@@ -7,6 +7,7 @@ struct SprayPresetsView: View {
     @State private var showAddPreset: Bool = false
     @State private var editingChemical: SavedChemical?
     @State private var editingPreset: SavedSprayPreset?
+    @State private var deleteCoordinator = ChemicalDeleteCoordinator()
 
     private var canManageSetup: Bool { accessControl?.canManageSetup ?? false }
 
@@ -29,6 +30,7 @@ struct SprayPresetsView: View {
         .sheet(item: $editingPreset) { preset in
             EditSavedSprayPresetSheet(preset: preset)
         }
+        .chemicalDeletionActions(coordinator: deleteCoordinator, store: store)
     }
 
     private var chemicalsSection: some View {
@@ -46,9 +48,10 @@ struct SprayPresetsView: View {
                 .swipeActions(edge: .trailing) {
                     if canManageSetup {
                         Button(role: .destructive) {
-                            store.deleteSavedChemical(chemical)
+                            deleteCoordinator.pending = chemical
                         } label: {
-                            Label("Delete", systemImage: "trash")
+                            let inUse = store.isSavedChemicalInUseLocally(chemical.id)
+                            Label(inUse ? "Archive" : "Delete", systemImage: inUse ? "archivebox" : "trash")
                         }
                     }
                 }
@@ -224,6 +227,7 @@ struct EditSavedChemicalSheet: View {
     @State private var aiError: String?
     @State private var linkAlertMessage: String?
     @State private var showLinkAlert: Bool = false
+    @State private var deleteCoordinator = ChemicalDeleteCoordinator()
 
     private let existingPerHaRateId: UUID?
     private let existingPer100LRateId: UUID?
@@ -298,6 +302,9 @@ struct EditSavedChemicalSheet: View {
                 }
                 sharingSection
                 notesSection
+                if chemical != nil {
+                    dangerZoneSection
+                }
             }
             .navigationTitle(chemical == nil ? "New Chemical" : "Edit Chemical")
             .navigationBarTitleDisplayMode(.inline)
@@ -322,6 +329,10 @@ struct EditSavedChemicalSheet: View {
                 Button("OK", role: .cancel) {}
             } message: { msg in
                 Text(msg)
+            }
+            .chemicalDeletionActions(coordinator: deleteCoordinator, store: store)
+            .onChange(of: deleteCoordinator.didDeleteId) { _, newValue in
+                if newValue != nil { dismiss() }
             }
             .onChange(of: formType) { _, newValue in
                 if !newValue.units.contains(unit) {
@@ -489,6 +500,34 @@ struct EditSavedChemicalSheet: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    private var dangerZoneSection: some View {
+        Section {
+            if let chemical {
+                let inUseLocally = store.isSavedChemicalInUseLocally(chemical.id)
+                Button {
+                    deleteCoordinator.pending = chemical
+                } label: {
+                    Label("Archive Chemical", systemImage: "archivebox")
+                        .foregroundStyle(.orange)
+                }
+                .disabled(deleteCoordinator.isWorking)
+
+                if !inUseLocally {
+                    Button(role: .destructive) {
+                        deleteCoordinator.pending = chemical
+                    } label: {
+                        Label("Delete Permanently", systemImage: "trash")
+                    }
+                    .disabled(deleteCoordinator.isWorking)
+                }
+            }
+        } header: {
+            Text("Manage Chemical")
+        } footer: {
+            Text("Archiving hides the chemical from active lists but keeps it for historical records. Permanent delete is only available when this chemical has not been used in any spray records — the server makes the final decision.")
         }
     }
 

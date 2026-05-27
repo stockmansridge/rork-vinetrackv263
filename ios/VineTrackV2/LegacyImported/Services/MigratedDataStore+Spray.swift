@@ -46,6 +46,30 @@ extension MigratedDataStore {
         onSavedChemicalDeleted?(chemical.id)
     }
 
+    /// Removes the chemical from local state without queuing another remote
+    /// delete (used after the backend RPC has already archived/hard-deleted it).
+    func removeSavedChemicalLocallyOnly(_ id: UUID) {
+        guard let vineyardId = selectedVineyardId else { return }
+        guard savedChemicals.contains(where: { $0.id == id }) else { return }
+        savedChemicals.removeAll { $0.id == id }
+        sprayRepo.saveChemicalsSlice(savedChemicals, for: vineyardId)
+    }
+
+    /// Best-effort local check for whether a saved chemical has been used in
+    /// any spray record on this device. The Supabase RPC remains the final
+    /// authority — this is only used to decide whether to surface the
+    /// "Delete Permanently" option in the UI.
+    func isSavedChemicalInUseLocally(_ id: UUID) -> Bool {
+        for record in sprayRecords {
+            for tank in record.tanks {
+                if tank.chemicals.contains(where: { $0.savedChemicalId == id }) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
     func applyRemoteSavedChemicalUpsert(_ chemical: SavedChemical) {
         if selectedVineyardId == chemical.vineyardId {
             if let idx = savedChemicals.firstIndex(where: { $0.id == chemical.id }) {
