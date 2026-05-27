@@ -517,9 +517,16 @@ struct EditSavedChemicalSheet: View {
         aiError = nil
         aiLoading = true
         defer { aiLoading = false }
-        if name.isEmpty { name = result.name }
+        // Explicit user selection — replace the typed search text with the
+        // official product name and manufacturer returned by the lookup so
+        // spelling mistakes ('Syntirol' -> 'Syntiro') are corrected and the
+        // chemical is easier to find later. Other fields only fill when empty
+        // so existing manual edits are preserved.
+        let officialName = result.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !officialName.isEmpty { name = officialName }
+        let officialBrand = result.brand.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !officialBrand.isEmpty { manufacturer = officialBrand }
         if activeIngredient.isEmpty { activeIngredient = result.activeIngredient }
-        if manufacturer.isEmpty { manufacturer = result.brand }
         if chemicalGroup.isEmpty { chemicalGroup = result.chemicalGroup }
         if modeOfAction.isEmpty { modeOfAction = result.modeOfAction }
         if use.isEmpty { use = result.primaryUse }
@@ -527,9 +534,10 @@ struct EditSavedChemicalSheet: View {
 
         let country = ChemicalInfoService.resolveCountry(vineyardCountry: store.selectedVineyard?.country)
         do {
-            let info = try await ChemicalInfoService().lookupChemicalInfo(productName: result.name, country: country)
+            let info = try await ChemicalInfoService().lookupChemicalInfo(productName: officialName.isEmpty ? result.name : officialName, country: country)
             if activeIngredient.isEmpty { activeIngredient = info.activeIngredient }
-            if manufacturer.isEmpty { manufacturer = info.brand }
+            let infoBrand = info.brand.trimmingCharacters(in: .whitespacesAndNewlines)
+            if manufacturer.isEmpty, !infoBrand.isEmpty { manufacturer = infoBrand }
             if chemicalGroup.isEmpty { chemicalGroup = info.chemicalGroup }
             if labelURL.isEmpty { labelURL = LabelURLValidator.sanitize(info.labelURL) }
             if productURL.isEmpty, let p = info.productURL {
@@ -692,27 +700,31 @@ struct ChemicalAILookupSheet: View {
                 }
 
                 if !results.isEmpty {
-                    Section("Results") {
+                    Section {
                         ForEach(results) { item in
                             Button {
                                 onSelect(item)
                                 dismiss()
                             } label: {
-                                VStack(alignment: .leading, spacing: 3) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    // Manufacturer first, bold, most scannable.
+                                    if !item.brand.isEmpty {
+                                        Text(item.brand)
+                                            .font(.subheadline.weight(.bold))
+                                            .foregroundStyle(.primary)
+                                    }
+                                    // Official product name directly underneath.
                                     Text(item.name)
-                                        .font(.subheadline.weight(.medium))
-                                        .foregroundStyle(.primary)
+                                        .font(.subheadline)
+                                        .foregroundStyle(item.brand.isEmpty ? .primary : .secondary)
                                     if !item.activeIngredient.isEmpty {
-                                        Text(item.activeIngredient)
+                                        Text("Active: \(item.activeIngredient)")
                                             .font(.caption)
                                             .foregroundStyle(.secondary)
                                     }
                                     HStack(spacing: 6) {
-                                        if !item.brand.isEmpty {
-                                            Text(item.brand).font(.caption2).foregroundStyle(.tertiary)
-                                        }
                                         if !item.chemicalGroup.isEmpty {
-                                            Text("• \(item.chemicalGroup)").font(.caption2).foregroundStyle(.tertiary)
+                                            Text(item.chemicalGroup).font(.caption2).foregroundStyle(.tertiary)
                                         }
                                         if !item.modeOfAction.isEmpty {
                                             Text("• MOA \(item.modeOfAction)").font(.caption2).foregroundStyle(.tertiary)
@@ -724,9 +736,21 @@ struct ChemicalAILookupSheet: View {
                                             .foregroundStyle(.secondary)
                                             .lineLimit(2)
                                     }
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "sparkles")
+                                            .font(.caption2)
+                                        Text("Source: AI lookup")
+                                            .font(.caption2)
+                                    }
+                                    .foregroundStyle(.tertiary)
+                                    .padding(.top, 2)
                                 }
                             }
                         }
+                    } header: {
+                        Text("Results")
+                    } footer: {
+                        Text("You can search again if you do not see the right product. A second search may find additional chemicals or alternative product listings.")
                     }
                 }
             }
