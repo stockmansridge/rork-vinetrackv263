@@ -1,0 +1,880 @@
+import SwiftUI
+import CoreLocation
+import UIKit
+
+/// System Admin → Location Troubleshooter.
+///
+/// Diagnostic tool for GPS / vineyard / block / row alignment issues. Loads
+/// every vineyard + paddock the admin can see (not just the currently
+/// selected vineyard) and runs the same row-detection logic used in
+/// production (`RowGuidance`) against the live GPS fix so a field
+/// operator can confirm exactly what the app is "seeing" while
+/// standing in a row/path.
+///
+/// Access is gated by `SystemAdminService.isSystemAdmin`; the menu row
+/// in `BackendSettingsView` is only emitted for active platform admins.
+struct LocationTroubleshooterView: View {
+    @Environment(SystemAdminService.self) private var systemAdmin
+
+    @State private var location = LocationService()
+    @State private var isRunning: Bool = false
+    @State private var isLoadingPaddocks: Bool = false
+    @State private var loadError: String?
+    @State private var paddocks: [TroubleshooterPaddock] = []
+    @State private var samples: [DiagnosticSample] = []
+    @State private var sessionStartedAt: Date?
+    @State private var sessionEndedAt: Date?
+    @State private var shareItems: [Any] = []
+    @State private var isShowingShare: Bool = false
+
+    var body: some View {
+        Group {
+            if !systemAdmin.isSystemAdmin {
+                ContentUnavailableView(
+                    "System admin required",
+                    systemImage: "lock.shield",
+                    description: Text("Only platform administrators can use the Location Troubleshooter.")
+                )
+            } else {
+                content
+            }
+        }
+        .navigationTitle("Row Location Troubleshooter")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            await loadPaddocksIfNeeded()
+        }
+        .sheet(isPresented: $isShowingShare) {
+            ActivityShareSheet(activityItems: shareItems)
+        }
+    }
+
+    // MARK: - Main content
+
+    private var content: some View {
+        List {
+            controlSection
+            if let loadError {
+                Section {
+                    Label(loadError, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .font(.footnote)
+                }
+            }
+            if isRunning {
+                livePositionSection
+                detectedLocationSection
+                rowDiagnosisSection
+                captureSection
+            }
+            if !samples.isEmpty {
+                capturedPointsSection
+            }
+            if !samples.isEmpty || sessionStartedAt != nil {
+                exportSection
+            }
+            adminScopeSection
+        }
+        .listStyle(.insetGrouped)
+    }
+
+    // MARK: - Sections
+
+    private var controlSection: some View {
+        Section {
+            Toggle(isOn: Binding(
+                get: { isRunning },
+                set: { newValue in
+                    if newValue { startTroubleshooter() } else { stopTroubleshooter() }
+                }
+            )) {
+                Label(isRunning ? "Troubleshooter Running" : "Start Troubleshooter",
+                      systemImage: isRunning ? "dot.radiowaves.left.and.right" : "location.viewfinder")
+                    .font(.headline)
+            }
+            .tint(.purple)
+
+            if isLoadingPaddocks {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Loading vineyards & blocks…").font(.footnote).foregroundStyle(.secondary)
+                }
+            } else {
+                Text("\(paddocks.count) blocks loaded across \(uniqueVineyardCount) vineyards.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Diagnostic Session")
+        } footer: {
+            Text("Stand in the middle of a vineyard row or path, then capture a diagnostic point. Repeat in several rows to detect block-wide row-offset issues.")
+        }
+    }
+
+    private var livePositionSection: some View {
+        Section {
+            if let loc = location.location {
+                infoRow("Latitude", String(format: "%.6f", loc.coordinate.latitude))
+                infoRow("Longitude", String(format: "%.6f", loc.coordinate.longitude))
+                infoRow("Accuracy", String(format: "%.1f m (%@)", loc.horizontalAccuracy, accuracyLabel(loc.horizontalAccuracy)))
+                if loc.verticalAccuracy >= 0 {
+                    infoRow("Altitude", String(format: "%.1f m", loc.altitude))
+                }
+                if loc.speed >= 0 {
+                    infoRow("Speed", String(format: "%.2f m/s", loc.speed))
+                }
+                if loc.course >= 0 {
+                    infoRow("GPS course", String(format: "%.1f°", loc.course))
+                }
+                if let h = location.heading {
+                    infoRow("Compass heading", String(format: "%.1f°", h.trueHeading >= 0 ? h.trueHeading : h.magneticHeading))
+                }
+                infoRow("Timestamp", DiagnosticFormat.isoTimestamp(loc.timestamp))
+            } else {
+                Text("Waiting for GPS fix…").foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Live Position")
+        }
+    }
+
+    private var detectedLocationSection: some View {
+        Section {
+            if let interp = currentInterpretation {
+                if let vName = interp.vineyardName {
+                    infoRow("Vineyard", vName)
+                    if let vid = interp.vineyardId { infoRow("Vineyard ID", vid.uuidString) }
+                } else {
+                    Text("No vineyard match found near current position.").foregroundStyle(.secondary)
+                }
+                if let bName = interp.blockName {
+                    infoRow("Block / Paddock", bName)
+                    if let bid = interp.blockId { infoRow("Block ID", bid.uuidString) }
+                    infoRow("Inside boundary", interp.insideBlockBoundary ? "Yes" : "No")
+                    if !interp.insideBlockBoundary, let d = interp.distanceToBlockEdgeM {
+                        infoRow("Distance to block", String(format: "%.1f m", d))
+                    }
+                }
+            } else {
+                Text("Waiting for GPS fix…").foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Detected Location")
+        }
+    }
+
+    private var rowDiagnosisSection: some View {
+        Section {
+            if let interp = currentInterpretation, let row = interp.nearestRowNumber {
+                infoRow("Closest row / path", DiagnosticFormat.rowLabel(row))
+                if let off = interp.distanceFromRowCentreM {
+                    let side = interp.detectedSide ?? "—"
+                    infoRow("Offset from centre", String(format: "%.2f m (%@)", off, side))
+                }
+                if let s = interp.snappedLatitude, let sl = interp.snappedLongitude {
+                    infoRow("Snapped position", String(format: "%.6f, %.6f", s, sl))
+                }
+                if let along = interp.alongRowDistanceM {
+                    infoRow("Along-row distance", String(format: "%.1f m", along))
+                }
+                if let rh = interp.rowHeadingDegrees {
+                    infoRow("Row heading", String(format: "%.1f°", rh))
+                }
+                if let dir = interp.interpretedDirection {
+                    infoRow("Travel direction", dir)
+                }
+                if let hd = interp.headingDifferenceDegrees {
+                    infoRow("Heading vs row", String(format: "%.1f°", hd))
+                }
+                if let suggestion = interp.suggestedCorrection {
+                    Label(suggestion, systemImage: "arrow.left.and.right")
+                        .font(.footnote)
+                        .foregroundStyle(.blue)
+                }
+                Label(interp.confidenceLabel, systemImage: interp.confidenceIcon)
+                    .font(.footnote)
+                    .foregroundStyle(interp.confidenceColor)
+            } else {
+                Text("No row data yet.").foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Row Diagnosis")
+        }
+    }
+
+    private var captureSection: some View {
+        Section {
+            Button {
+                captureDiagnosticPoint()
+            } label: {
+                Label("Capture Diagnostic Point", systemImage: "scope")
+                    .font(.headline)
+            }
+            .disabled(currentInterpretation == nil)
+        } footer: {
+            Text("Capture multiple points while standing in the middle of different rows. Points with GPS accuracy above 6 m are flagged as low-confidence.")
+        }
+    }
+
+    private var capturedPointsSection: some View {
+        Section {
+            ForEach(Array(samples.enumerated()), id: \.element.id) { idx, sample in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Point \(idx + 1)").font(.subheadline.weight(.semibold))
+                        Spacer()
+                        Text(DiagnosticFormat.shortTime(sample.timestamp)).font(.caption).foregroundStyle(.secondary)
+                    }
+                    let row = sample.nearestRowNumber.map(DiagnosticFormat.rowLabel) ?? "—"
+                    let offset: String = {
+                        if let d = sample.distanceFromRowCentreM {
+                            return String(format: "%.2f m %@", d, sample.detectedSide ?? "")
+                        }
+                        return "—"
+                    }()
+                    Text("Row \(row) · \(offset) · Acc \(String(format: "%.1f m", sample.horizontalAccuracyM))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let block = sample.detectedBlockName {
+                        Text(block).font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .onDelete { offsets in
+                samples.remove(atOffsets: offsets)
+            }
+        } header: {
+            Text("Captured Points (\(samples.count))")
+        }
+    }
+
+    private var exportSection: some View {
+        Section {
+            Button {
+                exportLog()
+            } label: {
+                Label("Export Troubleshooter Log", systemImage: "square.and.arrow.up")
+            }
+            .disabled(samples.isEmpty)
+
+            Button(role: .destructive) {
+                clearSession()
+            } label: {
+                Label("Clear Session", systemImage: "trash")
+            }
+        }
+    }
+
+    private var adminScopeSection: some View {
+        Section {
+            HStack {
+                Text("Vineyards loaded")
+                Spacer()
+                Text("\(uniqueVineyardCount)").foregroundStyle(.secondary)
+            }
+            HStack {
+                Text("Blocks loaded")
+                Spacer()
+                Text("\(paddocks.count)").foregroundStyle(.secondary)
+            }
+            Button {
+                Task { await loadPaddocks(force: true) }
+            } label: {
+                Label("Reload admin geometry", systemImage: "arrow.clockwise")
+            }
+        } header: {
+            Text("Admin Scope")
+        } footer: {
+            Text("Diagnostic-only: this screen evaluates against every vineyard the admin can access, not the currently selected vineyard.")
+        }
+    }
+
+    // MARK: - Lifecycle
+
+    private func startTroubleshooter() {
+        if location.authorizationStatus == .notDetermined {
+            location.requestPermission()
+        }
+        location.startUpdating()
+        sessionStartedAt = sessionStartedAt ?? Date()
+        sessionEndedAt = nil
+        isRunning = true
+        Task { await loadPaddocksIfNeeded() }
+    }
+
+    private func stopTroubleshooter() {
+        location.stopUpdating()
+        sessionEndedAt = Date()
+        isRunning = false
+    }
+
+    private func loadPaddocksIfNeeded() async {
+        guard paddocks.isEmpty else { return }
+        await loadPaddocks(force: false)
+    }
+
+    private func loadPaddocks(force: Bool) async {
+        guard systemAdmin.isSystemAdmin else { return }
+        if isLoadingPaddocks { return }
+        isLoadingPaddocks = true
+        loadError = nil
+        defer { isLoadingPaddocks = false }
+        do {
+            let repo = SupabaseAdminRepository()
+            let rows = try await repo.fetchAllPaddocks()
+            paddocks = rows.compactMap { TroubleshooterPaddock(vineyard: $0.vineyard, paddock: $0.paddock) }
+        } catch {
+            loadError = "Could not load admin geometry: \(error.localizedDescription)"
+        }
+    }
+
+    private func clearSession() {
+        samples = []
+        sessionStartedAt = nil
+        sessionEndedAt = nil
+    }
+
+    // MARK: - Live interpretation
+
+    private var currentInterpretation: LiveInterpretation? {
+        guard let loc = location.location else { return nil }
+        return LocationTroubleshooterEngine.interpret(
+            location: loc,
+            heading: location.heading,
+            paddocks: paddocks
+        )
+    }
+
+    private var uniqueVineyardCount: Int {
+        Set(paddocks.map { $0.vineyardId }).count
+    }
+
+    // MARK: - Capture
+
+    private func captureDiagnosticPoint() {
+        guard let loc = location.location else { return }
+        let interp = LocationTroubleshooterEngine.interpret(
+            location: loc,
+            heading: location.heading,
+            paddocks: paddocks
+        )
+        let sample = DiagnosticSample(
+            id: UUID(),
+            timestamp: loc.timestamp,
+            latitude: loc.coordinate.latitude,
+            longitude: loc.coordinate.longitude,
+            horizontalAccuracyM: loc.horizontalAccuracy,
+            altitude: loc.verticalAccuracy >= 0 ? loc.altitude : nil,
+            speedMps: loc.speed >= 0 ? loc.speed : nil,
+            gpsCourseDegrees: loc.course >= 0 ? loc.course : nil,
+            compassHeadingDegrees: location.heading.map { $0.trueHeading >= 0 ? $0.trueHeading : $0.magneticHeading },
+            detectedVineyardId: interp?.vineyardId,
+            detectedVineyardName: interp?.vineyardName,
+            detectedBlockId: interp?.blockId,
+            detectedBlockName: interp?.blockName,
+            insideBlockBoundary: interp?.insideBlockBoundary ?? false,
+            nearestRowNumber: interp?.nearestRowNumber,
+            snappedLatitude: interp?.snappedLatitude,
+            snappedLongitude: interp?.snappedLongitude,
+            distanceFromRowCentreM: interp?.distanceFromRowCentreM,
+            alongRowDistanceM: interp?.alongRowDistanceM,
+            detectedSide: interp?.detectedSide,
+            interpretedDirection: interp?.interpretedDirection,
+            rowHeadingDegrees: interp?.rowHeadingDegrees,
+            headingDifferenceDegrees: interp?.headingDifferenceDegrees,
+            confidence: interp?.confidence ?? .low,
+            diagnosticNotes: interp?.suggestedCorrection
+        )
+        samples.append(sample)
+    }
+
+    // MARK: - Export
+
+    private func exportLog() {
+        let session = DiagnosticSession(
+            sessionStartedAt: sessionStartedAt ?? Date(),
+            sessionEndedAt: sessionEndedAt ?? Date(),
+            appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?",
+            deviceModel: UIDevice.current.model,
+            iosVersion: UIDevice.current.systemVersion,
+            vineyardCountAvailableToAdmin: uniqueVineyardCount,
+            sampleCount: samples.count,
+            samples: samples
+        )
+        var items: [Any] = []
+        if let jsonURL = try? writeJSON(session: session) { items.append(jsonURL) }
+        if let txtURL = try? writeTXT(session: session) { items.append(txtURL) }
+        guard !items.isEmpty else { return }
+        shareItems = items
+        isShowingShare = true
+    }
+
+    private func writeJSON(session: DiagnosticSession) throws -> URL {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(session)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("location-troubleshooter-\(Int(Date().timeIntervalSince1970)).json")
+        try data.write(to: url, options: .atomic)
+        return url
+    }
+
+    private func writeTXT(session: DiagnosticSession) throws -> URL {
+        let txt = DiagnosticReport.render(session: session)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("location-troubleshooter-\(Int(Date().timeIntervalSince1970)).txt")
+        try txt.data(using: .utf8)?.write(to: url, options: .atomic)
+        return url
+    }
+
+    // MARK: - Helpers
+
+    private func infoRow(_ title: String, _ value: String) -> some View {
+        HStack {
+            Text(title).foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .font(.callout.monospacedDigit())
+                .multilineTextAlignment(.trailing)
+                .lineLimit(2)
+        }
+    }
+
+    private func accuracyLabel(_ acc: Double) -> String {
+        if acc < 0 { return "invalid" }
+        switch acc {
+        case ..<2: return "Excellent"
+        case ..<4: return "Good"
+        case ..<6: return "Acceptable"
+        default: return "Poor"
+        }
+    }
+}
+
+// MARK: - Models
+
+/// In-memory paddock view used by the troubleshooter. We carry the
+/// vineyard name + a synthetic `Paddock` so we can reuse `RowGuidance`
+/// directly without changing production code.
+private struct TroubleshooterPaddock: Identifiable, Hashable {
+    let id: UUID
+    let vineyardId: UUID
+    let vineyardName: String
+    let paddock: Paddock
+
+    init?(vineyard: AdminVineyardRow, paddock row: AdminVineyardPaddockRow) {
+        guard !row.polygonPoints.isEmpty || !row.rows.isEmpty else { return nil }
+        self.id = row.id
+        self.vineyardId = row.vineyardId
+        self.vineyardName = vineyard.name
+        self.paddock = Paddock(
+            id: row.id,
+            vineyardId: row.vineyardId,
+            name: row.name,
+            polygonPoints: row.polygonPoints,
+            rows: row.rows,
+            rowDirection: row.rowDirection ?? 0,
+            rowWidth: row.rowWidth ?? 2.5,
+            rowOffset: 0,
+            vineSpacing: row.vineSpacing ?? 1.0
+        )
+    }
+}
+
+private enum DiagnosticConfidence: String, Codable {
+    case high
+    case medium
+    case low
+}
+
+private struct LiveInterpretation {
+    let vineyardId: UUID?
+    let vineyardName: String?
+    let blockId: UUID?
+    let blockName: String?
+    let insideBlockBoundary: Bool
+    let distanceToBlockEdgeM: Double?
+    let nearestRowNumber: Double?
+    let snappedLatitude: Double?
+    let snappedLongitude: Double?
+    let distanceFromRowCentreM: Double?
+    let alongRowDistanceM: Double?
+    let detectedSide: String?
+    let interpretedDirection: String?
+    let rowHeadingDegrees: Double?
+    let headingDifferenceDegrees: Double?
+    let confidence: DiagnosticConfidence
+    let suggestedCorrection: String?
+
+    var confidenceLabel: String {
+        switch confidence {
+        case .high: return "Confidence: high"
+        case .medium: return "Confidence: medium"
+        case .low: return "Confidence: low — GPS accuracy too poor to trust row offset"
+        }
+    }
+    var confidenceIcon: String {
+        switch confidence {
+        case .high: return "checkmark.seal.fill"
+        case .medium: return "exclamationmark.circle"
+        case .low: return "exclamationmark.triangle.fill"
+        }
+    }
+    var confidenceColor: Color {
+        switch confidence {
+        case .high: return .green
+        case .medium: return .orange
+        case .low: return .red
+        }
+    }
+}
+
+private struct DiagnosticSample: Codable, Identifiable, Hashable {
+    let id: UUID
+    let timestamp: Date
+    let latitude: Double
+    let longitude: Double
+    let horizontalAccuracyM: Double
+    let altitude: Double?
+    let speedMps: Double?
+    let gpsCourseDegrees: Double?
+    let compassHeadingDegrees: Double?
+    let detectedVineyardId: UUID?
+    let detectedVineyardName: String?
+    let detectedBlockId: UUID?
+    let detectedBlockName: String?
+    let insideBlockBoundary: Bool
+    let nearestRowNumber: Double?
+    let snappedLatitude: Double?
+    let snappedLongitude: Double?
+    let distanceFromRowCentreM: Double?
+    let alongRowDistanceM: Double?
+    let detectedSide: String?
+    let interpretedDirection: String?
+    let rowHeadingDegrees: Double?
+    let headingDifferenceDegrees: Double?
+    let confidence: DiagnosticConfidence
+    let diagnosticNotes: String?
+}
+
+private struct DiagnosticSession: Codable {
+    let sessionStartedAt: Date
+    let sessionEndedAt: Date
+    let appVersion: String
+    let deviceModel: String
+    let iosVersion: String
+    let vineyardCountAvailableToAdmin: Int
+    let sampleCount: Int
+    let samples: [DiagnosticSample]
+}
+
+// MARK: - Engine
+
+/// All diagnostic-only math. Production row snapping still goes through
+/// `RowGuidance` directly; this engine just calls into it and augments
+/// the result with side/direction/offset suggestions.
+private enum LocationTroubleshooterEngine {
+    static let lowConfidenceAccuracyThresholdM: Double = 6.0
+    static let mediumConfidenceAccuracyThresholdM: Double = 4.0
+    static let recommendedOffsetThresholdM: Double = 0.5
+
+    static func interpret(
+        location: CLLocation,
+        heading: CLHeading?,
+        paddocks: [TroubleshooterPaddock]
+    ) -> LiveInterpretation? {
+        let coord = location.coordinate
+
+        // 1. Block detection (containing or nearest by centroid).
+        var containingPaddock: TroubleshooterPaddock?
+        for p in paddocks {
+            let polygon = p.paddock.polygonPoints.map { $0.coordinate }
+            if polygon.count >= 3,
+               RowGuidance.isPointInPolygon(point: coord, polygon: polygon) {
+                containingPaddock = p
+                break
+            }
+        }
+
+        var detectedPaddock: TroubleshooterPaddock?
+        var insideBoundary = false
+        var distanceToEdge: Double?
+
+        if let containing = containingPaddock {
+            detectedPaddock = containing
+            insideBoundary = true
+        } else {
+            // Pick nearest paddock by centroid across all admin vineyards.
+            var best: (TroubleshooterPaddock, Double)?
+            for p in paddocks where !p.paddock.polygonPoints.isEmpty {
+                let centroid = RowGuidance.polygonCentroid(p.paddock.polygonPoints.map { $0.coordinate })
+                let d = RowGuidance.metresBetween(centroid, coord)
+                if best == nil || d < (best?.1 ?? .greatestFiniteMagnitude) {
+                    best = (p, d)
+                }
+            }
+            detectedPaddock = best?.0
+            distanceToEdge = best?.1
+        }
+
+        // 2. Row detection inside the chosen paddock.
+        var nearestRowNumber: Double?
+        var snappedLat: Double?
+        var snappedLon: Double?
+        var distanceFromCentre: Double?
+        var alongRow: Double?
+        var detectedSide: String?
+        var rowHeading: Double?
+        var headingDiff: Double?
+        var interpretedDirection: String?
+        var suggestion: String?
+
+        if let p = detectedPaddock,
+           let match = RowGuidance.nearestRow(for: coord, in: p.paddock) {
+            nearestRowNumber = match.rowNumber
+            distanceFromCentre = match.distance
+
+            if let row = p.paddock.rows.first(where: { Double($0.number) == match.rowNumber }) {
+                let start = row.startPoint.coordinate
+                let end = row.endPoint.coordinate
+                rowHeading = bearingDegrees(from: start, to: end)
+                if let snap = RowGuidance.snapToRow(coordinate: coord, rowNumber: row.number, in: p.paddock) {
+                    snappedLat = snap.snapped.latitude
+                    snappedLon = snap.snapped.longitude
+                    alongRow = snap.distanceAlongMetres
+                }
+                detectedSide = sideOfRow(point: coord, start: start, end: end)
+                if let h = heading?.trueHeading, h >= 0, let rh = rowHeading {
+                    headingDiff = abs(angularDifference(h, rh))
+                    interpretedDirection = compassDirection(for: h)
+                }
+                if let off = distanceFromCentre,
+                   off >= recommendedOffsetThresholdM,
+                   let side = detectedSide,
+                   side != "centre" {
+                    suggestion = String(
+                        format: "Rows appear shifted %.1f m %@. Consider an offset correction of ~%.1f m %@.",
+                        off, side, off, opposite(side)
+                    )
+                }
+            }
+        }
+
+        // 3. Confidence.
+        let acc = location.horizontalAccuracy
+        let confidence: DiagnosticConfidence
+        if acc < 0 {
+            confidence = .low
+        } else if acc <= mediumConfidenceAccuracyThresholdM {
+            confidence = .high
+        } else if acc <= lowConfidenceAccuracyThresholdM {
+            confidence = .medium
+        } else {
+            confidence = .low
+        }
+
+        return LiveInterpretation(
+            vineyardId: detectedPaddock?.vineyardId,
+            vineyardName: detectedPaddock?.vineyardName,
+            blockId: detectedPaddock?.paddock.id,
+            blockName: detectedPaddock?.paddock.name,
+            insideBlockBoundary: insideBoundary,
+            distanceToBlockEdgeM: distanceToEdge,
+            nearestRowNumber: nearestRowNumber,
+            snappedLatitude: snappedLat,
+            snappedLongitude: snappedLon,
+            distanceFromRowCentreM: distanceFromCentre,
+            alongRowDistanceM: alongRow,
+            detectedSide: detectedSide,
+            interpretedDirection: interpretedDirection,
+            rowHeadingDegrees: rowHeading,
+            headingDifferenceDegrees: headingDiff,
+            confidence: confidence,
+            suggestedCorrection: suggestion
+        )
+    }
+
+    private static func bearingDegrees(
+        from a: CLLocationCoordinate2D,
+        to b: CLLocationCoordinate2D
+    ) -> Double {
+        let lat1 = a.latitude * .pi / 180
+        let lat2 = b.latitude * .pi / 180
+        let dLon = (b.longitude - a.longitude) * .pi / 180
+        let y = sin(dLon) * cos(lat2)
+        let x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
+        var deg = atan2(y, x) * 180 / .pi
+        if deg < 0 { deg += 360 }
+        return deg
+    }
+
+    private static func angularDifference(_ a: Double, _ b: Double) -> Double {
+        var d = (a - b).truncatingRemainder(dividingBy: 360)
+        if d > 180 { d -= 360 }
+        if d < -180 { d += 360 }
+        return d
+    }
+
+    private static func compassDirection(for heading: Double) -> String {
+        let dirs = ["northbound", "northeastbound", "eastbound", "southeastbound",
+                    "southbound", "southwestbound", "westbound", "northwestbound"]
+        let i = Int(((heading + 22.5).truncatingRemainder(dividingBy: 360)) / 45)
+        return dirs[max(0, min(7, i))]
+    }
+
+    /// Returns "east" / "west" / "centre" relative to the row centreline,
+    /// using the row direction's perpendicular as the east/west axis. This
+    /// is an approximation: "east" means positive cross-track in the
+    /// row-perpendicular frame, "west" negative. It's stable enough for
+    /// diagnostics across a single block.
+    private static func sideOfRow(
+        point p: CLLocationCoordinate2D,
+        start a: CLLocationCoordinate2D,
+        end b: CLLocationCoordinate2D
+    ) -> String {
+        let centroidLat = (a.latitude + b.latitude + p.latitude) / 3.0
+        let mPerDegLat = 111_320.0
+        let mPerDegLon = 111_320.0 * cos(centroidLat * .pi / 180.0)
+        let ax = a.longitude * mPerDegLon
+        let ay = a.latitude * mPerDegLat
+        let bx = b.longitude * mPerDegLon
+        let by = b.latitude * mPerDegLat
+        let px = p.longitude * mPerDegLon
+        let py = p.latitude * mPerDegLat
+        let cross = (bx - ax) * (py - ay) - (by - ay) * (px - ax)
+        if abs(cross) < 0.25 { return "centre" }
+        return cross > 0 ? "west" : "east"
+    }
+
+    private static func opposite(_ side: String) -> String {
+        switch side {
+        case "east": return "west"
+        case "west": return "east"
+        case "north": return "south"
+        case "south": return "north"
+        default: return side
+        }
+    }
+}
+
+// MARK: - Formatting
+
+private enum DiagnosticFormat {
+    static let iso: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+    static let short: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f
+    }()
+    static let humanDateTime: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm"
+        return f
+    }()
+
+    static func isoTimestamp(_ date: Date) -> String { iso.string(from: date) }
+    static func shortTime(_ date: Date) -> String { short.string(from: date) }
+
+    /// Row 19 → "19". Row 19.5 → "19.5". Used in the captured-points list.
+    static func rowLabel(_ row: Double) -> String {
+        if row.rounded() == row { return String(Int(row)) }
+        return String(format: "%.1f", row)
+    }
+}
+
+private enum DiagnosticReport {
+    static func render(session: DiagnosticSession) -> String {
+        var lines: [String] = []
+        lines.append("VineTrack Location Troubleshooter Log")
+        lines.append("")
+        lines.append("Session started: \(DiagnosticFormat.humanDateTime.string(from: session.sessionStartedAt))")
+        lines.append("Session ended:   \(DiagnosticFormat.humanDateTime.string(from: session.sessionEndedAt))")
+        lines.append("App version:     \(session.appVersion)")
+        lines.append("Device:          \(session.deviceModel) (iOS \(session.iosVersion))")
+        lines.append("Admin scope:     \(session.vineyardCountAvailableToAdmin) vineyards")
+        lines.append("Sample count:    \(session.sampleCount)")
+        lines.append("")
+
+        // Detected vineyard/block summary from majority of samples.
+        let vineyardName = mostCommon(session.samples.compactMap { $0.detectedVineyardName }) ?? "—"
+        let blockName = mostCommon(session.samples.compactMap { $0.detectedBlockName }) ?? "—"
+        lines.append("Detected vineyard: \(vineyardName)")
+        lines.append("Detected block:    \(blockName)")
+        lines.append("")
+
+        if let summary = offsetSummary(samples: session.samples) {
+            lines.append("Potential issue:")
+            lines.append(summary)
+            lines.append("")
+        }
+
+        lines.append("Samples:")
+        for (idx, s) in session.samples.enumerated() {
+            lines.append("")
+            lines.append("\(idx + 1). Time: \(DiagnosticFormat.shortTime(s.timestamp))")
+            lines.append("   GPS: \(String(format: "%.6f, %.6f", s.latitude, s.longitude))")
+            lines.append("   Accuracy: \(String(format: "%.1f m", s.horizontalAccuracyM)) (\(s.confidence.rawValue))")
+            if let r = s.nearestRowNumber {
+                lines.append("   Detected row: \(DiagnosticFormat.rowLabel(r))")
+            }
+            if let d = s.distanceFromRowCentreM {
+                let side = s.detectedSide ?? "—"
+                lines.append("   Distance from row centre: \(String(format: "%.2f", d)) m \(side)")
+            }
+            if let dir = s.interpretedDirection { lines.append("   Direction: \(dir)") }
+            if let block = s.detectedBlockName { lines.append("   Block: \(block)") }
+            if let v = s.detectedVineyardName { lines.append("   Vineyard: \(v)") }
+            if let note = s.diagnosticNotes { lines.append("   Note: \(note)") }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func mostCommon(_ values: [String]) -> String? {
+        guard !values.isEmpty else { return nil }
+        var counts: [String: Int] = [:]
+        for v in values { counts[v, default: 0] += 1 }
+        return counts.max(by: { $0.value < $1.value })?.key
+    }
+
+    private static func offsetSummary(samples: [DiagnosticSample]) -> String? {
+        let trustworthy = samples.filter {
+            $0.horizontalAccuracyM > 0
+                && $0.horizontalAccuracyM <= LocationTroubleshooterEngine.lowConfidenceAccuracyThresholdM
+                && $0.distanceFromRowCentreM != nil
+                && $0.detectedSide != nil
+                && $0.detectedSide != "centre"
+        }
+        guard trustworthy.count >= 2 else { return nil }
+        let sides = trustworthy.compactMap { $0.detectedSide }
+        var sideCounts: [String: Int] = [:]
+        for s in sides { sideCounts[s, default: 0] += 1 }
+        guard let dominantSide = sideCounts.max(by: { $0.value < $1.value })?.key else { return nil }
+        let matching = trustworthy.filter { $0.detectedSide == dominantSide }
+        guard matching.count >= 2 else { return nil }
+        let offsets = matching.compactMap { $0.distanceFromRowCentreM }
+        guard let lo = offsets.min(), let hi = offsets.max() else { return nil }
+        let avg = offsets.reduce(0, +) / Double(offsets.count)
+        let opposite: String = dominantSide == "east" ? "west" : (dominantSide == "west" ? "east" : dominantSide)
+        return String(
+            format: "Across %d trustworthy samples, the app consistently detected the user as %.1f m to %.1f m %@ of the expected row centreline (avg %.1f m). This suggests the block row geometry may need an offset correction of approximately %.1f m %@, or the row generation / snap algorithm may be using the wrong boundary reference.",
+            matching.count, lo, hi, dominantSide, avg, avg, opposite
+        )
+    }
+}
+
+// MARK: - Share sheet
+
+private struct ActivityShareSheet: UIViewControllerRepresentable {
+    let activityItems: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ vc: UIActivityViewController, context: Context) {}
+}

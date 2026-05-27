@@ -446,6 +446,16 @@ struct BackendSettingsView: View {
                 )
             }
             NavigationLink {
+                LocationTroubleshooterView()
+            } label: {
+                SettingsRow(
+                    title: "Location Troubleshooter",
+                    subtitle: "Diagnose GPS, block, row snap & offset issues",
+                    symbol: "scope",
+                    color: .purple
+                )
+            }
+            NavigationLink {
                 AlertDiagnosticsView()
             } label: {
                 SettingsRow(
