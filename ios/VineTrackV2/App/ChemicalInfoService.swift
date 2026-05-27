@@ -1,7 +1,12 @@
 import Foundation
 
 nonisolated enum LabelURLValidator {
-    static func sanitize(_ raw: String) -> String {
+    /// Sanitises a stored label URL. Strips known placeholder hosts and
+    /// (when `requireDocumentPath` is true) brand homepages that the AI used
+    /// to suggest as "labels". User-pasted URLs go through with
+    /// `requireDocumentPath = false` so the operator can save any reachable
+    /// link they trust.
+    static func sanitize(_ raw: String, requireDocumentPath: Bool = false) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
         guard let url = URL(string: trimmed), let host = url.host?.lowercased() else { return "" }
@@ -20,6 +25,11 @@ nonisolated enum LabelURLValidator {
         ]
         if placeholderHosts.contains(host) { return "" }
         if !host.contains(".") { return "" }
+        if requireDocumentPath {
+            let path = url.path
+            // Brand homepage / root URLs are never a valid label.
+            if path.isEmpty || path == "/" { return "" }
+        }
         return trimmed
     }
 }
@@ -33,7 +43,15 @@ nonisolated struct ChemicalInfoResponse: Codable, Sendable {
     let activeIngredient: String
     let brand: String
     let chemicalGroup: String
+    /// Server-validated direct URL to the official product label / SDS PDF.
+    /// Empty when the AI was not confident and/or the URL failed live
+    /// reachability validation on the edge function.
     let labelURL: String
+    /// Optional manufacturer product/marketing page. Distinct from labelURL;
+    /// never shown as a "Label" link in the UI.
+    let productURL: String?
+    /// Optional direct Safety Data Sheet URL (validated).
+    let sdsURL: String?
     let primaryUse: String
     let ratesPerHectare: [ChemicalRateInfo]?
     let ratesPer100L: [ChemicalRateInfo]?

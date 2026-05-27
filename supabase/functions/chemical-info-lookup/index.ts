@@ -81,12 +81,12 @@ function buildInfoPrompt(productName: string, country: string): {
   user: string;
 } {
   const system =
-    "You are an agricultural and viticultural input database expert covering crop protection, fertilisers, foliar nutrients, biostimulants (amino acid, seaweed, humic), adjuvants, and biological controls from both major and small specialty manufacturers globally (including niche Australian/NZ brands like Switch AG, AgNova, Grochem, Campbells, Omnia, Stoller). You respond ONLY with valid JSON, no markdown, no explanation, no code fences.";
+    "You are an agricultural and viticultural input database expert covering crop protection, fertilisers, foliar nutrients, biostimulants (amino acid, seaweed, humic), adjuvants, and biological controls from both major and small specialty manufacturers globally (including niche Australian/NZ brands like Switch AG, AgNova, Grochem, Campbells, Omnia, Stoller). You respond ONLY with valid JSON, no markdown, no explanation, no code fences. CRITICAL: You must NEVER fabricate, guess, or construct URLs. URLs are validated against the live web after you respond and hallucinated URLs are dropped — but they also waste user trust. Default to empty strings for any URL you are not 100% certain exists.";
   const countryContext = country
-    ? ` IMPORTANT: The vineyard is located in ${country}. You MUST use the ${country}-registered version of this product. Provide ${country}-specific brand name, label rates, label URL, and regulatory data. If the product has a different brand name in ${country}, use the ${country} brand name.`
+    ? ` IMPORTANT: The vineyard is located in ${country}. You MUST use the ${country}-registered version of this product. Provide ${country}-specific brand name and label rates. If the product has a different brand name in ${country}, use the ${country} brand name.`
     : "";
   const user = `Provide details for the agricultural product "${productName}".${countryContext} Find the closest match if exact name not found. Include recommended application rates for vineyard/viticultural use where available. Return as JSON:
-{"activeIngredient":"active ingredient(s)","brand":"manufacturer","chemicalGroup":"group classification","labelURL":"Direct URL to the official product label or SDS PDF on the manufacturer's or registrant's website. MUST be a real, verifiable URL you are confident exists. Return an empty string if you do not know the exact URL. NEVER use placeholder, example, or fabricated URLs (e.g. example.com, example.org, placeholder.com, yourdomain.com, manufacturer.com). If unsure, return an empty string.","primaryUse":"primary use in vineyard e.g. Downy Mildew control, Nitrogen fertiliser, Botrytis prevention","formType":"liquid or solid","modeOfAction":"MOA classification - REQUIRED for all crop protection products. Use the official resistance management code with a short name, e.g. \"11 (QoI / Strobilurin)\", \"3 (DMI / Triazole)\", \"M5 (Multi-site / Chlorothalonil)\", \"4A (Neonicotinoid)\". Use FRAC for fungicides, HRAC for herbicides, IRAC for insecticides/miticides. Always look up and provide MOA — do NOT leave blank for crop protection products. Only return empty string for pure biostimulants, fertilisers, adjuvants, or surfactants where MOA does not apply.","ratesPerHectare":[{"label":"Standard rate","value":1.5}],"ratesPer100L":[{"label":"Standard rate","value":0.15}]}
+{"activeIngredient":"active ingredient(s)","brand":"manufacturer","chemicalGroup":"group classification","labelURL":"STRICT: Direct https URL to the OFFICIAL product LABEL document (PDF strongly preferred) hosted by the manufacturer, registrant, or a national regulator (APVMA, EPA, ACVM, EU register). MUST point directly at the label/SDS file, NOT a product marketing page, NOT a brand homepage, NOT a category/search page. If you cannot recall the exact label file URL with certainty, return an empty string. NEVER construct URLs from product names. NEVER guess paths like /products/<slug>. NEVER use example.com, placeholder.com, manufacturer.com, etc. When in doubt: empty string.","productURL":"Optional. The manufacturer's product information page (marketing/landing page) if you are confident the URL exists. Empty string if unsure. This is separate from labelURL and must NEVER be returned as labelURL.","sdsURL":"Optional. Direct https URL to the official Safety Data Sheet PDF if you are certain it exists. Empty string if unsure.","primaryUse":"primary use in vineyard e.g. Downy Mildew control, Nitrogen fertiliser, Botrytis prevention","formType":"liquid or solid","modeOfAction":"MOA classification - REQUIRED for all crop protection products. Use the official resistance management code with a short name, e.g. \"11 (QoI / Strobilurin)\", \"3 (DMI / Triazole)\", \"M5 (Multi-site / Chlorothalonil)\", \"4A (Neonicotinoid)\". Use FRAC for fungicides, HRAC for herbicides, IRAC for insecticides/miticides. Always look up and provide MOA — do NOT leave blank for crop protection products. Only return empty string for pure biostimulants, fertilisers, adjuvants, or surfactants where MOA does not apply.","ratesPerHectare":[{"label":"Standard rate","value":1.5}],"ratesPer100L":[{"label":"Standard rate","value":0.15}]}
 IMPORTANT: The "formType" field must be either "liquid" or "solid". Determine this from the product's physical form. Liquid products (EC, SC, SL, SE, EW, flowables, suspension concentrates, emulsifiable concentrates, soluble liquids) should be "liquid". Solid products (WG, WDG, WP, DF, granules, wettable powders, dry flowables, water dispersible granules) should be "solid".
 The ratesPerHectare array should contain recommended rates per hectare. For liquid products, values must be in Litres (L). For solid products, values must be in Kilograms (Kg). The ratesPer100L array should contain recommended rates per 100 litres of water, using the same unit convention. Include multiple rates if the label specifies different rates for different conditions (e.g. low/medium/high disease pressure). If rates are not available for a basis, return an empty array.`;
   return { system, user };
@@ -174,7 +174,77 @@ function isPlaceholderURL(url: string): boolean {
   return bad.some((b) => host === b || host.endsWith("." + b));
 }
 
-function normalizeInfo(parsed: any): any {
+/**
+ * Probe a URL with a short timeout. Returns true only when the server responds
+ * with a successful (2xx) status. Tries HEAD first, falls back to a ranged GET
+ * (some CDNs / WordPress hosts return 405 for HEAD on PDF uploads).
+ */
+async function isURLReachable(rawURL: string): Promise<boolean> {
+  let target: URL;
+  try {
+    target = new URL(rawURL);
+  } catch {
+    return false;
+  }
+  if (target.protocol !== "https:" && target.protocol !== "http:") return false;
+
+  const attempt = async (method: "HEAD" | "GET"): Promise<number | null> => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);
+    try {
+      const headers: Record<string, string> = {
+        "User-Agent":
+          "Mozilla/5.0 (compatible; VineTrack-ChemicalLookup/1.0; +https://rork.app)",
+        "Accept": "*/*",
+      };
+      if (method === "GET") headers["Range"] = "bytes=0-0";
+      const res = await fetch(target.toString(), {
+        method,
+        redirect: "follow",
+        headers,
+        signal: ctrl.signal,
+      });
+      // Drain body if any so the connection can be reused/closed.
+      try { await res.body?.cancel(); } catch { /* ignore */ }
+      return res.status;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  const headStatus = await attempt("HEAD");
+  if (headStatus !== null && headStatus >= 200 && headStatus < 300) return true;
+  // Some servers reject HEAD with 4xx but serve GET correctly.
+  if (headStatus === null || headStatus === 403 || headStatus === 404 || headStatus === 405 || headStatus === 501) {
+    const getStatus = await attempt("GET");
+    if (getStatus !== null && getStatus >= 200 && getStatus < 300) return true;
+  }
+  return false;
+}
+
+/**
+ * Reject obvious non-label URLs even when they're reachable, e.g. brand
+ * homepages or generic product search pages that the AI sometimes substitutes
+ * when it doesn't know the real PDF.
+ */
+function looksLikeLabelURL(rawURL: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(rawURL);
+  } catch {
+    return false;
+  }
+  const path = u.pathname.toLowerCase();
+  // Bare homepage / brand root is never a label.
+  if (path === "" || path === "/") return false;
+  // Generic search/category pages.
+  if (/\/(search|category|categories|tag|tags)\b/.test(path)) return false;
+  return true;
+}
+
+async function normalizeInfo(parsed: any): Promise<any> {
   const activeIngredient = String(
     parsed?.activeIngredient ?? parsed?.active_ingredient ?? "",
   );
@@ -185,7 +255,32 @@ function normalizeInfo(parsed: any): any {
   const rawLabelURL = String(
     parsed?.labelURL ?? parsed?.label_url ?? parsed?.labelUrl ?? "",
   ).trim();
-  const labelURL = isPlaceholderURL(rawLabelURL) ? "" : rawLabelURL;
+  const rawProductURL = String(
+    parsed?.productURL ?? parsed?.product_url ?? parsed?.productUrl ?? "",
+  ).trim();
+  const rawSDSURL = String(
+    parsed?.sdsURL ?? parsed?.sds_url ?? parsed?.sdsUrl ?? "",
+  ).trim();
+
+  /**
+   * Validate a candidate URL: reject placeholders, reject brand homepages,
+   * then verify the URL is actually reachable. Hallucinated URLs are dropped.
+   */
+  const validate = async (raw: string, requireLabelShape: boolean): Promise<string> => {
+    if (!raw) return "";
+    if (isPlaceholderURL(raw)) return "";
+    if (requireLabelShape && !looksLikeLabelURL(raw)) return "";
+    const ok = await isURLReachable(raw);
+    return ok ? raw : "";
+  };
+
+  // Validate in parallel.
+  const [labelURL, productURL, sdsURL] = await Promise.all([
+    validate(rawLabelURL, true),
+    validate(rawProductURL, false),
+    validate(rawSDSURL, true),
+  ]);
+
   const primaryUse = String(parsed?.primaryUse ?? parsed?.primary_use ?? "");
   const formType = parsed?.formType ?? parsed?.form_type ?? null;
   const modeOfAction = parsed?.modeOfAction ?? parsed?.mode_of_action ?? null;
@@ -200,6 +295,8 @@ function normalizeInfo(parsed: any): any {
     brand,
     chemicalGroup,
     labelURL,
+    productURL,
+    sdsURL,
     primaryUse,
     formType: typeof formType === "string" ? formType : null,
     modeOfAction: typeof modeOfAction === "string" ? modeOfAction : null,
@@ -260,7 +357,8 @@ Deno.serve(async (req: Request) => {
       const { system, user } = buildInfoPrompt(productName, country);
       const raw = await callOpenAI(system, user, apiKey);
       const parsed = extractJSON(raw);
-      return json(normalizeInfo(parsed));
+      const normalized = await normalizeInfo(parsed);
+      return json(normalized);
     }
 
     return json({ error: "Unknown action" }, 400);
