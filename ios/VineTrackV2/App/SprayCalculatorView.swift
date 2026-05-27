@@ -477,21 +477,22 @@ struct SprayCalculatorView: View {
     }
 
     private var growthStageSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let paddocksMissing = selectedPaddockIds.isEmpty
+        return VStack(alignment: .leading, spacing: 10) {
             SectionHeader(title: "Growth Stage", icon: "leaf.arrow.circlepath")
 
             Button {
-                guard !selectedPaddockIds.isEmpty else { return }
+                guard !paddocksMissing else { return }
                 withAnimation(.spring(duration: 0.3)) { isGrowthStageExpanded.toggle() }
             } label: {
                 HStack(spacing: 14) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 10)
-                            .fill(VineyardTheme.leafGreen.opacity(0.15))
+                            .fill(VineyardTheme.leafGreen.opacity(paddocksMissing ? 0.08 : 0.15))
                             .frame(width: 44, height: 44)
                         Image(systemName: "leaf.fill")
                             .font(.title3.weight(.semibold))
-                            .foregroundStyle(VineyardTheme.leafGreen)
+                            .foregroundStyle(VineyardTheme.leafGreen.opacity(paddocksMissing ? 0.5 : 1.0))
                     }
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Growth Stage")
@@ -499,23 +500,27 @@ struct SprayCalculatorView: View {
                             .foregroundStyle(.primary)
                         Text(growthStageSummary)
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(paddocksMissing ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
                             .lineLimit(2)
                     }
                     Spacer()
                     Image(systemName: "chevron.right")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.tertiary)
-                        .rotationEffect(.degrees(isGrowthStageExpanded && !selectedPaddockIds.isEmpty ? 90 : 0))
+                        .rotationEffect(.degrees(isGrowthStageExpanded && !paddocksMissing ? 90 : 0))
                 }
                 .padding(14)
                 .background(Color(.secondarySystemGroupedBackground))
                 .clipShape(.rect(cornerRadius: 12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(paddocksMissing ? Color.orange.opacity(0.4) : Color.clear, lineWidth: 1)
+                )
             }
             .buttonStyle(.plain)
-            .disabled(selectedPaddockIds.isEmpty)
+            .accessibilityHint(paddocksMissing ? "Select paddocks first to choose a growth stage" : "Opens growth stage selector")
 
-            if isGrowthStageExpanded && !selectedPaddockIds.isEmpty {
+            if isGrowthStageExpanded && !paddocksMissing {
                 Picker("", selection: $growthStageMode) {
                     Text("Same for All").tag(GrowthStageMode.same)
                     Text("Per Paddock").tag(GrowthStageMode.perPaddock)
