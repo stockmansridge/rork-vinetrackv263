@@ -58,7 +58,9 @@ struct SprayCalculatorView: View {
     // UI
     @State private var isPaddocksExpanded: Bool = true
     @State private var isEquipmentExpanded: Bool = true
+    @State private var isGrowthStageExpanded: Bool = false
     @State private var showAddEquipment: Bool = false
+    @State private var showSprayPaddockPicker: Bool = false
     @State private var calculationResult: SprayCalculationResult?
     @State private var showResults: Bool = false
     @State private var showSummary: Bool = false
@@ -103,6 +105,32 @@ struct SprayCalculatorView: View {
 
     private var totalAreaHectares: Double {
         selectedPaddocks.reduce(0) { $0 + $1.areaHectares }
+    }
+
+    private var totalRowsAcrossSelection: Int {
+        selectedPaddocks.reduce(0) { $0 + $1.rows.count }
+    }
+
+    private var totalVinesAcrossSelection: Int {
+        selectedPaddocks.reduce(0) { $0 + $1.effectiveVineCount }
+    }
+
+    private var sharedGrowthStage: PhenologyStage? {
+        guard let id = sharedGrowthStageId else { return nil }
+        return phenologyStages.first(where: { $0.id == id })
+    }
+
+    private var growthStageSummary: String {
+        if selectedPaddockIds.isEmpty { return "Select paddocks first" }
+        if growthStageMode == .same {
+            if let stage = sharedGrowthStage {
+                return "\(stage.code) — \(stage.name)"
+            }
+            return "Not set"
+        }
+        let count = paddockPhenologyStages.values.filter { _ in true }.count
+        let assigned = selectedPaddockIds.compactMap { paddockPhenologyStages[$0] }.count
+        return "Per paddock — \(assigned)/\(selectedPaddockIds.count) assigned (\(count >= 0 ? "" : ""))"
     }
 
     private var averageRowSpacing: Double {
@@ -316,122 +344,178 @@ struct SprayCalculatorView: View {
     private var operationTypeSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHeader(title: "Operation Type", icon: "gearshape.2")
-            VStack(spacing: 0) {
+            Menu {
                 ForEach(OperationType.allCases, id: \.self) { type in
-                    let isSelected = operationType == type
                     Button {
                         operationType = type
                     } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
-                                .foregroundStyle(isSelected ? AnyShapeStyle(VineyardTheme.olive) : AnyShapeStyle(.tertiary))
+                        HStack {
                             Image(systemName: type.iconName)
-                                .font(.subheadline)
-                                .foregroundStyle(isSelected ? VineyardTheme.olive : .secondary)
-                                .frame(width: 24)
-                            Text(type.rawValue).foregroundStyle(.primary)
-                            Spacer()
+                            Text(type.rawValue)
+                            if operationType == type {
+                                Spacer()
+                                Image(systemName: "checkmark")
+                            }
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                    }
-                    if type != OperationType.allCases.last {
-                        Divider().padding(.leading, 48)
                     }
                 }
+            } label: {
+                HStack(spacing: 14) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(VineyardTheme.olive.opacity(0.15))
+                            .frame(width: 44, height: 44)
+                        Image(systemName: operationType.iconName)
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(VineyardTheme.olive)
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Operation")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text(operationType.rawValue)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(14)
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(.rect(cornerRadius: 12))
             }
-            .background(Color(.secondarySystemGroupedBackground))
-            .clipShape(.rect(cornerRadius: 10))
+            .buttonStyle(.plain)
         }
     }
 
     private var paddockSelection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(title: "Paddocks", icon: "square.grid.2x2.fill")
+
             Button {
-                withAnimation(.spring(duration: 0.3)) { isPaddocksExpanded.toggle() }
+                showSprayPaddockPicker = true
             } label: {
-                HStack {
-                    PaddockSectionHeader(title: "Paddocks")
-                    Spacer()
-                    if !selectedPaddockIds.isEmpty {
-                        Text("\(selectedPaddockIds.count) selected")
-                            .font(.caption)
-                            .foregroundStyle(VineyardTheme.olive)
+                HStack(spacing: 14) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(VineyardTheme.leafGreen.opacity(0.15))
+                            .frame(width: 44, height: 44)
+                        Image(systemName: "square.grid.2x2.fill")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(VineyardTheme.leafGreen)
                     }
-                    Image(systemName: "chevron.right")
+                    if selectedPaddockIds.isEmpty {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("No paddocks selected")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+                            Text(store.paddocks.isEmpty ? "No paddocks configured" : "Tap to choose one or more paddocks")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
+                    } else {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("\(selectedPaddockIds.count) paddock\(selectedPaddockIds.count == 1 ? "" : "s") selected")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+                            Text(selectedPaddocks.map(\.name).joined(separator: ", "))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.tertiary)
-                        .rotationEffect(.degrees(isPaddocksExpanded ? 90 : 0))
                 }
-            }
-
-            if isPaddocksExpanded {
-                VStack(spacing: 0) {
-                    if store.paddocks.isEmpty {
-                        Text("No paddocks configured")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    ForEach(store.paddocks) { paddock in
-                        let isSelected = selectedPaddockIds.contains(paddock.id)
-                        Button {
-                            if isSelected {
-                                selectedPaddockIds.remove(paddock.id)
-                            } else {
-                                selectedPaddockIds.insert(paddock.id)
-                            }
-                        } label: {
-                            HStack {
-                                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(isSelected ? AnyShapeStyle(VineyardTheme.olive) : AnyShapeStyle(.tertiary))
-                                Text(paddock.name).foregroundStyle(.primary)
-                                Spacer()
-                                Text("\(paddock.areaHectares, specifier: "%.2f") ha")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
-                        }
-                        if paddock.id != store.paddocks.last?.id {
-                            Divider().padding(.leading, 40)
-                        }
-                    }
-                }
+                .padding(14)
                 .background(Color(.secondarySystemGroupedBackground))
-                .clipShape(.rect(cornerRadius: 10))
+                .clipShape(.rect(cornerRadius: 12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(selectedPaddockIds.isEmpty ? Color.orange.opacity(0.5) : Color.clear, lineWidth: 1.5)
+                )
             }
+            .buttonStyle(.plain)
 
             if !selectedPaddockIds.isEmpty {
-                Text("Total: \(totalAreaHectares, specifier: "%.2f") ha selected")
-                    .font(.caption)
-                    .foregroundStyle(VineyardTheme.olive)
+                HStack(spacing: 0) {
+                    paddockStatCell(value: "\(selectedPaddockIds.count)", label: selectedPaddockIds.count == 1 ? "Paddock" : "Paddocks")
+                    Divider().frame(height: 32)
+                    paddockStatCell(value: String(format: "%.2f", totalAreaHectares), label: "Hectares")
+                    Divider().frame(height: 32)
+                    paddockStatCell(value: "\(totalRowsAcrossSelection)", label: "Rows")
+                    Divider().frame(height: 32)
+                    paddockStatCell(value: "\(totalVinesAcrossSelection)", label: "Vines")
+                }
+                .padding(.vertical, 10)
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(.rect(cornerRadius: 12))
             }
+        }
+        .sheet(isPresented: $showSprayPaddockPicker) {
+            SprayPaddockPickerSheet(selectedIds: $selectedPaddockIds)
         }
     }
 
+    private func paddockStatCell(value: String, label: String) -> some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.headline.monospacedDigit())
+                .foregroundStyle(.primary)
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 4)
+    }
+
     private var growthStageSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             SectionHeader(title: "Growth Stage", icon: "leaf.arrow.circlepath")
 
-            if selectedPaddockIds.isEmpty {
-                HStack(spacing: 8) {
-                    Image(systemName: "info.circle")
-                        .font(.caption)
+            Button {
+                guard !selectedPaddockIds.isEmpty else { return }
+                withAnimation(.spring(duration: 0.3)) { isGrowthStageExpanded.toggle() }
+            } label: {
+                HStack(spacing: 14) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(VineyardTheme.leafGreen.opacity(0.15))
+                            .frame(width: 44, height: 44)
+                        Image(systemName: "leaf.fill")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(VineyardTheme.leafGreen)
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Growth Stage")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text(growthStageSummary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
                         .foregroundStyle(.tertiary)
-                    Text("Select paddocks above to assign growth stages")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(isGrowthStageExpanded && !selectedPaddockIds.isEmpty ? 90 : 0))
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(14)
                 .background(Color(.secondarySystemGroupedBackground))
-                .clipShape(.rect(cornerRadius: 10))
-            } else {
+                .clipShape(.rect(cornerRadius: 12))
+            }
+            .buttonStyle(.plain)
+            .disabled(selectedPaddockIds.isEmpty)
+
+            if isGrowthStageExpanded && !selectedPaddockIds.isEmpty {
                 Picker("", selection: $growthStageMode) {
                     Text("Same for All").tag(GrowthStageMode.same)
                     Text("Per Paddock").tag(GrowthStageMode.perPaddock)
@@ -1193,7 +1277,16 @@ struct SprayCalculatorView: View {
                 }
                 Spacer()
                 if let url = Self.normalizedLabelURL(labelURL) {
-                    Button { openURL(url) } label: {
+                    Button {
+                        #if DEBUG
+                        print("[SprayMix] open label url=\(url.absoluteString) chem=\(chemResult.chemicalName)")
+                        #endif
+                        openURL(url) { accepted in
+                            #if DEBUG
+                            print("[SprayMix] openURL accepted=\(accepted) url=\(url.absoluteString)")
+                            #endif
+                        }
+                    } label: {
                         Image(systemName: "doc.text.magnifyingglass")
                             .font(.subheadline)
                             .foregroundStyle(VineyardTheme.olive)
@@ -1894,6 +1987,10 @@ struct SprayCalculatorView: View {
 
         savedFeedback.toggle()
         showSummary = false
+        showStartConfirmation = false
+        // Dismiss the Spray Calculator sheet so the live trip tracking UI
+        // becomes visible to the operator.
+        dismiss()
     }
 
     private func saveForLater() {
@@ -2008,7 +2105,16 @@ private struct CalcChemicalLineCard: View {
                     .font(.subheadline.weight(.semibold))
                 if let chem = selectedChemical,
                    let url = Self.normalizedLabelURL(chem.labelURL) {
-                    Button { openURL(url) } label: {
+                    Button {
+                        #if DEBUG
+                        print("[SprayCalc] open label url=\(url.absoluteString) for chem=\(chem.name)")
+                        #endif
+                        openURL(url) { accepted in
+                            #if DEBUG
+                            print("[SprayCalc] openURL accepted=\(accepted) url=\(url.absoluteString)")
+                            #endif
+                        }
+                    } label: {
                         Image(systemName: "doc.text.magnifyingglass")
                             .font(.subheadline)
                             .foregroundStyle(VineyardTheme.olive)
@@ -2125,33 +2231,69 @@ private struct CalcChemicalLineCard: View {
 
                 Divider().padding(.leading, 14)
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text("Rate").font(.caption).foregroundStyle(.secondary)
-                    Picker("Rate", selection: $line.selectedRateId) {
+                    Menu {
                         if !haRates.isEmpty {
                             Section("Per Hectare") {
                                 ForEach(haRates) { rate in
-                                    Text("\(rate.label): \(String(format: "%.0f", chem.unit.fromBase(rate.value))) \(chem.unit.rawValue)/ha")
-                                        .tag(rate.id)
+                                    Button {
+                                        line.selectedRateId = rate.id
+                                        line.basis = rate.basis
+                                    } label: {
+                                        HStack {
+                                            Text("\(rate.label): \(String(format: "%.0f", chem.unit.fromBase(rate.value))) \(chem.unit.rawValue)/ha")
+                                            if line.selectedRateId == rate.id {
+                                                Spacer()
+                                                Image(systemName: "checkmark")
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
                         if !per100LRates.isEmpty {
                             Section("Per 100L Water") {
                                 ForEach(per100LRates) { rate in
-                                    Text("\(rate.label): \(String(format: "%.0f", chem.unit.fromBase(rate.value))) \(chem.unit.rawValue)/100L")
-                                        .tag(rate.id)
+                                    Button {
+                                        line.selectedRateId = rate.id
+                                        line.basis = rate.basis
+                                    } label: {
+                                        HStack {
+                                            Text("\(rate.label): \(String(format: "%.0f", chem.unit.fromBase(rate.value))) \(chem.unit.rawValue)/100L")
+                                            if line.selectedRateId == rate.id {
+                                                Spacer()
+                                                Image(systemName: "checkmark")
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .onChange(of: line.selectedRateId) { _, newRateId in
-                        if let rate = chem.rates.first(where: { $0.id == newRateId }) {
-                            line.basis = rate.basis
+                    } label: {
+                        let selectedRate = chem.rates.first(where: { $0.id == line.selectedRateId })
+                        let label: String = {
+                            guard let r = selectedRate else { return "Select rate" }
+                            let suffix = r.basis == .perHectare ? "/ha" : "/100L"
+                            return "\(r.label): \(String(format: "%.0f", chem.unit.fromBase(r.value))) \(chem.unit.rawValue)\(suffix)"
+                        }()
+                        HStack(spacing: 8) {
+                            Text(label)
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                            Spacer()
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
                         }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(.tertiarySystemGroupedBackground))
+                        .clipShape(.rect(cornerRadius: 8))
                     }
+                    .buttonStyle(.plain)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
@@ -2241,6 +2383,109 @@ private struct CalcChemicalLineCard: View {
             }
         } else if !overrideText.isEmpty {
             overrideText = ""
+        }
+    }
+}
+
+// MARK: - Paddock Picker Sheet
+
+/// Multi-select paddock picker used by the Spray Calculator. Mirrors the
+/// Maintenance Trip's `MultiPaddockPickerSheet` UX so operators get the same
+/// search-and-select experience across flows.
+private struct SprayPaddockPickerSheet: View {
+    @Environment(MigratedDataStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    @Binding var selectedIds: Set<UUID>
+    @State private var searchText: String = ""
+
+    private var sortedPaddocks: [Paddock] {
+        store.paddocks.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    private var filtered: [Paddock] {
+        guard !searchText.isEmpty else { return sortedPaddocks }
+        return sortedPaddocks.filter { $0.name.localizedStandardContains(searchText) }
+    }
+
+    private var allSelected: Bool {
+        !store.paddocks.isEmpty && selectedIds.count == store.paddocks.count
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if store.paddocks.isEmpty {
+                    ContentUnavailableView {
+                        Label("No Paddocks", systemImage: "square.grid.2x2")
+                    } description: {
+                        Text("Create paddocks first to plan a spray.")
+                    }
+                } else {
+                    List {
+                        Section {
+                            Button {
+                                if allSelected {
+                                    selectedIds.removeAll()
+                                } else {
+                                    selectedIds = Set(store.paddocks.map(\.id))
+                                }
+                            } label: {
+                                HStack {
+                                    Image(systemName: allSelected ? "checkmark.circle.fill" : "circle")
+                                        .foregroundStyle(allSelected ? AnyShapeStyle(VineyardTheme.olive) : AnyShapeStyle(.secondary))
+                                    Text(allSelected ? "Deselect All" : "Select All")
+                                        .foregroundStyle(.primary)
+                                    Spacer()
+                                    Text("\(selectedIds.count) of \(store.paddocks.count)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+
+                        Section {
+                            ForEach(filtered) { paddock in
+                                let isSelected = selectedIds.contains(paddock.id)
+                                Button {
+                                    if isSelected {
+                                        selectedIds.remove(paddock.id)
+                                    } else {
+                                        selectedIds.insert(paddock.id)
+                                    }
+                                } label: {
+                                    HStack(spacing: 12) {
+                                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                                            .foregroundStyle(isSelected ? AnyShapeStyle(VineyardTheme.olive) : AnyShapeStyle(.tertiary))
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(paddock.name)
+                                                .font(.subheadline.weight(.semibold))
+                                                .foregroundStyle(.primary)
+                                            Text("\(paddock.rows.count) rows · \(String(format: "%.2f", paddock.areaHectares)) ha")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Spacer()
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                    .listStyle(.insetGrouped)
+                    .searchable(text: $searchText, prompt: "Search paddocks")
+                }
+            }
+            .navigationTitle("Select Paddocks")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                        .fontWeight(.semibold)
+                }
+            }
         }
     }
 }
