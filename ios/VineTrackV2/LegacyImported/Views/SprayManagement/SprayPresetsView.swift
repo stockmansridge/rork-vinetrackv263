@@ -222,6 +222,8 @@ struct EditSavedChemicalSheet: View {
     @State private var showAILookup: Bool = false
     @State private var aiLoading: Bool = false
     @State private var aiError: String?
+    @State private var linkAlertMessage: String?
+    @State private var showLinkAlert: Bool = false
 
     private let existingPerHaRateId: UUID?
     private let existingPer100LRateId: UUID?
@@ -316,6 +318,11 @@ struct EditSavedChemicalSheet: View {
                     .disabled(!isValid)
                 }
             }
+            .alert("Link", isPresented: $showLinkAlert, presenting: linkAlertMessage) { _ in
+                Button("OK", role: .cancel) {}
+            } message: { msg in
+                Text(msg)
+            }
             .onChange(of: formType) { _, newValue in
                 if !newValue.units.contains(unit) {
                     unit = newValue.units.first ?? .litres
@@ -347,7 +354,9 @@ struct EditSavedChemicalSheet: View {
 
     private var productSection: some View {
         Section("Product") {
-            TextField("Chemical Name", text: $name)
+            LabeledField(label: "Chemical / Product Name") {
+                TextField("e.g. Synertrol Horti Oil", text: $name)
+            }
             Picker("Form", selection: $formType) {
                 ForEach(ChemicalFormType.allCases) { f in
                     Text(f.rawValue).tag(f)
@@ -364,48 +373,68 @@ struct EditSavedChemicalSheet: View {
 
     private var detailsSection: some View {
         Section {
-            TextField("Active Ingredient", text: $activeIngredient)
-            TextField("Chemical Group", text: $chemicalGroup)
-            TextField("Use / Problem", text: $use)
-            TextField("Target Problem (e.g. Powdery Mildew)", text: $problem)
-            TextField("Manufacturer", text: $manufacturer)
-            TextField("Mode of Action (MOA)", text: $modeOfAction)
-            TextField("Label URL (official label PDF)", text: $labelURL)
-                .keyboardType(.URL)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-            TextField("Product / Manufacturer Page (optional)", text: $productURL)
-                .keyboardType(.URL)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
+            LabeledField(label: "Active Ingredient") {
+                TextField("e.g. Glyphosate 360 g/L", text: $activeIngredient)
+            }
+            LabeledField(label: "Chemical Group") {
+                TextField("e.g. Group M", text: $chemicalGroup)
+            }
+            LabeledField(label: "Use / Problem") {
+                TextField("e.g. Fungicide", text: $use)
+            }
+            LabeledField(label: "Target Problem") {
+                TextField("e.g. Powdery Mildew", text: $problem)
+            }
+            LabeledField(label: "Manufacturer") {
+                TextField("e.g. Syngenta", text: $manufacturer)
+            }
+            LabeledField(label: "Mode of Action (MOA)") {
+                TextField("e.g. 11", text: $modeOfAction)
+            }
+            LabeledURLField(
+                label: "Official Label URL",
+                placeholder: "https://...",
+                text: $labelURL,
+                onOpenFailure: { message in
+                    linkAlertMessage = message
+                    showLinkAlert = true
+                }
+            )
+            LabeledURLField(
+                label: "Product Page URL",
+                placeholder: "https://...",
+                text: $productURL,
+                onOpenFailure: { message in
+                    linkAlertMessage = message
+                    showLinkAlert = true
+                }
+            )
         } header: {
             Text("Details")
         } footer: {
-            Text("Use Label URL only for the official product label (PDF preferred). Use Product Page for marketing/manufacturer pages — these are never shown as a \"Label\".")
+            Text("Use Label URL only for the official product label, preferably a PDF. Product pages may be used for manufacturer or marketing information, but are never shown as the official label.")
         }
     }
 
     private var ratesSection: some View {
         Section {
-            HStack {
-                Text("Per Ha")
-                Spacer()
-                TextField("0", text: $ratePerHaText)
-                    .keyboardType(.decimalPad)
-                    .multilineTextAlignment(.trailing)
-                    .frame(width: 90)
-                Text("\(unit.rawValue)/ha")
-                    .foregroundStyle(.secondary)
+            LabeledField(label: "Rate per ha") {
+                HStack {
+                    TextField("0", text: $ratePerHaText)
+                        .keyboardType(.decimalPad)
+                    Text("\(unit.rawValue)/ha")
+                        .foregroundStyle(.secondary)
+                        .font(.subheadline)
+                }
             }
-            HStack {
-                Text("Per 100L Water")
-                Spacer()
-                TextField("0", text: $ratePer100LText)
-                    .keyboardType(.decimalPad)
-                    .multilineTextAlignment(.trailing)
-                    .frame(width: 90)
-                Text("\(unit.rawValue)/100L")
-                    .foregroundStyle(.secondary)
+            LabeledField(label: "Rate per 100L water") {
+                HStack {
+                    TextField("0", text: $ratePer100LText)
+                        .keyboardType(.decimalPad)
+                    Text("\(unit.rawValue)/100L")
+                        .foregroundStyle(.secondary)
+                        .font(.subheadline)
+                }
             }
         } header: {
             Text("Rates")
@@ -465,8 +494,21 @@ struct EditSavedChemicalSheet: View {
 
     private var notesSection: some View {
         Section("Notes") {
-            TextEditor(text: $notes)
-                .frame(minHeight: 60)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Notes")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextEditor(text: $notes)
+                    .frame(minHeight: 80)
+                    .padding(8)
+                    .background(Color(.systemBackground))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color(.separator), lineWidth: 0.5)
+                    )
+                    .clipShape(.rect(cornerRadius: 8))
+            }
+            .padding(.vertical, 4)
         }
     }
 
@@ -823,5 +865,100 @@ struct EditSavedSprayPresetSheet: View {
             )
             store.addSavedSprayPreset(new)
         }
+    }
+}
+
+// MARK: - Labeled Field Helpers
+
+/// A form field with a small, persistent grey label above a bordered white input.
+struct LabeledField<Content: View>: View {
+    let label: String
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            content()
+                .font(.body)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(.systemBackground))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color(.separator), lineWidth: 0.5)
+                )
+                .clipShape(.rect(cornerRadius: 8))
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+/// A labeled URL field with a trailing open-in-browser button.
+/// The button is only visible when the field contains a valid http(s) URL.
+struct LabeledURLField: View {
+    let label: String
+    let placeholder: String
+    @Binding var text: String
+    let onOpenFailure: (String) -> Void
+
+    @Environment(\.openURL) private var openURL
+
+    private var resolvedURL: URL? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let withScheme: String
+        if trimmed.lowercased().hasPrefix("http://") || trimmed.lowercased().hasPrefix("https://") {
+            withScheme = trimmed
+        } else {
+            withScheme = "https://" + trimmed
+        }
+        guard let url = URL(string: withScheme), url.host?.isEmpty == false else { return nil }
+        return url
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                TextField(placeholder, text: $text)
+                    .keyboardType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if let url = resolvedURL {
+                    Button {
+                        openURL(url) { accepted in
+                            if !accepted {
+                                onOpenFailure("This link could not be opened.")
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "arrow.up.right.square")
+                            .font(.system(size: 18, weight: .regular))
+                            .foregroundStyle(VineyardTheme.olive)
+                            .padding(4)
+                            .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Open \(label)")
+                }
+            }
+            .font(.body)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(Color(.systemBackground))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color(.separator), lineWidth: 0.5)
+            )
+            .clipShape(.rect(cornerRadius: 8))
+        }
+        .padding(.vertical, 4)
     }
 }
