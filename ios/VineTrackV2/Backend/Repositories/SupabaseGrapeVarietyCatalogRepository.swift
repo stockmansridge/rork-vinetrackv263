@@ -251,6 +251,89 @@ final class SupabaseGrapeVarietyCatalogRepository: Sendable {
             .value
         return row
     }
+
+    /// Calls `hard_delete_unused_custom_grape_variety` (sql/089). The RPC is
+    /// the safety gate — it refuses to delete built-ins or any custom variety
+    /// referenced by paddock allocations, growth records, or trip cost rows.
+    /// Returns the structured result so the caller can map it to an outcome.
+    func hardDeleteUnusedCustomGrapeVariety(
+        id: UUID
+    ) async throws -> HardDeleteCustomGrapeVarietyResult {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        struct Params: Encodable, Sendable {
+            let p_variety_id: UUID
+        }
+        let result: HardDeleteCustomGrapeVarietyResult = try await provider.client
+            .rpc("hard_delete_unused_custom_grape_variety", params: Params(p_variety_id: id))
+            .execute()
+            .value
+        return result
+    }
+}
+
+// MARK: - Hard delete result
+
+/// Mirrors the `jsonb { success, status, message }` returned by
+/// `hard_delete_unused_custom_grape_variety`. See sql/089 for status values.
+nonisolated struct HardDeleteCustomGrapeVarietyResult: Codable, Sendable, Hashable {
+    let success: Bool
+    let status: String
+    let message: String?
+    let referenceType: String?
+    let paddockReferences: Int?
+    let growthRecordReferences: Int?
+    let tripCostReferences: Int?
+
+    nonisolated enum CodingKeys: String, CodingKey {
+        case success
+        case status
+        case message
+        case referenceType = "reference_type"
+        case paddockReferences = "paddock_references"
+        case growthRecordReferences = "growth_record_references"
+        case tripCostReferences = "trip_cost_references"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        success = (try? c.decodeIfPresent(Bool.self, forKey: .success)) ?? false
+        status = (try? c.decodeIfPresent(String.self, forKey: .status)) ?? "unknown"
+        message = try? c.decodeIfPresent(String.self, forKey: .message)
+        referenceType = try? c.decodeIfPresent(String.self, forKey: .referenceType)
+        paddockReferences = try? c.decodeIfPresent(Int.self, forKey: .paddockReferences)
+        growthRecordReferences = try? c.decodeIfPresent(Int.self, forKey: .growthRecordReferences)
+        tripCostReferences = try? c.decodeIfPresent(Int.self, forKey: .tripCostReferences)
+    }
+}
+
+/// Clean Swift outcome for the hard-delete UI to switch on.
+nonisolated enum CustomGrapeVarietyDeletionOutcome: Sendable, Hashable {
+    case hardDeleted
+    case varietyInUse(message: String)
+    case notFound
+    case notCustom
+    case systemVariety
+    case notAuthorised
+    case failed(message: String)
+
+    static func map(_ result: HardDeleteCustomGrapeVarietyResult) -> CustomGrapeVarietyDeletionOutcome {
+        switch result.status {
+        case "hard_deleted":
+            return .hardDeleted
+        case "variety_in_use":
+            return .varietyInUse(message: result.message ?? "This grape variety is used by existing vineyard records and cannot be permanently deleted.")
+        case "not_found":
+            return .notFound
+        case "not_custom":
+            return .notCustom
+        case "system_variety":
+            return .systemVariety
+        case "not_authorised":
+            return .notAuthorised
+        default:
+            return .failed(message: result.message ?? "Could not delete this grape variety. Please try again.")
+        }
+    }
 }
 
 // MARK: - Local cache

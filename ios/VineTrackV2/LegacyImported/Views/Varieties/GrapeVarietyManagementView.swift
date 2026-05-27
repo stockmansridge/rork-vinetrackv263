@@ -5,11 +5,28 @@ struct GrapeVarietyManagementView: View {
     @Environment(\.accessControl) private var accessControl
     @State private var showAddSheet: Bool = false
     @State private var editingVariety: GrapeVariety?
+    @State private var pendingDelete: GrapeVariety?
+    @State private var pendingArchive: GrapeVariety?
+    @State private var deletingVarietyId: UUID?
+    @State private var alertMessage: AlertMessage?
+
+    private let catalogRepository = SupabaseGrapeVarietyCatalogRepository()
 
     private var canManageSetup: Bool { accessControl?.canManageSetup ?? false }
 
     private var sortedVarieties: [GrapeVariety] {
         store.grapeVarieties.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// Custom = vineyard-scoped row with a `custom:` key. Only these may be
+    /// hard-deleted. Built-ins (no key prefix, `isBuiltIn == true`) never get
+    /// a delete affordance.
+    private func isCustom(_ variety: GrapeVariety) -> Bool {
+        if variety.isBuiltIn { return false }
+        if let key = variety.key, key.hasPrefix("custom:") { return true }
+        // Defensive: a non-built-in row with no key is treated as custom so
+        // the user can still tidy it up.
+        return !variety.isBuiltIn
     }
 
     var body: some View {
@@ -24,12 +41,13 @@ struct GrapeVarietyManagementView: View {
                         }
                     }
                     .swipeActions(edge: .trailing) {
-                        if canManageSetup {
+                        if canManageSetup && isCustom(variety) {
                             Button(role: .destructive) {
-                                store.deleteGrapeVariety(variety)
+                                pendingDelete = variety
                             } label: {
                                 Label("Delete", systemImage: "trash")
                             }
+                            .disabled(deletingVarietyId != nil)
                         }
                     }
                 }
@@ -37,7 +55,7 @@ struct GrapeVarietyManagementView: View {
                 Text("Master Variety List")
             } footer: {
                 if canManageSetup {
-                    Text("Optimal GDD (base 10°C) is the heat units typically needed for a variety to reach harvest ripeness.")
+                    Text("Optimal GDD (base 10°C) is the heat units typically needed for a variety to reach harvest ripeness. Built-in varieties cannot be deleted. Custom varieties can be permanently deleted only when not used by any vineyard records.")
                 } else {
                     Text("Setup data is managed by vineyard owners and managers.")
                 }
@@ -62,6 +80,51 @@ struct GrapeVarietyManagementView: View {
         .sheet(item: $editingVariety) { variety in
             EditGrapeVarietySheet(variety: variety)
         }
+        .confirmationDialog(
+            "Permanently delete this custom variety?",
+            isPresented: Binding(
+                get: { pendingDelete != nil },
+                set: { if !$0 { pendingDelete = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingDelete
+        ) { variety in
+            Button("Delete Permanently", role: .destructive) {
+                Task { await hardDelete(variety) }
+            }
+            Button("Cancel", role: .cancel) { pendingDelete = nil }
+        } message: { _ in
+            Text("This will remove the custom grape variety from your library. It can only be deleted if it is not used by any vineyard records or historical data.")
+        }
+        .confirmationDialog(
+            "Archive this grape variety?",
+            isPresented: Binding(
+                get: { pendingArchive != nil },
+                set: { if !$0 { pendingArchive = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingArchive
+        ) { variety in
+            Button("Archive", role: .destructive) {
+                Task { await archive(variety) }
+            }
+            Button("Cancel", role: .cancel) { pendingArchive = nil }
+        } message: { _ in
+            Text("It will be hidden from the active variety list but kept for historical records.")
+        }
+        .alert(item: $alertMessage) { msg in
+            if let archive = msg.archiveCandidate {
+                return Alert(
+                    title: Text(msg.title),
+                    message: Text(msg.body),
+                    primaryButton: .default(Text("Archive Instead")) {
+                        pendingArchive = archive
+                    },
+                    secondaryButton: .cancel(Text("OK"))
+                )
+            }
+            return Alert(title: Text(msg.title), message: Text(msg.body), dismissButton: .default(Text("OK")))
+        }
     }
 
     @ViewBuilder
@@ -72,7 +135,7 @@ struct GrapeVarietyManagementView: View {
                     Text(variety.name)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.primary)
-                    if !variety.isBuiltIn {
+                    if isCustom(variety) {
                         Text("Custom")
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(Color.accentColor)
@@ -86,13 +149,93 @@ struct GrapeVarietyManagementView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            if showChevron {
+            if deletingVarietyId == variety.id {
+                ProgressView()
+            } else if showChevron {
                 Image(systemName: "chevron.right")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
         }
     }
+
+    // MARK: - Actions
+
+    private func hardDelete(_ variety: GrapeVariety) async {
+        pendingDelete = nil
+        deletingVarietyId = variety.id
+        defer { deletingVarietyId = nil }
+
+        do {
+            let result = try await catalogRepository.hardDeleteUnusedCustomGrapeVariety(id: variety.id)
+            let outcome = CustomGrapeVarietyDeletionOutcome.map(result)
+            switch outcome {
+            case .hardDeleted:
+                store.deleteGrapeVariety(variety)
+                alertMessage = AlertMessage(
+                    title: "Variety Deleted",
+                    body: "Custom grape variety deleted."
+                )
+            case .varietyInUse(let message):
+                alertMessage = AlertMessage(
+                    title: "Cannot Delete",
+                    body: message,
+                    archiveCandidate: variety
+                )
+            case .notFound:
+                // Already gone server-side — clean up locally.
+                store.deleteGrapeVariety(variety)
+                alertMessage = AlertMessage(
+                    title: "Already Removed",
+                    body: "This grape variety was already deleted."
+                )
+            case .notCustom, .systemVariety:
+                alertMessage = AlertMessage(
+                    title: "Cannot Delete",
+                    body: "Built-in grape varieties cannot be deleted."
+                )
+            case .notAuthorised:
+                alertMessage = AlertMessage(
+                    title: "Not Permitted",
+                    body: "You don't have permission to delete grape varieties for this vineyard."
+                )
+            case .failed(let message):
+                alertMessage = AlertMessage(title: "Delete Failed", body: message)
+            }
+        } catch {
+            alertMessage = AlertMessage(
+                title: "Delete Failed",
+                body: "Couldn't reach Supabase: \(error.localizedDescription). Please try again."
+            )
+        }
+    }
+
+    private func archive(_ variety: GrapeVariety) async {
+        pendingArchive = nil
+        deletingVarietyId = variety.id
+        defer { deletingVarietyId = nil }
+
+        do {
+            _ = try await catalogRepository.archiveVineyardVariety(id: variety.id)
+            store.deleteGrapeVariety(variety)
+            alertMessage = AlertMessage(
+                title: "Variety Archived",
+                body: "The grape variety has been hidden from active lists. Historical records continue to display its name."
+            )
+        } catch {
+            alertMessage = AlertMessage(
+                title: "Archive Failed",
+                body: "Couldn't archive this grape variety: \(error.localizedDescription). Please try again."
+            )
+        }
+    }
+}
+
+private struct AlertMessage: Identifiable {
+    let id = UUID()
+    let title: String
+    let body: String
+    var archiveCandidate: GrapeVariety?
 }
 
 struct EditGrapeVarietySheet: View {
