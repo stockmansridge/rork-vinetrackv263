@@ -104,6 +104,10 @@ struct PendingInvitationsSheet: View {
                 Text("You've been invited to \(only.vineyardName ?? "a vineyard")")
                     .font(.headline)
                     .multilineTextAlignment(.center)
+            } else if invitations.isEmpty {
+                Text("No vineyard invitations")
+                    .font(.headline)
+                    .multilineTextAlignment(.center)
             } else {
                 Text("You have \(invitations.count) vineyard invitations")
                     .font(.headline)

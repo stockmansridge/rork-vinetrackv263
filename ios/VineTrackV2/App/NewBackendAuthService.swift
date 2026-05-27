@@ -305,6 +305,16 @@ final class NewBackendAuthService {
         }
     }
 
+    /// Persist the per-user default vineyard via the `set_default_vineyard`
+    /// RPC. This call is intentionally **best-effort** and silent on failure:
+    ///   - it is always a follow-up to a primary action (sign-in, invitation
+    ///     accept, settings tap),
+    ///   - it must never surface a destructive-looking error banner if the
+    ///     primary action succeeded,
+    ///   - if the RPC is missing from the PostgREST schema cache or the
+    ///     network fails, the user can still proceed using the locally
+    ///     selected vineyard.
+    /// The error is logged in DEBUG builds only.
     @discardableResult
     func setDefaultVineyard(_ vineyardId: UUID?) async -> Bool {
         guard isSignedIn else { return false }
@@ -313,7 +323,9 @@ final class NewBackendAuthService {
             defaultVineyardId = vineyardId
             return true
         } catch {
-            errorMessage = error.localizedDescription
+            #if DEBUG
+            print("[Auth] setDefaultVineyard failed (non-blocking):", error.localizedDescription)
+            #endif
             return false
         }
     }
