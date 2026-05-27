@@ -751,6 +751,154 @@ struct SprayCalculatorView: View {
 
     private var confirmTripSetup: some View { tripSetupSection }
 
+    /// Tank mix preview shown on the Spray Tank Mixing screen so the operator
+    /// can review chemical quantities and label notes before tapping Start.
+    @ViewBuilder
+    private var tankMixPreviewSection: some View {
+        if let result = calculationResult {
+            VStack(alignment: .leading, spacing: 12) {
+                SectionHeader(title: "Tank Mix", icon: "drop.fill")
+
+                LazyVGrid(
+                    columns: [GridItem(.flexible()), GridItem(.flexible())],
+                    spacing: 8
+                ) {
+                    mixStatTile(
+                        label: "Total Area",
+                        value: String(format: "%.2f ha", result.totalAreaHectares),
+                        icon: "square.dashed",
+                        color: VineyardTheme.olive
+                    )
+                    mixStatTile(
+                        label: "Total Water",
+                        value: String(format: "%.0f L", result.totalWaterLitres),
+                        icon: "drop.fill",
+                        color: .blue
+                    )
+                    mixStatTile(
+                        label: "Full Tanks",
+                        value: "\(result.fullTankCount)",
+                        icon: "fuelpump.fill",
+                        color: VineyardTheme.earthBrown
+                    )
+                    mixStatTile(
+                        label: "Last Tank",
+                        value: String(format: "%.0f L", result.lastTankLitres),
+                        icon: "drop.halffull",
+                        color: .orange
+                    )
+                }
+
+                ForEach(result.chemicalResults) { chemResult in
+                    mixChemicalRow(chemResult)
+                }
+
+                if result.concentrationFactor != 1.0 {
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.up.arrow.down.circle.fill")
+                            .foregroundStyle(.orange)
+                        Text("Concentration Factor \(String(format: "%.2f", result.concentrationFactor))×")
+                            .font(.caption.weight(.semibold))
+                        Spacer()
+                        Text(result.concentrationFactor > 1.0 ? "Concentrate" : "Dilute")
+                            .font(.caption2.weight(.medium))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(.orange.opacity(0.15))
+                            .foregroundStyle(.orange)
+                            .clipShape(Capsule())
+                    }
+                    .padding(10)
+                    .background(.orange.opacity(0.08))
+                    .clipShape(.rect(cornerRadius: 8))
+                }
+            }
+            .padding(.horizontal)
+        }
+    }
+
+    private func mixStatTile(label: String, value: String, icon: String, color: Color) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.caption)
+                .foregroundStyle(color)
+                .frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label).font(.caption2).foregroundStyle(.secondary)
+                Text(value).font(.subheadline.weight(.semibold))
+            }
+            Spacer()
+        }
+        .padding(10)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(.rect(cornerRadius: 10))
+    }
+
+    @ViewBuilder
+    private func mixChemicalRow(_ chemResult: ChemicalCalculationResult) -> some View {
+        let saved = chemResult.savedChemicalId.flatMap { id in
+            store.savedChemicals.first(where: { $0.id == id })
+        }
+        let labelURL = saved?.labelURL ?? ""
+        let restrictions = saved?.restrictions ?? ""
+        let isOverridden: Bool = chemicalLines.first(where: { $0.chemicalId == chemResult.savedChemicalId })?.overrideRate != nil
+
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: "flask.fill")
+                    .foregroundStyle(VineyardTheme.leafGreen)
+                Text(chemResult.chemicalName)
+                    .font(.subheadline.weight(.semibold))
+                if isOverridden {
+                    Text("Override")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.orange.opacity(0.15))
+                        .foregroundStyle(.orange)
+                        .clipShape(Capsule())
+                }
+                Spacer()
+                if !labelURL.isEmpty, let url = URL(string: labelURL) {
+                    Link(destination: url) {
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .font(.subheadline)
+                            .foregroundStyle(VineyardTheme.olive)
+                    }
+                    .accessibilityLabel("Open chemical label")
+                }
+            }
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Rate").font(.caption2).foregroundStyle(.secondary)
+                    Text("\(String(format: "%.1f", chemResult.unit.fromBase(chemResult.selectedRate))) \(chemResult.unit.rawValue)/\(chemResult.basis == .perHectare ? "ha" : "100L")")
+                        .font(.caption.weight(.medium))
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("Total").font(.caption2).foregroundStyle(.secondary)
+                    Text("\(String(format: "%.1f", chemResult.unit.fromBase(chemResult.totalAmountRequired))) \(chemResult.unit.rawValue)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(VineyardTheme.olive)
+                }
+            }
+            if !restrictions.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.shield.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                    Text(restrictions)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+        }
+        .padding(10)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(.rect(cornerRadius: 10))
+    }
+
     private var tractorSelection: some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHeader(title: "Tractor (optional)", icon: "truck.pickup.side.fill")
@@ -993,14 +1141,15 @@ struct SprayCalculatorView: View {
             ScrollView {
                 VStack(spacing: 20) {
                     VStack(spacing: 8) {
-                        Image(systemName: "checklist")
+                        Image(systemName: "drop.circle.fill")
                             .font(.system(size: 40))
                             .foregroundStyle(VineyardTheme.olive)
-                        Text("Confirm Spray Job")
+                        Text("Spray Tank Mixing")
                             .font(.title2.bold())
-                        Text("Review the details before starting.")
+                        Text("Review the tank mix and trip setup before starting.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
                     }
                     .padding(.top, 12)
 
@@ -1012,6 +1161,8 @@ struct SprayCalculatorView: View {
                     .background(Color(.secondarySystemGroupedBackground))
                     .clipShape(.rect(cornerRadius: 12))
                     .padding(.horizontal)
+
+                    tankMixPreviewSection
 
                     confirmTractorPicker
                         .padding(.horizontal)
@@ -1077,7 +1228,7 @@ struct SprayCalculatorView: View {
                                 } else {
                                     Image(systemName: "play.fill")
                                 }
-                                Text(isStartingJob ? "Starting…" : "Start Job Now")
+                                Text(isStartingJob ? "Starting…" : "Start Spray Trip")
                                     .font(.headline)
                             }
                             .frame(maxWidth: .infinity)
@@ -1100,7 +1251,7 @@ struct SprayCalculatorView: View {
                 }
             }
             .background(Color(.systemGroupedBackground))
-            .navigationTitle("Confirm & Start")
+            .navigationTitle("Spray Tank Mixing")
             .navigationBarTitleDisplayMode(.inline)
             .interactiveDismissDisabled(isStartingJob)
         }
@@ -1152,7 +1303,7 @@ struct SprayCalculatorView: View {
             Button {
                 saveAndStartJob()
             } label: {
-                Label("Create Spray Job & Start", systemImage: "play.circle.fill")
+                Label("Create Spray Job & View Tank Mix", systemImage: "flask.fill")
                     .font(.headline)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
@@ -1288,6 +1439,14 @@ struct SprayCalculatorView: View {
             return
         }
         errorMessage = nil
+        // Pre-compute the tank mix so the operator sees it on the Spray Tank
+        // Mixing screen before tapping Start Spray Trip.
+        performCalculation()
+        if let equipId = selectedEquipmentId,
+           let equip = store.sprayEquipment.first(where: { $0.id == equipId }),
+           let result = calculationResult {
+            pendingTanks = buildSprayTanks(result: result, tankCapacity: equip.tankCapacityLitres)
+        }
         showStartConfirmation = true
     }
 
@@ -1295,7 +1454,7 @@ struct SprayCalculatorView: View {
         guard formIsValid, !isStartingJob else { return }
         guard let equipId = selectedEquipmentId,
               let equip = store.sprayEquipment.first(where: { $0.id == equipId }) else { return }
-        guard let vineyardId = store.selectedVineyardId else {
+        guard store.selectedVineyardId != nil else {
             errorMessage = "No vineyard selected."
             return
         }
@@ -1310,16 +1469,15 @@ struct SprayCalculatorView: View {
         await captureWeather()
         performCalculation()
 
-        let tanks: [SprayTank] = {
-            guard let result = calculationResult else { return [] }
-            return buildSprayTanks(result: result, tankCapacity: equip.tankCapacityLitres)
-        }()
-        pendingTanks = tanks
+        if let result = calculationResult {
+            pendingTanks = buildSprayTanks(result: result, tankCapacity: equip.tankCapacityLitres)
+        }
 
-        _ = vineyardId
-        summaryMode = .readyToStart
+        // Skip the intermediate readyToStart summary sheet — the Spray Tank
+        // Mixing screen now shows the mix preview, so tapping Start Spray Trip
+        // should begin live tracking directly.
+        finalizeStartFromMixSummary()
         showStartConfirmation = false
-        showSummary = true
     }
 
     private func finalizeStartFromMixSummary() {
@@ -1477,8 +1635,20 @@ private struct CalcChemicalLineCard: View {
     let chemicals: [SavedChemical]
     let onDelete: () -> Void
 
+    @State private var overrideText: String = ""
+
     private var selectedChemical: SavedChemical? {
         chemicals.first(where: { $0.id == line.chemicalId })
+    }
+
+    private var selectedRate: ChemicalRate? {
+        selectedChemical?.rates.first(where: { $0.id == line.selectedRateId })
+    }
+
+    /// Recommended rate expressed in the chemical's display unit.
+    private var recommendedRateDisplay: Double {
+        guard let chem = selectedChemical, let rate = selectedRate else { return 0 }
+        return chem.unit.fromBase(rate.value)
     }
 
     var body: some View {
@@ -1489,6 +1659,17 @@ private struct CalcChemicalLineCard: View {
                     .font(.subheadline)
                 Text(selectedChemical?.name ?? "Select Chemical")
                     .font(.subheadline.weight(.semibold))
+                if let chem = selectedChemical,
+                   !chem.labelURL.isEmpty,
+                   let url = URL(string: chem.labelURL) {
+                    Link(destination: url) {
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .font(.subheadline)
+                            .foregroundStyle(VineyardTheme.olive)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Open chemical label")
+                }
                 Spacer()
                 if let chem = selectedChemical, !chem.rates.isEmpty {
                     Menu {
@@ -1602,10 +1783,93 @@ private struct CalcChemicalLineCard: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
+
+                Divider().padding(.leading, 14)
+
+                overrideRateRow(chem: chem)
             }
         }
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(.rect(cornerRadius: 10))
+        .onAppear { syncOverrideText() }
+        .onChange(of: line.overrideRate) { _, _ in syncOverrideText() }
+        .onChange(of: line.selectedRateId) { _, _ in
+            // Switching the recommended rate clears any active override so
+            // the operator can re-confirm before applying a manual value.
+            if line.overrideRate != nil {
+                line.overrideRate = nil
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func overrideRateRow(chem: SavedChemical) -> some View {
+        let basisLabel = line.basis == .perHectare ? "/ha" : "/100L"
+        let isOverridden = line.overrideRate != nil
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Override Rate").font(.caption).foregroundStyle(.secondary)
+                if isOverridden {
+                    Text("Manual")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.orange.opacity(0.15))
+                        .foregroundStyle(.orange)
+                        .clipShape(Capsule())
+                }
+                Spacer()
+                if isOverridden {
+                    Button {
+                        line.overrideRate = nil
+                        overrideText = ""
+                    } label: {
+                        Label("Reset", systemImage: "arrow.uturn.backward")
+                            .font(.caption2.weight(.semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(VineyardTheme.olive)
+                }
+            }
+            HStack(spacing: 8) {
+                TextField(
+                    String(format: "%.1f", recommendedRateDisplay),
+                    text: $overrideText
+                )
+                .keyboardType(.decimalPad)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(Color(.tertiarySystemGroupedBackground))
+                .clipShape(.rect(cornerRadius: 8))
+                .onChange(of: overrideText) { _, newValue in
+                    let trimmed = newValue.trimmingCharacters(in: .whitespaces)
+                    if trimmed.isEmpty {
+                        line.overrideRate = nil
+                    } else if let v = Double(trimmed), v > 0 {
+                        line.overrideRate = v
+                    }
+                }
+                Text("\(chem.unit.rawValue)\(basisLabel)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            Text("Recommended: \(String(format: "%.1f", recommendedRateDisplay)) \(chem.unit.rawValue)\(basisLabel)")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    private func syncOverrideText() {
+        if let value = line.overrideRate {
+            let formatted = String(format: "%.2f", value)
+            if overrideText != formatted, Double(overrideText) != value {
+                overrideText = formatted
+            }
+        } else if !overrideText.isEmpty {
+            overrideText = ""
+        }
     }
 }
 

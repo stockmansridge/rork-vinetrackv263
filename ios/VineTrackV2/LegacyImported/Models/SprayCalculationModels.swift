@@ -28,12 +28,37 @@ nonisolated struct ChemicalLine: Identifiable, Sendable, Codable {
     var chemicalId: UUID
     var selectedRateId: UUID
     var basis: RateBasis
+    /// Operator-entered override expressed in the chemical's display unit
+    /// (e.g. mL or g) per the selected basis. When non-nil, the calculator
+    /// uses this value instead of the saved/recommended rate, and the UI
+    /// flags the line as manually overridden until the operator taps Reset.
+    var overrideRate: Double?
 
-    init(id: UUID = UUID(), chemicalId: UUID, selectedRateId: UUID, basis: RateBasis = .perHectare) {
+    init(
+        id: UUID = UUID(),
+        chemicalId: UUID,
+        selectedRateId: UUID,
+        basis: RateBasis = .perHectare,
+        overrideRate: Double? = nil
+    ) {
         self.id = id
         self.chemicalId = chemicalId
         self.selectedRateId = selectedRateId
         self.basis = basis
+        self.overrideRate = overrideRate
+    }
+
+    nonisolated enum CodingKeys: String, CodingKey {
+        case id, chemicalId, selectedRateId, basis, overrideRate
+    }
+
+    nonisolated init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        chemicalId = try c.decode(UUID.self, forKey: .chemicalId)
+        selectedRateId = try c.decode(UUID.self, forKey: .selectedRateId)
+        basis = try c.decodeIfPresent(RateBasis.self, forKey: .basis) ?? .perHectare
+        overrideRate = try c.decodeIfPresent(Double.self, forKey: .overrideRate)
     }
 }
 

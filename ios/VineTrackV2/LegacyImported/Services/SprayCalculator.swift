@@ -33,7 +33,14 @@ enum SprayCalculator {
                 return nil
             }
 
-            let selectedRate = rate.value
+            // Respect a manual override (entered in the chemical's display
+            // unit). Convert to the base unit used by all downstream calcs.
+            let selectedRate: Double = {
+                if let override = line.overrideRate, override > 0 {
+                    return chemical.unit.toBase(override)
+                }
+                return rate.value
+            }()
             let totalAmountRequired: Double
             switch operationType {
             case .foliarSpray:
