@@ -29,27 +29,40 @@ struct NewBackendRootView: View {
 
     var body: some View {
         Group {
+            // 1. Splash while we restore the Supabase session. Never show
+            //    the disclaimer or any auth-dependent UI during this window —
+            //    the auth state is still indeterminate.
             if !didAttemptRestore {
                 loadingView
             } else if auth.isSignedIn && biometric.requiresUnlock {
                 BiometricLockView()
             } else if !auth.isSignedIn {
+                // 2. Logged out — login screen only. Disclaimer must never
+                //    appear over the login screen.
                 NewBackendLoginView()
             } else if !onboardingCompleted {
                 OnboardingView {
                     OnboardingState.markCompleted()
                     onboardingCompleted = true
                 }
-            } else if !didCheckDisclaimer {
-                disclaimerLoadingView
-            } else if !disclaimerAccepted {
-                DisclaimerAcceptanceView {
-                    disclaimerAccepted = true
-                }
             } else if !didApplyDefaultVineyard {
+                // 3. Load the user's vineyards so we know they are in the
+                //    authenticated app shell before evaluating the disclaimer.
                 vineyardLoadingView
             } else if store.selectedVineyard == nil {
                 BackendVineyardListView()
+            } else if !didCheckDisclaimer {
+                // 4. Now that the user is signed in and inside a vineyard,
+                //    check whether the current disclaimer version has been
+                //    accepted. The local per-user cache short-circuits this
+                //    so a transient network/JWT race never re-prompts a user
+                //    who has already accepted.
+                disclaimerLoadingView
+            } else if !disclaimerAccepted {
+                DisclaimerAcceptanceView {
+                    markDisclaimerAcceptedLocally()
+                    disclaimerAccepted = true
+                }
             } else if subscription.hasAccess {
                 NewMainTabView()
             } else if !subscription.hasResolvedStatus {
@@ -69,6 +82,16 @@ struct NewBackendRootView: View {
                 }
                 lastSignedInState = auth.isSignedIn
                 didAttemptRestore = true
+                // Kick off the post-restore work explicitly. The
+                // `.task(id: auth.isSignedIn)` modifier won't refire here
+                // because `isSignedIn` flipped while `didAttemptRestore`
+                // was still false (and was guarded out).
+                if auth.isSignedIn, let userId = auth.userId {
+                    await subscription.login(userId: userId, userCreatedAt: auth.userCreatedAt)
+                    if !didApplyDefaultVineyard {
+                        await loadVineyardsAndApplyDefault()
+                    }
+                }
             }
         }
         .onChange(of: auth.isSignedIn) { _, newValue in
@@ -98,22 +121,34 @@ struct NewBackendRootView: View {
             evaluateInvitationsSheet()
         }
         .task(id: auth.isSignedIn) {
+            // Only react to a confirmed signed-in transition AFTER session
+            // restoration has completed. This prevents the disclaimer / vineyard
+            // load from racing against `restoreSession()` on cold start.
+            guard didAttemptRestore else { return }
             if auth.isSignedIn {
-                await checkDisclaimer()
                 if let userId = auth.userId {
                     await subscription.login(userId: userId, userCreatedAt: auth.userCreatedAt)
+                }
+                if !didApplyDefaultVineyard {
+                    await loadVineyardsAndApplyDefault()
                 }
             } else {
                 disclaimerAccepted = false
                 didCheckDisclaimer = false
+                disclaimerError = nil
                 didApplyDefaultVineyard = false
                 await subscription.logout()
             }
         }
-        .task(id: disclaimerAccepted) {
-            if disclaimerAccepted && !didApplyDefaultVineyard {
-                await loadVineyardsAndApplyDefault()
-            }
+        .task(id: didApplyDefaultVineyard) {
+            // Evaluate disclaimer only once the user is fully inside the
+            // authenticated app shell (signed in + vineyards loaded).
+            guard didAttemptRestore,
+                  auth.isSignedIn,
+                  auth.userId != nil,
+                  didApplyDefaultVineyard,
+                  !didCheckDisclaimer else { return }
+            await checkDisclaimer()
         }
         .task(id: store.selectedVineyardId) {
             if let vid = store.selectedVineyardId {
@@ -202,6 +237,26 @@ struct NewBackendRootView: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    /// Local fast-path: if this user previously accepted the current
+    /// disclaimer version on this device, treat it as accepted immediately
+    /// (we still revalidate against Supabase in the background).
+    private func loadCachedDisclaimerAcceptance() -> Bool {
+        guard let userId = auth.userId?.uuidString else { return false }
+        let key = Self.disclaimerCacheKey(userId: userId)
+        let stored = UserDefaults.standard.string(forKey: key)
+        return stored == DisclaimerInfo.version
+    }
+
+    private func markDisclaimerAcceptedLocally() {
+        guard let userId = auth.userId?.uuidString else { return }
+        let key = Self.disclaimerCacheKey(userId: userId)
+        UserDefaults.standard.set(DisclaimerInfo.version, forKey: key)
+    }
+
+    private static func disclaimerCacheKey(userId: String) -> String {
+        "disclaimerAcceptedVersion.\(userId)"
     }
 
     private func loadVineyardsAndApplyDefault(forceReload: Bool = false) async {
@@ -356,13 +411,34 @@ struct NewBackendRootView: View {
         isCheckingDisclaimer = true
         disclaimerError = nil
         defer { isCheckingDisclaimer = false }
+
+        // Fast-path: trust the per-user local cache so the acceptance screen
+        // never flashes if the user has already accepted this version on this
+        // device. We still verify against Supabase below and overwrite the
+        // cache if the server disagrees.
+        let cached = loadCachedDisclaimerAcceptance()
+        if cached {
+            disclaimerAccepted = true
+            didCheckDisclaimer = true
+        }
+
         do {
             let accepted = try await disclaimerRepository.hasAcceptedCurrentDisclaimer()
             disclaimerAccepted = accepted
             didCheckDisclaimer = true
+            if accepted {
+                markDisclaimerAcceptedLocally()
+            }
         } catch {
-            disclaimerError = error.localizedDescription
-            didCheckDisclaimer = false
+            // Network/RLS error. If we already have a cached acceptance,
+            // keep the user in the app — don't kick them back to the
+            // disclaimer screen. Otherwise surface a retry UI.
+            if cached {
+                didCheckDisclaimer = true
+            } else {
+                disclaimerError = error.localizedDescription
+                didCheckDisclaimer = false
+            }
         }
     }
 }
