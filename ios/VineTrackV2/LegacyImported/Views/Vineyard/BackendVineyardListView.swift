@@ -19,6 +19,7 @@ struct BackendVineyardListView: View {
     @State private var isLoadingRoles: Bool = false
     @State private var refreshStatus: String?
     @State private var processingInvitationId: UUID?
+    @State private var showWaitingForInvite: Bool = false
 
     init(
         vineyardRepository: any VineyardRepositoryProtocol = SupabaseVineyardRepository(),
@@ -76,6 +77,12 @@ struct BackendVineyardListView: View {
             .refreshable { await refresh() }
             .sheet(isPresented: $showAddVineyard) {
                 EditVineyardSheet(vineyard: nil, vineyardRepository: vineyardRepository)
+            }
+            .navigationDestination(isPresented: $showWaitingForInvite) {
+                WaitingForInviteView(
+                    onCheckForInvites: { await refresh() },
+                    onCreateVineyard: { showAddVineyard = true }
+                )
             }
             .task { await refresh() }
             .alert("Vineyards", isPresented: errorBinding, presenting: errorMessage) { _ in
@@ -209,23 +216,51 @@ struct BackendVineyardListView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 0) {
-            VineyardEmptyStateView(
-                icon: "leaf.fill",
-                title: "Welcome to VineTrack",
-                message: "Create your first vineyard to get started.",
-                actionTitle: "Create Vineyard",
-                action: { showAddVineyard = true }
-            )
+        VStack(spacing: 24) {
+            Spacer()
+            ZStack {
+                Circle()
+                    .fill(VineyardTheme.primaryAccent.opacity(0.12))
+                    .frame(width: 96, height: 96)
+                GrapeLeafIcon(size: 48, color: VineyardTheme.primaryAccent)
+            }
+            VStack(spacing: 12) {
+                brandedText("Welcome to VineTrack")
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(VineyardTheme.textPrimary)
+                Text("You don\u{2019}t currently have access to any vineyards. You can create a vineyard if you are an owner or manager, or wait for an invite if you are joining an existing team.")
+                    .font(.subheadline)
+                    .foregroundStyle(VineyardTheme.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 28)
+            }
+            VStack(spacing: 12) {
+                Button {
+                    showAddVineyard = true
+                } label: {
+                    Label("Create a Vineyard", systemImage: "plus")
+                }
+                .buttonStyle(.vineyardPrimary)
+
+                Button {
+                    showWaitingForInvite = true
+                } label: {
+                    Label("I\u{2019}m waiting for an invite", systemImage: "envelope")
+                }
+                .buttonStyle(.vineyardSecondary)
+            }
+            .padding(.horizontal, 32)
+            .padding(.top, 4)
             if let errorMessage {
                 Text(errorMessage)
                     .font(.caption)
                     .foregroundStyle(VineyardTheme.destructive)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 24)
-                    .padding(.bottom, 16)
             }
+            Spacer()
         }
+        .frame(maxWidth: .infinity)
         .background(VineyardTheme.appBackground)
     }
 
