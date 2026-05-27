@@ -234,10 +234,16 @@ struct AdminDashboardView: View {
     @MainActor
     private func loadBlockCount() async {
         do {
-            let rows = try await repository.fetchAllPaddocks()
-            totalBlocks = rows.filter { $0.paddock.deletedAt == nil }.count
+            totalBlocks = try await repository.fetchBlocksCount()
         } catch {
-            // Non-fatal; leave totalBlocks nil so the tile shows "—"
+            // Fallback: try the per-vineyard fan-out so the tile still has a
+            // chance to populate on older backends without `admin_blocks_count`.
+            do {
+                let rows = try await repository.fetchAllPaddocks()
+                totalBlocks = rows.filter { $0.paddock.deletedAt == nil }.count
+            } catch {
+                // Non-fatal; leave totalBlocks nil so the tile shows "—"
+            }
         }
     }
 }

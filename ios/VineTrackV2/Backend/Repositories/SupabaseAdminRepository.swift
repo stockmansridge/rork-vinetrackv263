@@ -369,6 +369,18 @@ final class SupabaseAdminRepository {
         )
     }
 
+    /// Lightweight platform-wide count of active blocks (paddocks). Backed by
+    /// `admin_blocks_count()` so the dashboard tile doesn't have to fan out
+    /// across every vineyard.
+    func fetchBlocksCount() async throws -> Int {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let value: Int = try await provider.client
+            .rpc("admin_blocks_count")
+            .execute()
+            .value
+        return value
+    }
+
     func fetchAllUsers() async throws -> [AdminUserRow] {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         let rows: [UserDTO] = try await provider.client
