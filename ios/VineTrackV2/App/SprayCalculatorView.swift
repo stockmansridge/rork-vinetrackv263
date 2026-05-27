@@ -23,6 +23,7 @@ struct SprayCalculatorView: View {
     @Environment(NewBackendAuthService.self) private var auth
     @Environment(BackendAccessControl.self) private var accessControl
     @Environment(LocationService.self) private var locationService
+    @Environment(\.openURL) private var openURL
     @Environment(\.dismiss) private var dismiss
 
     // Selection
@@ -230,8 +231,38 @@ struct SprayCalculatorView: View {
             .sheet(isPresented: $showStartConfirmation) {
                 startConfirmationSheet
             }
-            .onAppear { applyPrefillIfNeeded() }
+            .onAppear {
+                applyPrefillIfNeeded()
+                autoSelectEquipmentIfSingle()
+            }
+            .onChange(of: store.sprayEquipment.count) { _, _ in
+                autoSelectEquipmentIfSingle()
+            }
         }
+    }
+
+    /// Auto-select the only available equipment so the operator can't
+    /// accidentally skip the section. Multiple options always require an
+    /// explicit choice.
+    private func autoSelectEquipmentIfSingle() {
+        guard selectedEquipmentId == nil else { return }
+        let vineyardId = store.selectedVineyardId
+        let available = store.sprayEquipment.filter { vineyardId == nil || $0.vineyardId == vineyardId }
+        if available.count == 1 {
+            selectedEquipmentId = available.first?.id
+        }
+    }
+
+    /// Normalise a stored label URL so we can open it reliably.
+    /// Accepts inputs that may be missing the `https://` scheme.
+    private static func normalizedLabelURL(_ raw: String) -> URL? {
+        var trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let lower = trimmed.lowercased()
+        if !lower.hasPrefix("http://") && !lower.hasPrefix("https://") {
+            trimmed = "https://" + trimmed
+        }
+        return URL(string: trimmed)
     }
 
     private func applyPrefillIfNeeded() {
@@ -541,36 +572,63 @@ struct SprayCalculatorView: View {
 
     private var equipmentSelection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Button {
-                withAnimation(.spring(duration: 0.3)) { isEquipmentExpanded.toggle() }
-            } label: {
-                HStack {
-                    SectionHeader(title: "Equipment", icon: "wrench.and.screwdriver")
-                    Spacer()
-                    if let id = selectedEquipmentId,
-                       let eq = store.sprayEquipment.first(where: { $0.id == id }) {
-                        Text(eq.name)
-                            .font(.caption)
-                            .foregroundStyle(VineyardTheme.olive)
-                            .lineLimit(1)
+            HStack(spacing: 8) {
+                Button {
+                    withAnimation(.spring(duration: 0.3)) { isEquipmentExpanded.toggle() }
+                } label: {
+                    HStack(spacing: 8) {
+                        SectionHeader(title: "Equipment", icon: "wrench.and.screwdriver")
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                            .rotationEffect(.degrees(isEquipmentExpanded ? 90 : 0))
                     }
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.tertiary)
-                        .rotationEffect(.degrees(isEquipmentExpanded ? 90 : 0))
+                    .contentShape(Rectangle())
                 }
-            }
-            .overlay(alignment: .trailing) {
+                .buttonStyle(.plain)
+                Spacer()
                 Button {
                     showAddEquipment = true
                 } label: {
                     Image(systemName: "plus.circle.fill")
                         .font(.title3)
                         .foregroundStyle(VineyardTheme.olive)
-                        .padding(.trailing, 28)
+                        .padding(.vertical, 4)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Add Equipment")
+            }
+
+            if let id = selectedEquipmentId,
+               let eq = store.sprayEquipment.first(where: { $0.id == id }) {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(VineyardTheme.olive)
+                        .font(.caption)
+                    Text(eq.name)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(VineyardTheme.olive)
+                        .lineLimit(1)
+                    Text("·")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                    Text("\(eq.tankCapacityLitres, specifier: "%.0f") L tank")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+            } else {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .foregroundStyle(.orange)
+                        .font(.caption)
+                    Text("Select equipment to continue")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    Spacer(minLength: 0)
+                }
             }
 
             if isEquipmentExpanded {
@@ -747,9 +805,239 @@ struct SprayCalculatorView: View {
         }
     }
 
-    private var confirmTractorPicker: some View { tractorSelection }
+    private var confirmTractorPicker: some View { mixTractorSection }
 
-    private var confirmTripSetup: some View { tripSetupSection }
+    private var confirmTripSetup: some View { mixTripSetupSection }
+
+    // MARK: - Spray Tank Mixing — Maintenance-style sections
+    //
+    // These sections mirror the layout and mechanics of
+    // `StartTripSheet` (Start Maintenance Trip Tracking) so the spray
+    // trip setup feels identical to the maintenance trip setup.
+
+    private var availableTractors: [Tractor] {
+        let vineyardId = store.selectedVineyardId
+        let filtered = store.tractors.filter { vineyardId == nil || $0.vineyardId == vineyardId }
+        return filtered.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+    }
+
+    private var selectedTractorLabel: String {
+        if let id = selectedTractorId, let t = availableTractors.first(where: { $0.id == id }) {
+            return t.displayName
+        }
+        return availableTractors.isEmpty ? "No tractors configured" : "No tractor selected"
+    }
+
+    @ViewBuilder
+    private func mixSectionContainer<Content: View>(
+        title: String,
+        icon: String,
+        tint: Color,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(tint)
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+            }
+            content()
+        }
+    }
+
+    private var mixTractorSection: some View {
+        mixSectionContainer(title: "Tractor", icon: "car.fill", tint: .indigo) {
+            VStack(spacing: 10) {
+                Menu {
+                    Button {
+                        selectedTractorId = nil
+                    } label: {
+                        HStack {
+                            Text("No tractor")
+                            if selectedTractorId == nil {
+                                Spacer()
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                    if !availableTractors.isEmpty {
+                        Divider()
+                        ForEach(availableTractors) { tractor in
+                            Button {
+                                selectedTractorId = tractor.id
+                            } label: {
+                                HStack {
+                                    Text(tractor.displayName)
+                                    if selectedTractorId == tractor.id {
+                                        Spacer()
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "car.fill")
+                            .foregroundStyle(.indigo)
+                            .frame(width: 24)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Tractor")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+                            Text(selectedTractorLabel)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(14)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(.rect(cornerRadius: 12))
+                }
+                .buttonStyle(.plain)
+                .disabled(availableTractors.isEmpty)
+
+                if availableTractors.isEmpty {
+                    Text("Add tractors in Equipment to enable fuel cost estimates.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 4)
+                } else if selectedTractorId == nil {
+                    Text("Optional — select a tractor so fuel cost can be estimated.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 4)
+                }
+            }
+        }
+    }
+
+    private var mixTripSetupSection: some View {
+        mixSectionContainer(title: "Trip Setup", icon: "map", tint: VineyardTheme.olive) {
+            VStack(spacing: 10) {
+                HStack(spacing: 12) {
+                    Image(systemName: "fan")
+                        .foregroundStyle(VineyardTheme.olive)
+                        .frame(width: 24)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("No. Fans / Jets")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text("Optional — recorded for compliance")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    TextField("e.g. 6", text: $numberOfFansJets)
+                        .keyboardType(.numberPad)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 80)
+                }
+                .padding(14)
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(.rect(cornerRadius: 12))
+
+                Menu {
+                    ForEach(TrackingPattern.allCases) { pattern in
+                        Button {
+                            trackingPatternChoice = pattern
+                        } label: {
+                            HStack {
+                                Image(systemName: pattern.icon)
+                                Text(pattern.title)
+                                if trackingPatternChoice == pattern {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: trackingPatternChoice.icon)
+                            .foregroundStyle(.purple)
+                            .frame(width: 24)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Tracking Pattern")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+                            Text(trackingPatternChoice.title)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(14)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(.rect(cornerRadius: 12))
+                }
+                .buttonStyle(.plain)
+
+                HStack(spacing: 12) {
+                    Image(systemName: "flag.fill")
+                        .foregroundStyle(.blue)
+                        .frame(width: 24)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Start From Row")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        if totalPreviewRows > 0 {
+                            Text("Row \(startingRow) of \(totalPreviewRows)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("Select paddocks to enable row sequencing")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer()
+                    Stepper(value: $startingRow, in: 1...max(totalPreviewRows, 1)) {
+                        Text("\(startingRow)")
+                            .font(.subheadline.weight(.semibold).monospacedDigit())
+                    }
+                    .labelsHidden()
+                    .disabled(totalPreviewRows == 0)
+                }
+                .padding(14)
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(.rect(cornerRadius: 12))
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Image(systemName: reversedDirection ? "arrow.left" : "arrow.right")
+                            .foregroundStyle(.blue)
+                            .frame(width: 24)
+                        Text("Sequence Direction")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                    }
+                    Picker("Sequence direction", selection: $reversedDirection) {
+                        Text("Lower to higher").tag(false)
+                        Text("Higher to lower").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(.rect(cornerRadius: 12))
+            }
+        }
+    }
 
     /// Tank mix preview shown on the Spray Tank Mixing screen so the operator
     /// can review chemical quantities and label notes before tapping Start.
@@ -859,12 +1147,15 @@ struct SprayCalculatorView: View {
                         .clipShape(Capsule())
                 }
                 Spacer()
-                if !labelURL.isEmpty, let url = URL(string: labelURL) {
-                    Link(destination: url) {
+                if let url = Self.normalizedLabelURL(labelURL) {
+                    Button { openURL(url) } label: {
                         Image(systemName: "doc.text.magnifyingglass")
                             .font(.subheadline)
                             .foregroundStyle(VineyardTheme.olive)
+                            .padding(6)
+                            .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
                     .accessibilityLabel("Open chemical label")
                 }
             }
@@ -1635,7 +1926,18 @@ private struct CalcChemicalLineCard: View {
     let chemicals: [SavedChemical]
     let onDelete: () -> Void
 
+    @Environment(\.openURL) private var openURL
     @State private var overrideText: String = ""
+
+    private static func normalizedLabelURL(_ raw: String) -> URL? {
+        var trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let lower = trimmed.lowercased()
+        if !lower.hasPrefix("http://") && !lower.hasPrefix("https://") {
+            trimmed = "https://" + trimmed
+        }
+        return URL(string: trimmed)
+    }
 
     private var selectedChemical: SavedChemical? {
         chemicals.first(where: { $0.id == line.chemicalId })
@@ -1660,12 +1962,13 @@ private struct CalcChemicalLineCard: View {
                 Text(selectedChemical?.name ?? "Select Chemical")
                     .font(.subheadline.weight(.semibold))
                 if let chem = selectedChemical,
-                   !chem.labelURL.isEmpty,
-                   let url = URL(string: chem.labelURL) {
-                    Link(destination: url) {
+                   let url = Self.normalizedLabelURL(chem.labelURL) {
+                    Button { openURL(url) } label: {
                         Image(systemName: "doc.text.magnifyingglass")
                             .font(.subheadline)
                             .foregroundStyle(VineyardTheme.olive)
+                            .padding(6)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Open chemical label")
@@ -1727,22 +2030,46 @@ private struct CalcChemicalLineCard: View {
 
             Divider().padding(.leading, 14)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text("Chemical").font(.caption).foregroundStyle(.secondary)
-                Picker("Chemical", selection: $line.chemicalId) {
+                Menu {
                     ForEach(chemicals) { chem in
-                        Text(chem.name).tag(chem.id)
+                        Button {
+                            if line.chemicalId != chem.id {
+                                line.chemicalId = chem.id
+                                if let firstRate = chem.rates.first {
+                                    line.selectedRateId = firstRate.id
+                                    line.basis = firstRate.basis
+                                }
+                            }
+                        } label: {
+                            HStack {
+                                Text(chem.name)
+                                if line.chemicalId == chem.id {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
                     }
-                }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .onChange(of: line.chemicalId) { _, newValue in
-                    if let chem = chemicals.first(where: { $0.id == newValue }),
-                       let firstRate = chem.rates.first {
-                        line.selectedRateId = firstRate.id
-                        line.basis = firstRate.basis
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(selectedChemical?.name ?? "Select chemical")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                        Spacer()
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
                     }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(.tertiarySystemGroupedBackground))
+                    .clipShape(.rect(cornerRadius: 8))
                 }
+                .buttonStyle(.plain)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
