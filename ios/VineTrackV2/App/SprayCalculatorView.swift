@@ -571,21 +571,12 @@ struct SprayCalculatorView: View {
     }
 
     private var equipmentSelection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
+            // Clean header row — title left, add (+) right. The selected
+            // equipment value is shown in its own card below to avoid
+            // overlap with the add button.
             HStack(spacing: 8) {
-                Button {
-                    withAnimation(.spring(duration: 0.3)) { isEquipmentExpanded.toggle() }
-                } label: {
-                    HStack(spacing: 8) {
-                        SectionHeader(title: "Equipment", icon: "wrench.and.screwdriver")
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.tertiary)
-                            .rotationEffect(.degrees(isEquipmentExpanded ? 90 : 0))
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+                SectionHeader(title: "Equipment", icon: "wrench.and.screwdriver")
                 Spacer()
                 Button {
                     showAddEquipment = true
@@ -600,36 +591,55 @@ struct SprayCalculatorView: View {
                 .accessibilityLabel("Add Equipment")
             }
 
-            if let id = selectedEquipmentId,
-               let eq = store.sprayEquipment.first(where: { $0.id == id }) {
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(VineyardTheme.olive)
-                        .font(.caption)
-                    Text(eq.name)
+            // Selected equipment card — full-width, tappable to expand list.
+            Button {
+                withAnimation(.spring(duration: 0.3)) { isEquipmentExpanded.toggle() }
+            } label: {
+                HStack(spacing: 12) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(VineyardTheme.olive.opacity(0.15))
+                            .frame(width: 44, height: 44)
+                        Image(systemName: "wrench.and.screwdriver.fill")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(VineyardTheme.olive)
+                    }
+                    if let id = selectedEquipmentId,
+                       let eq = store.sprayEquipment.first(where: { $0.id == id }) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(eq.name)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                            Text("\(eq.tankCapacityLitres, specifier: "%.0f") L tank")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(store.sprayEquipment.isEmpty ? "No equipment configured" : "Select equipment")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+                            Text(store.sprayEquipment.isEmpty ? "Tap + to add equipment" : "Required to continue")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(VineyardTheme.olive)
-                        .lineLimit(1)
-                    Text("·")
-                        .font(.caption)
                         .foregroundStyle(.tertiary)
-                    Text("\(eq.tankCapacityLitres, specifier: "%.0f") L tank")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
+                        .rotationEffect(.degrees(isEquipmentExpanded ? 90 : 0))
                 }
-            } else {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.circle.fill")
-                        .foregroundStyle(.orange)
-                        .font(.caption)
-                    Text("Select equipment to continue")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                    Spacer(minLength: 0)
-                }
+                .padding(14)
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(.rect(cornerRadius: 12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(selectedEquipmentId == nil ? Color.orange.opacity(0.5) : Color.clear, lineWidth: 1.5)
+                )
             }
+            .buttonStyle(.plain)
 
             if isEquipmentExpanded {
                 VStack(spacing: 0) {
@@ -922,9 +932,13 @@ struct SprayCalculatorView: View {
         }
     }
 
+    /// Maintenance-style trip setup for the Spray Tank Mixing screen.
+    /// Mirrors `StartTripSheet`: full-width pattern cards, Menu-based start
+    /// row picker, segmented sequence direction, and a path sequence preview.
     private var mixTripSetupSection: some View {
-        mixSectionContainer(title: "Trip Setup", icon: "map", tint: VineyardTheme.olive) {
-            VStack(spacing: 10) {
+        VStack(spacing: 20) {
+            // No. Fans / Jets — keep as a single optional card.
+            mixSectionContainer(title: "Equipment Settings", icon: "fan", tint: VineyardTheme.olive) {
                 HStack(spacing: 12) {
                     Image(systemName: "fan")
                         .foregroundStyle(VineyardTheme.olive)
@@ -946,97 +960,128 @@ struct SprayCalculatorView: View {
                 .padding(14)
                 .background(Color(.secondarySystemGroupedBackground))
                 .clipShape(.rect(cornerRadius: 12))
+            }
 
-                Menu {
+            // Tracking Pattern — large selection cards.
+            mixSectionContainer(title: "Tracking Pattern", icon: "arrow.triangle.swap", tint: .purple) {
+                VStack(spacing: 10) {
                     ForEach(TrackingPattern.allCases) { pattern in
-                        Button {
-                            trackingPatternChoice = pattern
-                        } label: {
-                            HStack {
-                                Image(systemName: pattern.icon)
-                                Text(pattern.title)
-                                if trackingPatternChoice == pattern {
-                                    Spacer()
-                                    Image(systemName: "checkmark")
+                        mixPatternRow(pattern: pattern)
+                    }
+                }
+            }
+
+            // Start From Row + Sequence Direction.
+            if totalPreviewRows > 0 {
+                mixSectionContainer(title: "Start Row & Direction", icon: "arrow.up.arrow.down", tint: .blue) {
+                    VStack(spacing: 10) {
+                        Menu {
+                            ForEach(1...totalPreviewRows, id: \.self) { row in
+                                Button {
+                                    startingRow = row
+                                } label: {
+                                    HStack {
+                                        Text("Row \(row)")
+                                        if startingRow == row {
+                                            Spacer()
+                                            Image(systemName: "checkmark")
+                                        }
+                                    }
                                 }
                             }
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "flag.fill")
+                                    .foregroundStyle(.blue)
+                                    .frame(width: 24)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Start From Row")
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(.primary)
+                                    Text("Row \(startingRow) of \(totalPreviewRows)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(14)
+                            .background(Color(.secondarySystemGroupedBackground))
+                            .clipShape(.rect(cornerRadius: 12))
                         }
-                    }
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: trackingPatternChoice.icon)
-                            .foregroundStyle(.purple)
-                            .frame(width: 24)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Tracking Pattern")
+                        .buttonStyle(.plain)
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Sequence direction")
                                 .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.primary)
-                            Text(trackingPatternChoice.title)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            Picker("Sequence direction", selection: $reversedDirection) {
+                                Text("Lower to higher").tag(false)
+                                Text("Higher to lower").tag(true)
+                            }
+                            .pickerStyle(.segmented)
                         }
-                        Spacer()
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.tertiary)
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(.secondarySystemGroupedBackground))
+                        .clipShape(.rect(cornerRadius: 12))
                     }
-                    .padding(14)
-                    .background(Color(.secondarySystemGroupedBackground))
-                    .clipShape(.rect(cornerRadius: 12))
                 }
-                .buttonStyle(.plain)
-
-                HStack(spacing: 12) {
-                    Image(systemName: "flag.fill")
-                        .foregroundStyle(.blue)
-                        .frame(width: 24)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Start From Row")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.primary)
-                        if totalPreviewRows > 0 {
-                            Text("Row \(startingRow) of \(totalPreviewRows)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Text("Select paddocks to enable row sequencing")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    Spacer()
-                    Stepper(value: $startingRow, in: 1...max(totalPreviewRows, 1)) {
-                        Text("\(startingRow)")
-                            .font(.subheadline.weight(.semibold).monospacedDigit())
-                    }
-                    .labelsHidden()
-                    .disabled(totalPreviewRows == 0)
+            } else {
+                mixSectionContainer(title: "Start Row & Direction", icon: "arrow.up.arrow.down", tint: .blue) {
+                    Text("Row guidance unavailable — selected paddocks have no row geometry.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(.secondarySystemGroupedBackground))
+                        .clipShape(.rect(cornerRadius: 12))
                 }
-                .padding(14)
-                .background(Color(.secondarySystemGroupedBackground))
-                .clipShape(.rect(cornerRadius: 12))
-
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
-                        Image(systemName: reversedDirection ? "arrow.left" : "arrow.right")
-                            .foregroundStyle(.blue)
-                            .frame(width: 24)
-                        Text("Sequence Direction")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.primary)
-                    }
-                    Picker("Sequence direction", selection: $reversedDirection) {
-                        Text("Lower to higher").tag(false)
-                        Text("Higher to lower").tag(true)
-                    }
-                    .pickerStyle(.segmented)
-                }
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(.secondarySystemGroupedBackground))
-                .clipShape(.rect(cornerRadius: 12))
             }
         }
+    }
+
+    /// Single pattern selection card matching `StartTripSheet.patternRow`.
+    private func mixPatternRow(pattern: TrackingPattern) -> some View {
+        let isSelected = trackingPatternChoice == pattern
+        return Button {
+            withAnimation(.snappy(duration: 0.2)) {
+                trackingPatternChoice = pattern
+            }
+        } label: {
+            HStack(spacing: 14) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill((isSelected ? Color.purple : Color.secondary).opacity(0.15))
+                        .frame(width: 44, height: 44)
+                    Image(systemName: pattern.icon)
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(isSelected ? .purple : .secondary)
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(pattern.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text(pattern.subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                Spacer()
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .foregroundStyle(isSelected ? Color.purple : Color.secondary.opacity(0.5))
+            }
+            .padding(14)
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(.rect(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(isSelected ? Color.purple.opacity(0.5) : .clear, lineWidth: 1.5)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     /// Tank mix preview shown on the Spray Tank Mixing screen so the operator
