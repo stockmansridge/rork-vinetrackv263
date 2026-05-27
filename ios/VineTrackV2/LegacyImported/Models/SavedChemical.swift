@@ -102,6 +102,10 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
     var rates: [ChemicalRate]
     var purchase: ChemicalPurchase?
     var labelURL: String
+    /// Optional manufacturer/product marketing page. Distinct from
+    /// `labelURL` — must NEVER be displayed as a "Label" link in the UI.
+    /// Show separately as "Product page" / "Manufacturer page".
+    var productURL: String
     var modeOfAction: String
 
     init(
@@ -121,6 +125,7 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         rates: [ChemicalRate] = [],
         purchase: ChemicalPurchase? = nil,
         labelURL: String = "",
+        productURL: String = "",
         modeOfAction: String = ""
     ) {
         self.id = id
@@ -139,12 +144,14 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         self.rates = rates
         self.purchase = purchase
         self.labelURL = labelURL
+        self.productURL = productURL
         self.modeOfAction = modeOfAction
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
         case id, vineyardId, name, ratePerHa, unit, chemicalGroup, use, manufacturer
-        case restrictions, notes, crop, problem, activeIngredient, rates, purchase, labelURL, modeOfAction
+        case restrictions, notes, crop, problem, activeIngredient, rates, purchase
+        case labelURL, productURL, modeOfAction
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -165,6 +172,9 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         rates = try container.decodeIfPresent([ChemicalRate].self, forKey: .rates) ?? []
         purchase = try container.decodeIfPresent(ChemicalPurchase.self, forKey: .purchase)
         labelURL = LabelURLValidator.sanitize(try container.decodeIfPresent(String.self, forKey: .labelURL) ?? "")
+        // Product URL is user-facing as a non-label link; sanitize for
+        // placeholder hosts but do not require a document path.
+        productURL = LabelURLValidator.sanitize(try container.decodeIfPresent(String.self, forKey: .productURL) ?? "")
         modeOfAction = try container.decodeIfPresent(String.self, forKey: .modeOfAction) ?? ""
     }
 }

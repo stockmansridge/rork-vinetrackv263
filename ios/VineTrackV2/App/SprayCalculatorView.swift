@@ -1257,6 +1257,7 @@ struct SprayCalculatorView: View {
             store.savedChemicals.first(where: { $0.id == id })
         }
         let labelURL = saved?.labelURL ?? ""
+        let productURL = saved?.productURL ?? ""
         let restrictions = saved?.restrictions ?? ""
         let isOverridden: Bool = chemicalLines.first(where: { $0.chemicalId == chemResult.savedChemicalId })?.overrideRate != nil
 
@@ -1295,6 +1296,22 @@ struct SprayCalculatorView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Open chemical label")
+                }
+                // Manufacturer/product page — visually distinct (globe) and
+                // never labelled "Label". Shown in addition to, or instead
+                // of, the official label icon.
+                if let url = Self.normalizedLabelURL(productURL) {
+                    Button {
+                        openURL(url)
+                    } label: {
+                        Image(systemName: "globe")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .padding(6)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Open product page (not the official label)")
                 }
             }
             HStack(spacing: 16) {
@@ -2123,6 +2140,20 @@ private struct CalcChemicalLineCard: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Open chemical label")
+                }
+                if let chem = selectedChemical,
+                   let url = Self.normalizedLabelURL(chem.productURL) {
+                    Button {
+                        openURL(url)
+                    } label: {
+                        Image(systemName: "globe")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .padding(6)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Open product page (not the official label)")
                 }
                 Spacer()
                 if let chem = selectedChemical, !chem.rates.isEmpty {

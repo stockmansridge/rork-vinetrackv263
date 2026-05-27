@@ -214,6 +214,7 @@ struct EditSavedChemicalSheet: View {
     @State private var activeIngredient: String = ""
     @State private var modeOfAction: String = ""
     @State private var labelURL: String = ""
+    @State private var productURL: String = ""
     @State private var trackPurchase: Bool = false
     @State private var containerSizeText: String = ""
     @State private var containerUnit: ChemicalUnit = .litres
@@ -239,6 +240,7 @@ struct EditSavedChemicalSheet: View {
             _activeIngredient = State(initialValue: c.activeIngredient)
             _modeOfAction = State(initialValue: c.modeOfAction)
             _labelURL = State(initialValue: c.labelURL)
+            _productURL = State(initialValue: c.productURL)
 
             let perHa = c.rates.first(where: { $0.basis == .perHectare })
             let per100L = c.rates.first(where: { $0.basis == .per100Litres })
@@ -361,17 +363,25 @@ struct EditSavedChemicalSheet: View {
     }
 
     private var detailsSection: some View {
-        Section("Details") {
+        Section {
             TextField("Active Ingredient", text: $activeIngredient)
             TextField("Chemical Group", text: $chemicalGroup)
             TextField("Use / Problem", text: $use)
             TextField("Target Problem (e.g. Powdery Mildew)", text: $problem)
             TextField("Manufacturer", text: $manufacturer)
             TextField("Mode of Action (MOA)", text: $modeOfAction)
-            TextField("Label URL", text: $labelURL)
+            TextField("Label URL (official label PDF)", text: $labelURL)
                 .keyboardType(.URL)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
+            TextField("Product / Manufacturer Page (optional)", text: $productURL)
+                .keyboardType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+        } header: {
+            Text("Details")
+        } footer: {
+            Text("Use Label URL only for the official product label (PDF preferred). Use Product Page for marketing/manufacturer pages — these are never shown as a \"Label\".")
         }
     }
 
@@ -480,6 +490,9 @@ struct EditSavedChemicalSheet: View {
             if manufacturer.isEmpty { manufacturer = info.brand }
             if chemicalGroup.isEmpty { chemicalGroup = info.chemicalGroup }
             if labelURL.isEmpty { labelURL = LabelURLValidator.sanitize(info.labelURL) }
+            if productURL.isEmpty, let p = info.productURL {
+                productURL = LabelURLValidator.sanitize(p)
+            }
             if let moa = info.modeOfAction, modeOfAction.isEmpty { modeOfAction = moa }
             if use.isEmpty { use = info.primaryUse }
             unit = info.defaultUnit
@@ -534,6 +547,7 @@ struct EditSavedChemicalSheet: View {
                     chemicalGroup: chemicalGroup,
                     labelURL: labelURL,
                     costDollars: cost,
+
                     containerSizeML: containerSize,
                     containerUnit: containerUnit
                 )
@@ -552,6 +566,7 @@ struct EditSavedChemicalSheet: View {
             existing.activeIngredient = activeIngredient
             existing.modeOfAction = modeOfAction
             existing.labelURL = labelURL
+            existing.productURL = productURL
             existing.rates = rates
             existing.purchase = purchase
             store.updateSavedChemical(existing)
@@ -569,6 +584,7 @@ struct EditSavedChemicalSheet: View {
                 rates: rates,
                 purchase: purchase,
                 labelURL: labelURL,
+                productURL: productURL,
                 modeOfAction: modeOfAction
             )
             store.addSavedChemical(new)

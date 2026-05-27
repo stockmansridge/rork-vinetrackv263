@@ -19,6 +19,7 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
     let rates: [ChemicalRate]?
     let purchase: ChemicalPurchase?
     let labelUrl: String?
+    let productUrl: String?
     let modeOfAction: String?
     let createdAt: Date?
     let updatedAt: Date?
@@ -42,11 +43,40 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
         case rates
         case purchase
         case labelUrl = "label_url"
+        case productUrl = "product_url"
         case modeOfAction = "mode_of_action"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case deletedAt = "deleted_at"
         case clientUpdatedAt = "client_updated_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(UUID.self, forKey: .id)
+        self.vineyardId = try c.decode(UUID.self, forKey: .vineyardId)
+        self.name = try c.decodeIfPresent(String.self, forKey: .name)
+        self.ratePerHa = try c.decodeIfPresent(Double.self, forKey: .ratePerHa)
+        self.unit = try c.decodeIfPresent(String.self, forKey: .unit)
+        self.chemicalGroup = try c.decodeIfPresent(String.self, forKey: .chemicalGroup)
+        self.use = try c.decodeIfPresent(String.self, forKey: .use)
+        self.manufacturer = try c.decodeIfPresent(String.self, forKey: .manufacturer)
+        self.restrictions = try c.decodeIfPresent(String.self, forKey: .restrictions)
+        self.notes = try c.decodeIfPresent(String.self, forKey: .notes)
+        self.crop = try c.decodeIfPresent(String.self, forKey: .crop)
+        self.problem = try c.decodeIfPresent(String.self, forKey: .problem)
+        self.activeIngredient = try c.decodeIfPresent(String.self, forKey: .activeIngredient)
+        self.rates = try c.decodeIfPresent([ChemicalRate].self, forKey: .rates)
+        self.purchase = try c.decodeIfPresent(ChemicalPurchase.self, forKey: .purchase)
+        self.labelUrl = try c.decodeIfPresent(String.self, forKey: .labelUrl)
+        // product_url was added in sql/086; tolerate older rows where the
+        // column is absent so decoding doesn't fail for legacy backends.
+        self.productUrl = try c.decodeIfPresent(String.self, forKey: .productUrl)
+        self.modeOfAction = try c.decodeIfPresent(String.self, forKey: .modeOfAction)
+        self.createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt)
+        self.updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt)
+        self.deletedAt = try c.decodeIfPresent(Date.self, forKey: .deletedAt)
+        self.clientUpdatedAt = try c.decodeIfPresent(Date.self, forKey: .clientUpdatedAt)
     }
 }
 
@@ -67,6 +97,7 @@ nonisolated struct BackendSavedChemicalUpsert: Encodable, Sendable {
     let rates: [ChemicalRate]
     let purchase: ChemicalPurchase?
     let labelUrl: String
+    let productUrl: String
     let modeOfAction: String
     let createdBy: UUID?
     let clientUpdatedAt: Date
@@ -88,6 +119,7 @@ nonisolated struct BackendSavedChemicalUpsert: Encodable, Sendable {
         case rates
         case purchase
         case labelUrl = "label_url"
+        case productUrl = "product_url"
         case modeOfAction = "mode_of_action"
         case createdBy = "created_by"
         case clientUpdatedAt = "client_updated_at"
@@ -113,6 +145,7 @@ extension BackendSavedChemical {
             rates: c.rates,
             purchase: c.purchase,
             labelUrl: c.labelURL,
+            productUrl: c.productURL,
             modeOfAction: c.modeOfAction,
             createdBy: createdBy,
             clientUpdatedAt: clientUpdatedAt
@@ -137,6 +170,7 @@ extension BackendSavedChemical {
             rates: rates ?? [],
             purchase: purchase,
             labelURL: LabelURLValidator.sanitize(labelUrl ?? ""),
+            productURL: LabelURLValidator.sanitize(productUrl ?? ""),
             modeOfAction: modeOfAction ?? ""
         )
     }
