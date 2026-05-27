@@ -46,8 +46,14 @@ struct SprayCalculatorView: View {
     // Trip setup
     @State private var numberOfFansJets: String = ""
     @State private var trackingPatternChoice: TrackingPattern = .sequential
-    @State private var startingRow: Int = 1
-    @State private var reversedDirection: Bool = false
+    /// Selected start path across the multi-block selection. Path X.5 sits
+    /// between rows X and X+1; defaults snap to the first available path in
+    /// `clampStartPath()` whenever the paddock selection changes.
+    @State private var startPath: Double = 0.5
+    /// Sequence direction. `true` = lower rows first (ascending), `false` =
+    /// higher rows first (descending). Mirrors `StartTripSheet`'s
+    /// `directionHigherFirst` so both flows share semantics.
+    @State private var directionHigherFirst: Bool = true
 
     // Captured at job start
     @State private var capturedTemperature: Double?
@@ -160,18 +166,36 @@ struct SprayCalculatorView: View {
         !selectedPaddockIds.isEmpty && selectedEquipmentId != nil && !chemicalLines.isEmpty
     }
 
-    private var previewPaddock: Paddock? {
-        selectedPaddocks.first(where: { !$0.rows.isEmpty }) ?? selectedPaddocks.first
+    /// Sorted set of selected paddocks (lowest-row-first), matching
+    /// `StartTripSheet`. Drives every multi-block computation below.
+    private var orderedSelectedPaddocks: [Paddock] {
+        selectedPaddocks.sorted(by: TripRowSequencePlanner.rowOrderSort)
     }
 
-    private var totalPreviewRows: Int { previewPaddock?.rows.count ?? 0 }
+    /// Total row count across every selected block. Replaces the old
+    /// single-block `totalPreviewRows`.
+    private var combinedTotalRows: Int {
+        TripRowSequencePlanner.combinedTotalRows(in: orderedSelectedPaddocks)
+    }
 
+    /// Whether the selection has any row geometry at all.
+    private var hasAnyRowGeometry: Bool {
+        TripRowSequencePlanner.hasAnyRowGeometry(orderedSelectedPaddocks)
+    }
+
+    /// Available start paths across the full selection (e.g. 68.5, 69.5, ...).
+    private var availablePaths: [Double] {
+        TripRowSequencePlanner.availablePaths(in: orderedSelectedPaddocks)
+    }
+
+    /// Proposed row sequence shared by the preview card and trip start.
     private var pathSequencePreview: [Double] {
-        guard let p = previewPaddock, !p.rows.isEmpty else { return [] }
-        return trackingPatternChoice.generateSequence(
-            startRow: max(1, min(startingRow, p.rows.count)),
-            totalRows: p.rows.count,
-            reversed: reversedDirection
+        guard hasAnyRowGeometry, trackingPatternChoice != .freeDrive else { return [] }
+        return TripRowSequencePlanner.generateSequence(
+            paddocks: orderedSelectedPaddocks,
+            pattern: trackingPatternChoice,
+            startPath: startPath,
+            directionHigherFirst: directionHigherFirst
         )
     }
 
@@ -262,9 +286,13 @@ struct SprayCalculatorView: View {
             .onAppear {
                 applyPrefillIfNeeded()
                 autoSelectEquipmentIfSingle()
+                clampStartPath()
             }
             .onChange(of: store.sprayEquipment.count) { _, _ in
                 autoSelectEquipmentIfSingle()
+            }
+            .onChange(of: selectedPaddockIds) { _, _ in
+                clampStartPath()
             }
         }
     }
@@ -1104,65 +1132,30 @@ struct SprayCalculatorView: View {
                 }
             }
 
-            // Start From Row + Sequence Direction.
-            if totalPreviewRows > 0 {
-                mixSectionContainer(title: "Start Row & Direction", icon: "arrow.up.arrow.down", tint: .blue) {
-                    VStack(spacing: 10) {
-                        Menu {
-                            ForEach(1...totalPreviewRows, id: \.self) { row in
-                                Button {
-                                    startingRow = row
-                                } label: {
-                                    HStack {
-                                        Text("Row \(row)")
-                                        if startingRow == row {
-                                            Spacer()
-                                            Image(systemName: "checkmark")
-                                        }
-                                    }
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 12) {
-                                Image(systemName: "flag.fill")
-                                    .foregroundStyle(.blue)
-                                    .frame(width: 24)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Start From Row")
-                                        .font(.subheadline.weight(.semibold))
-                                        .foregroundStyle(.primary)
-                                    Text("Row \(startingRow) of \(totalPreviewRows)")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Image(systemName: "chevron.up.chevron.down")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.tertiary)
-                            }
-                            .padding(14)
-                            .background(Color(.secondarySystemGroupedBackground))
-                            .clipShape(.rect(cornerRadius: 12))
-                        }
-                        .buttonStyle(.plain)
-
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Sequence direction")
+            // Start Path + Sequence Direction — matches Maintenance Trip.
+            if hasAnyRowGeometry, trackingPatternChoice != .freeDrive {
+                mixStartPathSection
+                mixProposedSequenceSection
+            } else if trackingPatternChoice == .freeDrive {
+                mixSectionContainer(title: "Free Drive", icon: "scribble.variable", tint: .teal) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "info.circle.fill")
+                                .foregroundStyle(.teal)
+                            Text("No planned row sequence")
                                 .font(.subheadline.weight(.semibold))
-                            Picker("Sequence direction", selection: $reversedDirection) {
-                                Text("Lower to higher").tag(false)
-                                Text("Higher to lower").tag(true)
-                            }
-                            .pickerStyle(.segmented)
                         }
-                        .padding(14)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color(.secondarySystemGroupedBackground))
-                        .clipShape(.rect(cornerRadius: 12))
+                        Text("Drive freely — the app detects the row/path you are in from GPS, ticks it off when covered, and keeps recording distance, pins and trip history.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(.rect(cornerRadius: 12))
                 }
             } else {
-                mixSectionContainer(title: "Start Row & Direction", icon: "arrow.up.arrow.down", tint: .blue) {
+                mixSectionContainer(title: "Start Path & Direction", icon: "arrow.up.arrow.down", tint: .blue) {
                     Text("Row guidance unavailable — selected paddocks have no row geometry.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -1172,6 +1165,146 @@ struct SprayCalculatorView: View {
                         .clipShape(.rect(cornerRadius: 12))
                 }
             }
+        }
+    }
+
+    /// Start Path + Sequence Direction card, identical layout to
+    /// `StartTripSheet.directionSection` so Maintenance and Spray match.
+    private var mixStartPathSection: some View {
+        mixSectionContainer(title: "Start Path & Direction", icon: "arrow.up.arrow.down", tint: .blue) {
+            VStack(spacing: 10) {
+                HStack(spacing: 6) {
+                    Image(systemName: "info.circle")
+                        .font(.caption2)
+                    Text(rowGuidanceHelperText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                    Spacer()
+                }
+
+                Menu {
+                    ForEach(availablePaths, id: \.self) { path in
+                        Button {
+                            startPath = path
+                        } label: {
+                            HStack {
+                                Text(TripRowSequencePlanner.pathMenuLabel(path, paddocks: orderedSelectedPaddocks))
+                                if abs(path - startPath) < 0.01 {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
+                            .foregroundStyle(.blue)
+                            .frame(width: 24)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Start path")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+                            Text(TripRowSequencePlanner.pathMenuLabel(startPath, paddocks: orderedSelectedPaddocks))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(14)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(.rect(cornerRadius: 12))
+                }
+                .buttonStyle(.plain)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Sequence direction")
+                        .font(.subheadline.weight(.semibold))
+                    Picker("Sequence direction", selection: $directionHigherFirst) {
+                        Text("Higher to lower").tag(false)
+                        Text("Lower to higher").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(.rect(cornerRadius: 12))
+            }
+        }
+    }
+
+    /// Proposed Row Sequence preview card, mirrors
+    /// `StartTripSheet.sequencePreviewSection`.
+    private var mixProposedSequenceSection: some View {
+        mixSectionContainer(title: "Proposed Row Sequence", icon: "list.number", tint: .purple) {
+            VStack(alignment: .leading, spacing: 8) {
+                if let note = TripRowSequencePlanner.patternPreviewNote(trackingPatternChoice) {
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                let sequence = pathSequencePreview
+                if sequence.isEmpty {
+                    Text("No sequence available for the current selection.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(.secondarySystemGroupedBackground))
+                        .clipShape(.rect(cornerRadius: 12))
+                } else {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .top, spacing: 6) {
+                            Image(systemName: "sparkles")
+                                .font(.caption2)
+                                .foregroundStyle(.purple)
+                            Text(TripRowSequencePlanner.sequencePreviewText(sequence))
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.primary)
+                                .lineLimit(3)
+                                .truncationMode(.tail)
+                            Spacer(minLength: 0)
+                        }
+                        Text("\(sequence.count) path\(sequence.count == 1 ? "" : "s") planned")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(.rect(cornerRadius: 12))
+                }
+            }
+        }
+    }
+
+    /// Helper line beneath the Start Path picker ("Row guidance follows all
+    /// selected blocks (Rows 1–46 · Paths 0.5–46.5)").
+    private var rowGuidanceHelperText: String {
+        let n = combinedTotalRows
+        guard n > 0 else { return "Row guidance unavailable for the selected blocks" }
+        let range = TripRowSequencePlanner.combinedRangeLabel(orderedSelectedPaddocks)
+        let paths = TripRowSequencePlanner.combinedPathsLabel(orderedSelectedPaddocks)
+        if orderedSelectedPaddocks.count > 1 {
+            return "Row guidance follows all selected blocks (\(range) · \(paths))"
+        }
+        return "Row guidance follows selected block (\(range) · \(paths))"
+    }
+
+    /// Snap `startPath` to a valid path in `availablePaths`. Called from
+    /// onAppear and whenever the paddock selection changes.
+    private func clampStartPath() {
+        let paths = availablePaths
+        guard let first = paths.first else { return }
+        if !paths.contains(where: { abs($0 - startPath) < 0.01 }) {
+            startPath = first
+        } else {
+            startPath = TripRowSequencePlanner.clampedStartPath(startPath, paddocks: orderedSelectedPaddocks)
         }
     }
 
@@ -1492,79 +1625,6 @@ struct SprayCalculatorView: View {
         }
     }
 
-    private var tripSetupSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SectionHeader(title: "Trip Setup", icon: "map")
-
-            VStack(spacing: 0) {
-                HStack {
-                    Label("No. Fans/Jets", systemImage: "fan")
-                        .font(.subheadline)
-                    Spacer()
-                    TextField("e.g. 6", text: $numberOfFansJets)
-                        .keyboardType(.numberPad)
-                        .multilineTextAlignment(.trailing)
-                        .frame(width: 100)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-
-                Divider().padding(.leading, 12)
-
-                HStack {
-                    Label("Tracking Pattern", systemImage: "arrow.triangle.swap")
-                        .font(.subheadline)
-                    Spacer()
-                    Menu {
-                        ForEach(TrackingPattern.allCases) { pattern in
-                            Button(pattern.title) { trackingPatternChoice = pattern }
-                        }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text(trackingPatternChoice.title)
-                                .font(.subheadline.weight(.medium))
-                            Image(systemName: "chevron.up.chevron.down").font(.caption2)
-                        }
-                        .foregroundStyle(VineyardTheme.olive)
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-
-                Divider().padding(.leading, 12)
-
-                HStack {
-                    Label("Start From Row", systemImage: "flag")
-                        .font(.subheadline)
-                    Spacer()
-                    Stepper(value: $startingRow, in: 1...max(totalPreviewRows, 1)) {
-                        Text("\(startingRow)\(totalPreviewRows > 0 ? " of \(totalPreviewRows)" : "")")
-                            .font(.subheadline.weight(.medium).monospacedDigit())
-                    }
-                    .labelsHidden()
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-
-                Divider().padding(.leading, 12)
-
-                Toggle(isOn: $reversedDirection) {
-                    Label("Reverse Direction", systemImage: reversedDirection ? "arrow.left" : "arrow.right")
-                        .font(.subheadline)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-            }
-            .background(Color(.secondarySystemGroupedBackground))
-            .clipShape(.rect(cornerRadius: 10))
-
-            if previewPaddock == nil {
-                Text("Select paddocks to enable row sequencing.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-        }
-    }
 
     private var weatherNoteSection: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1753,14 +1813,7 @@ struct SprayCalculatorView: View {
     }
 
     private var pathSequenceText: String {
-        let preview = pathSequencePreview.prefix(40)
-        let formatted = preview.map { value -> String in
-            value.truncatingRemainder(dividingBy: 1) == 0
-                ? String(format: "%.0f", value)
-                : String(format: "%.1f", value)
-        }
-        let suffix = pathSequencePreview.count > preview.count ? " …" : ""
-        return formatted.joined(separator: " → ") + suffix
+        TripRowSequencePlanner.sequencePreviewText(pathSequencePreview, maxItems: 40)
     }
 
     private func confirmRow(label: String, value: String, icon: String) -> some View {
@@ -2012,18 +2065,12 @@ struct SprayCalculatorView: View {
 
         var tripWithTanks = activeTrip
         tripWithTanks.totalTanks = tanks.count
-        if let preview = previewPaddock, !preview.rows.isEmpty {
-            let sequence = trackingPatternChoice.generateSequence(
-                startRow: max(1, min(startingRow, preview.rows.count)),
-                totalRows: preview.rows.count,
-                reversed: reversedDirection
-            )
-            if let first = sequence.first {
-                tripWithTanks.rowSequence = sequence
-                tripWithTanks.sequenceIndex = 0
-                tripWithTanks.currentRowNumber = first
-                tripWithTanks.nextRowNumber = sequence.dropFirst().first ?? first
-            }
+        let sequence = pathSequencePreview
+        if let first = sequence.first {
+            tripWithTanks.rowSequence = sequence
+            tripWithTanks.sequenceIndex = 0
+            tripWithTanks.currentRowNumber = first
+            tripWithTanks.nextRowNumber = sequence.dropFirst().first ?? first
         }
         store.updateTrip(tripWithTanks)
 
