@@ -120,9 +120,8 @@ struct LocationTroubleshooterView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    if let log = diagnosticLog,
-                       log.vineyardsAttempted - log.vineyardsSucceeded > 0 {
-                        Text("\(log.vineyardsAttempted - log.vineyardsSucceeded) vineyards had missing or incomplete geometry.")
+                    if let log = diagnosticLog, log.vineyardsSkipped > 0 {
+                        Text("\(log.vineyardsSkipped) vineyards had missing or incomplete geometry.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -362,6 +361,9 @@ struct LocationTroubleshooterView: View {
                 vineyardsAttempted: result.vineyardsAttempted,
                 vineyardsSucceeded: result.vineyardsSucceeded,
                 vineyardsUsable: result.vineyardsUsable,
+                uniqueVineyardIdsInPaddockData: result.uniqueVineyardIdsInPaddockData,
+                uniqueVineyardIdsInSkippedPaddocks: result.uniqueVineyardIdsInSkippedPaddocks,
+                paddockVineyardsNotInVineyardRPC: result.paddockVineyardsNotInVineyardRPC,
                 paddocksReturned: result.paddocksReturned,
                 paddocksUsable: mapped.count,
                 rowsReturned: result.rowsReturned,
@@ -401,6 +403,9 @@ struct LocationTroubleshooterView: View {
                 vineyardsAttempted: 0,
                 vineyardsSucceeded: 0,
                 vineyardsUsable: 0,
+                uniqueVineyardIdsInPaddockData: 0,
+                uniqueVineyardIdsInSkippedPaddocks: 0,
+                paddockVineyardsNotInVineyardRPC: 0,
                 paddocksReturned: 0,
                 paddocksUsable: 0,
                 rowsReturned: 0,
@@ -724,6 +729,9 @@ private struct AdminGeometryDiagnosticLog {
     let vineyardsAttempted: Int
     let vineyardsSucceeded: Int
     let vineyardsUsable: Int
+    let uniqueVineyardIdsInPaddockData: Int
+    let uniqueVineyardIdsInSkippedPaddocks: Int
+    let paddockVineyardsNotInVineyardRPC: Int
     let paddocksReturned: Int
     let paddocksUsable: Int
     let rowsReturned: Int
@@ -735,7 +743,11 @@ private struct AdminGeometryDiagnosticLog {
     let vineyardErrors: [String]
     let skippedPaddocks: [SkippedPaddock]
 
-    var vineyardsSkipped: Int { max(0, vineyardsAttempted - vineyardsSucceeded) }
+    /// Vineyards we attempted to load but whose paddock RPC failed.
+    var vineyardsFailedRpc: Int { max(0, vineyardsAttempted - vineyardsSucceeded) }
+    /// Vineyards returned by the vineyard RPC that did not yield any usable
+    /// geometry — either the RPC failed or every paddock was skipped.
+    var vineyardsSkipped: Int { max(0, vineyardsReturned - vineyardsUsable) }
 
     var renderedText: String {
         var lines: [String] = []
@@ -749,20 +761,25 @@ private struct AdminGeometryDiagnosticLog {
         lines.append("  \(rpcName)")
         lines.append("")
         lines.append("Returned:")
-        lines.append("  Vineyards returned: \(vineyardsReturned)")
-        lines.append("  Paddocks returned: \(paddocksReturned)")
-        lines.append("  Rows returned:     \(rowsReturned)")
+        lines.append("  Vineyard records returned:           \(vineyardsReturned)")
+        lines.append("  Unique vineyard IDs in paddock data: \(uniqueVineyardIdsInPaddockData)")
+        lines.append("  Paddocks returned:                   \(paddocksReturned)")
+        lines.append("  Rows returned:                       \(rowsReturned)")
+        if paddockVineyardsNotInVineyardRPC > 0 {
+            lines.append("  Paddocks referenced additional vineyards not returned by vineyard RPC: \(paddockVineyardsNotInVineyardRPC)")
+        }
         lines.append("")
         lines.append("Usable:")
-        lines.append("  Vineyards loaded: \(vineyardsUsable)")
-        lines.append("  Paddocks usable:  \(paddocksUsable)")
-        lines.append("  Rows usable:      \(rowsUsable)")
+        lines.append("  Unique vineyards with usable geometry: \(vineyardsUsable)")
+        lines.append("  Paddocks usable:                       \(paddocksUsable)")
+        lines.append("  Rows usable:                           \(rowsUsable)")
         lines.append("")
         lines.append("Skipped:")
-        lines.append("  Vineyards skipped: \(vineyardsSkipped) (\(vineyardsSucceeded)/\(vineyardsAttempted) succeeded)")
-        lines.append("  Paddocks with empty geometry: \(paddocksWithoutGeometry)")
-        lines.append("  Invalid polygon vertices skipped: \(skippedPolygonPoints)")
-        lines.append("  Rows skipped: \(skippedRows)")
+        lines.append("  Vineyards skipped:                     \(vineyardsSkipped) (\(vineyardsSucceeded)/\(vineyardsAttempted) vineyard RPC calls succeeded)")
+        lines.append("  Unique vineyards in skipped paddocks:  \(uniqueVineyardIdsInSkippedPaddocks)")
+        lines.append("  Paddocks with empty geometry:          \(paddocksWithoutGeometry)")
+        lines.append("  Invalid polygon vertices skipped:      \(skippedPolygonPoints)")
+        lines.append("  Rows skipped:                          \(skippedRows)")
 
         if !skippedPaddocks.isEmpty {
             lines.append("")

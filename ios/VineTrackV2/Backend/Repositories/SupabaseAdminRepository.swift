@@ -410,6 +410,16 @@ nonisolated struct AdminGeometryLoadResult: Sendable {
     let vineyardsSucceeded: Int
     /// Distinct vineyards represented in the final usable paddock set.
     let vineyardsUsable: Int
+    /// Distinct vineyard IDs that appeared anywhere in returned paddock data
+    /// (regardless of whether that paddock was usable or skipped).
+    let uniqueVineyardIdsInPaddockData: Int
+    /// Distinct vineyard IDs represented by paddocks that were skipped
+    /// (empty geometry, invalid vertices, invalid rows).
+    let uniqueVineyardIdsInSkippedPaddocks: Int
+    /// Distinct vineyard IDs that appear in paddock data but were NOT
+    /// returned by `admin_list_vineyards`. Almost always 0 in production;
+    /// surfaced here so admins can spot RPC drift.
+    let paddockVineyardsNotInVineyardRPC: Int
     let vineyardErrors: [(vineyardName: String, message: String)]
     /// Paddocks the RPC returned (before usable/empty filtering).
     let paddocksReturned: Int
@@ -651,6 +661,8 @@ final class SupabaseAdminRepository {
         var paddocksReturnedTotal = 0
         var rowsReturnedTotal = 0
         var skippedDetails: [AdminGeometrySkippedPaddock] = []
+        var paddockVineyardIds = Set<UUID>()
+        var skippedPaddockVineyardIds = Set<UUID>()
         for entry in perVineyard {
             switch entry.result {
             case .success(let diags):
@@ -660,9 +672,12 @@ final class SupabaseAdminRepository {
                     skippedRows += d.skippedRows
                     skippedPoints += d.skippedPolygonPoints
                     rowsReturnedTotal += d.row.rows.count
+                    paddockVineyardIds.insert(d.row.vineyardId)
                     let vineyardName = byId[d.row.vineyardId]?.name ?? entry.vineyardName
+                    var wasSkipped = false
                     if d.row.polygonPoints.isEmpty && d.row.rows.isEmpty {
                         withoutGeometry += 1
+                        wasSkipped = true
                         skippedDetails.append(AdminGeometrySkippedPaddock(
                             vineyardName: vineyardName,
                             vineyardId: d.row.vineyardId,
@@ -671,6 +686,7 @@ final class SupabaseAdminRepository {
                             reason: "empty polygon geometry"
                         ))
                     } else if d.row.polygonPoints.isEmpty {
+                        wasSkipped = true
                         skippedDetails.append(AdminGeometrySkippedPaddock(
                             vineyardName: vineyardName,
                             vineyardId: d.row.vineyardId,
@@ -680,6 +696,7 @@ final class SupabaseAdminRepository {
                         ))
                     }
                     if d.skippedPolygonPoints > 0 {
+                        wasSkipped = true
                         skippedDetails.append(AdminGeometrySkippedPaddock(
                             vineyardName: vineyardName,
                             vineyardId: d.row.vineyardId,
@@ -689,6 +706,7 @@ final class SupabaseAdminRepository {
                         ))
                     }
                     if d.skippedRows > 0 {
+                        wasSkipped = true
                         skippedDetails.append(AdminGeometrySkippedPaddock(
                             vineyardName: vineyardName,
                             vineyardId: d.row.vineyardId,
@@ -697,7 +715,12 @@ final class SupabaseAdminRepository {
                             reason: "\(d.skippedRows) invalid row geometries skipped"
                         ))
                     }
-                    if let v = byId[d.row.vineyardId] {
+                    if wasSkipped { skippedPaddockVineyardIds.insert(d.row.vineyardId) }
+                    // A paddock is "usable" if it has at least one polygon point
+                    // or one row. We still append it to the rows array so the
+                    // troubleshooter can use whatever geometry exists.
+                    if !(d.row.polygonPoints.isEmpty && d.row.rows.isEmpty),
+                       let v = byId[d.row.vineyardId] {
                         rows.append((v, d.row))
                     }
                 }
@@ -705,7 +728,10 @@ final class SupabaseAdminRepository {
                 errors.append((entry.vineyardName, err.localizedDescription))
             }
         }
-        let vineyardsUsable = Set(rows.map { $0.1.vineyardId }).count
+        let usableVineyardIds = Set(rows.map { $0.1.vineyardId })
+        let vineyardsUsable = usableVineyardIds.count
+        let returnedVineyardIds = Set(byId.keys)
+        let extraVineyards = paddockVineyardIds.subtracting(returnedVineyardIds).count
 
         rows.sort { lhs, rhs in
             if lhs.0.name.lowercased() == rhs.0.name.lowercased() {
@@ -720,6 +746,9 @@ final class SupabaseAdminRepository {
             vineyardsAttempted: activeVineyards.count,
             vineyardsSucceeded: succeeded,
             vineyardsUsable: vineyardsUsable,
+            uniqueVineyardIdsInPaddockData: paddockVineyardIds.count,
+            uniqueVineyardIdsInSkippedPaddocks: skippedPaddockVineyardIds.count,
+            paddockVineyardsNotInVineyardRPC: extraVineyards,
             vineyardErrors: errors,
             paddocksReturned: paddocksReturnedTotal,
             rowsReturned: rowsReturnedTotal,
