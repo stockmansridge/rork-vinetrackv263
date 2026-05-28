@@ -23,6 +23,8 @@ struct LocationTroubleshooterView: View {
     @State private var loadErrorDetail: String?
     @State private var diagnosticLog: AdminGeometryDiagnosticLog?
     @State private var paddocks: [TroubleshooterPaddock] = []
+    @State private var radius: LocationTroubleshooterRadius = .km50
+    @State private var hasLoadedOnce: Bool = false
     @State private var samples: [DiagnosticSample] = []
     @State private var sessionStartedAt: Date?
     @State private var sessionEndedAt: Date?
@@ -56,6 +58,7 @@ struct LocationTroubleshooterView: View {
     private var content: some View {
         List {
             controlSection
+            radiusSection
             if let loadError {
                 Section {
                     Label(loadError, systemImage: "exclamationmark.triangle.fill")
@@ -108,7 +111,7 @@ struct LocationTroubleshooterView: View {
             if isLoadingPaddocks {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text("Loading vineyards & blocks…").font(.footnote).foregroundStyle(.secondary)
+                    Text(loadingLabel).font(.footnote).foregroundStyle(.secondary)
                 }
             } else {
                 VStack(alignment: .leading, spacing: 2) {
@@ -288,6 +291,47 @@ struct LocationTroubleshooterView: View {
         }
     }
 
+    private var radiusSection: some View {
+        Section {
+            Picker("Search radius", selection: $radius) {
+                ForEach(LocationTroubleshooterRadius.allCases) { r in
+                    Text(r.label).tag(r)
+                }
+            }
+            .onChange(of: radius) { _, _ in
+                Task { await loadPaddocks(force: true) }
+            }
+            if radius != .all {
+                if let coord = diagnosticLog?.filterCenter {
+                    Text(String(format: "Filter centre: %.5f, %.5f", coord.latitude, coord.longitude))
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                } else if location.location == nil {
+                    Text("Waiting for GPS fix to filter nearby vineyards…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Button {
+                Task { await loadPaddocks(force: true) }
+            } label: {
+                Label("Retry location & reload", systemImage: "location.circle")
+                    .font(.footnote)
+            }
+        } header: {
+            Text("Geometry Scope")
+        } footer: {
+            Text("Nearby filtering uses your current GPS location and each block's polygon centroid. Choose \"All vineyards\" only if you need the full admin scope.")
+        }
+    }
+
+    private var loadingLabel: String {
+        if radius == .all {
+            return "Loading all vineyards & blocks…"
+        }
+        return "Loading nearby vineyard geometry within \(radius.kmLabel)…"
+    }
+
     private var adminScopeSection: some View {
         Section {
             HStack {
@@ -332,25 +376,69 @@ struct LocationTroubleshooterView: View {
     }
 
     private func loadPaddocksIfNeeded() async {
-        guard paddocks.isEmpty else { return }
+        guard !hasLoadedOnce else { return }
         await loadPaddocks(force: false)
     }
 
     private func loadPaddocks(force: Bool) async {
         guard systemAdmin.isSystemAdmin else { return }
         if isLoadingPaddocks { return }
+
+        // Acquire a GPS fix first if we need one for radius filtering.
+        var filterCoord: CLLocationCoordinate2D?
+        var filterAccuracy: Double?
+        if let radiusMeters = radius.meters {
+            if location.authorizationStatus == .notDetermined {
+                location.requestPermission()
+            }
+            location.startUpdating()
+            let start = Date()
+            while location.location == nil && Date().timeIntervalSince(start) < 6 {
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+            guard let loc = location.location else {
+                loadError = "Current location is needed to load nearby vineyard geometry."
+                loadErrorDetail = "Tap \"Retry location & reload\" once a GPS fix is available, or switch the search radius to \"All vineyards\"."
+                paddocks = []
+                hasLoadedOnce = true
+                _ = radiusMeters
+                return
+            }
+            filterCoord = loc.coordinate
+            filterAccuracy = loc.horizontalAccuracy >= 0 ? loc.horizontalAccuracy : nil
+        }
+
         isLoadingPaddocks = true
         loadError = nil
         loadErrorDetail = nil
-        defer { isLoadingPaddocks = false }
+        defer {
+            isLoadingPaddocks = false
+            hasLoadedOnce = true
+        }
         let repo = SupabaseAdminRepository()
         let startedAt = Date()
         do {
             let result = try await repo.fetchAllPaddocksDiagnostic()
-            let mapped = result.rows.compactMap {
+
+            // Apply radius filter (client-side, on polygon centroid).
+            let unfilteredRows = result.rows
+            let vineyardsBefore = Set(unfilteredRows.map { $0.paddock.vineyardId }).count
+            let paddocksBefore = unfilteredRows.count
+            let filteredRows: [(vineyard: AdminVineyardRow, paddock: AdminVineyardPaddockRow)]
+            if let radiusMeters = radius.meters, let centre = filterCoord {
+                filteredRows = unfilteredRows.filter { entry in
+                    guard let c = paddockCentre(entry.paddock) else { return false }
+                    return RowGuidance.metresBetween(c, centre) <= radiusMeters
+                }
+            } else {
+                filteredRows = unfilteredRows
+            }
+            let mapped = filteredRows.compactMap {
                 TroubleshooterPaddock(vineyard: $0.vineyard, paddock: $0.paddock)
             }
             paddocks = mapped
+            let vineyardsAfter = Set(mapped.map { $0.vineyardId }).count
+            let rowsAfter = mapped.reduce(0) { $0 + $1.paddock.rows.count }
             diagnosticLog = AdminGeometryDiagnosticLog(
                 startedAt: startedAt,
                 finishedAt: Date(),
@@ -360,17 +448,26 @@ struct LocationTroubleshooterView: View {
                 vineyardsReturned: result.vineyardsReturned,
                 vineyardsAttempted: result.vineyardsAttempted,
                 vineyardsSucceeded: result.vineyardsSucceeded,
-                vineyardsUsable: result.vineyardsUsable,
+                vineyardsUsable: vineyardsAfter,
                 uniqueVineyardIdsInPaddockData: result.uniqueVineyardIdsInPaddockData,
                 uniqueVineyardIdsInSkippedPaddocks: result.uniqueVineyardIdsInSkippedPaddocks,
                 paddockVineyardsNotInVineyardRPC: result.paddockVineyardsNotInVineyardRPC,
                 paddocksReturned: result.paddocksReturned,
                 paddocksUsable: mapped.count,
                 rowsReturned: result.rowsReturned,
-                rowsUsable: result.totalRowsLoaded,
+                rowsUsable: rowsAfter,
                 paddocksWithoutGeometry: result.paddocksWithoutGeometry,
                 skippedRows: result.totalSkippedRows,
                 skippedPolygonPoints: result.totalSkippedPolygonPoints,
+                filterRadiusLabel: radius.kmLabel,
+                filterModeLabel: radius == .all ? "all" : "nearby (client-side)",
+                filterCenter: filterCoord,
+                filterAccuracyM: filterAccuracy,
+                vineyardsBeforeFilter: vineyardsBefore,
+                vineyardsAfterFilter: vineyardsAfter,
+                paddocksBeforeFilter: paddocksBefore,
+                paddocksAfterFilter: mapped.count,
+                rowsAfterFilter: rowsAfter,
                 samplePaddockSummaries: mapped.prefix(5).map {
                     "\($0.vineyardName) / \($0.paddock.name) [\($0.paddock.id.uuidString.prefix(8))]"
                 },
@@ -413,6 +510,15 @@ struct LocationTroubleshooterView: View {
                 paddocksWithoutGeometry: 0,
                 skippedRows: 0,
                 skippedPolygonPoints: 0,
+                filterRadiusLabel: radius.kmLabel,
+                filterModeLabel: radius == .all ? "all" : "nearby (client-side)",
+                filterCenter: filterCoord,
+                filterAccuracyM: filterAccuracy,
+                vineyardsBeforeFilter: 0,
+                vineyardsAfterFilter: 0,
+                paddocksBeforeFilter: 0,
+                paddocksAfterFilter: 0,
+                rowsAfterFilter: 0,
                 samplePaddockSummaries: [],
                 vineyardErrors: ["(initial vineyard list): \(error.localizedDescription)"],
                 skippedPaddocks: []
@@ -490,6 +596,23 @@ struct LocationTroubleshooterView: View {
 
     private var uniqueVineyardCount: Int {
         Set(paddocks.map { $0.vineyardId }).count
+    }
+
+    /// Centroid for radius filtering — prefers the polygon centroid; falls
+    /// back to the midpoint of the first row when the polygon is empty.
+    private func paddockCentre(_ p: AdminVineyardPaddockRow) -> CLLocationCoordinate2D? {
+        if !p.polygonPoints.isEmpty {
+            return RowGuidance.polygonCentroid(p.polygonPoints.map { $0.coordinate })
+        }
+        if let r = p.rows.first {
+            let s = r.startPoint.coordinate
+            let e = r.endPoint.coordinate
+            return CLLocationCoordinate2D(
+                latitude: (s.latitude + e.latitude) / 2,
+                longitude: (s.longitude + e.longitude) / 2
+            )
+        }
+        return nil
     }
 
     /// Single source of truth for the vineyard count shown on the screen.
@@ -599,6 +722,45 @@ struct LocationTroubleshooterView: View {
         case ..<4: return "Good"
         case ..<6: return "Acceptable"
         default: return "Poor"
+        }
+    }
+}
+
+// MARK: - Radius
+
+enum LocationTroubleshooterRadius: String, CaseIterable, Identifiable {
+    case km50
+    case km100
+    case km250
+    case all
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .km50: return "Nearby — 50 km"
+        case .km100: return "100 km"
+        case .km250: return "250 km"
+        case .all: return "All vineyards"
+        }
+    }
+
+    var kmLabel: String {
+        switch self {
+        case .km50: return "50 km"
+        case .km100: return "100 km"
+        case .km250: return "250 km"
+        case .all: return "all"
+        }
+    }
+
+    /// Filter radius in metres, or `nil` to disable filtering.
+    var meters: Double? {
+        switch self {
+        case .km50: return 50_000
+        case .km100: return 100_000
+        case .km250: return 250_000
+        case .all: return nil
         }
     }
 }
@@ -739,6 +901,15 @@ private struct AdminGeometryDiagnosticLog {
     let paddocksWithoutGeometry: Int
     let skippedRows: Int
     let skippedPolygonPoints: Int
+    let filterRadiusLabel: String
+    let filterModeLabel: String
+    let filterCenter: CLLocationCoordinate2D?
+    let filterAccuracyM: Double?
+    let vineyardsBeforeFilter: Int
+    let vineyardsAfterFilter: Int
+    let paddocksBeforeFilter: Int
+    let paddocksAfterFilter: Int
+    let rowsAfterFilter: Int
     let samplePaddockSummaries: [String]
     let vineyardErrors: [String]
     let skippedPaddocks: [SkippedPaddock]
@@ -759,6 +930,25 @@ private struct AdminGeometryDiagnosticLog {
         lines.append("")
         lines.append("RPC source:")
         lines.append("  \(rpcName)")
+        lines.append("")
+        lines.append("Location filter:")
+        if let c = filterCenter {
+            lines.append(String(format: "  Current location:        %.6f, %.6f", c.latitude, c.longitude))
+        } else {
+            lines.append("  Current location:        (none — radius=all or no GPS fix)")
+        }
+        if let acc = filterAccuracyM {
+            lines.append(String(format: "  Accuracy:                %.1f m", acc))
+        } else {
+            lines.append("  Accuracy:                —")
+        }
+        lines.append("  Radius:                  \(filterRadiusLabel)")
+        lines.append("  Filter mode:             \(filterModeLabel)")
+        lines.append("  Vineyards before filter: \(vineyardsBeforeFilter)")
+        lines.append("  Vineyards after filter:  \(vineyardsAfterFilter)")
+        lines.append("  Paddocks before filter:  \(paddocksBeforeFilter)")
+        lines.append("  Paddocks after filter:   \(paddocksAfterFilter)")
+        lines.append("  Rows after filter:       \(rowsAfterFilter)")
         lines.append("")
         lines.append("Returned:")
         lines.append("  Vineyard records returned:           \(vineyardsReturned)")
