@@ -24,6 +24,12 @@ struct LocationTroubleshooterView: View {
     @State private var diagnosticLog: AdminGeometryDiagnosticLog?
     @State private var paddocks: [TroubleshooterPaddock] = []
     @State private var radius: LocationTroubleshooterRadius = .km50
+    @State private var manualVineyardId: UUID?
+    @State private var manualVineyardName: String?
+    @State private var availableVineyards: [AdminVineyardRow] = []
+    @State private var isLoadingVineyardList: Bool = false
+    @State private var vineyardListError: String?
+    @State private var isShowingVineyardPicker: Bool = false
     @State private var hasLoadedOnce: Bool = false
     @State private var samples: [DiagnosticSample] = []
     @State private var sessionStartedAt: Date?
@@ -50,6 +56,21 @@ struct LocationTroubleshooterView: View {
         }
         .sheet(isPresented: $isShowingShare) {
             ActivityShareSheet(activityItems: shareItems)
+        }
+        .sheet(isPresented: $isShowingVineyardPicker) {
+            ManualVineyardPickerSheet(
+                vineyards: availableVineyards,
+                isLoading: isLoadingVineyardList,
+                errorMessage: vineyardListError,
+                onReload: { Task { await loadVineyardList(force: true) } },
+                onPick: { row in
+                    isShowingVineyardPicker = false
+                    manualVineyardId = row.id
+                    manualVineyardName = row.name
+                    Task { await loadPaddocks(force: true) }
+                }
+            )
+            .presentationDetents([.medium, .large])
         }
     }
 
@@ -384,10 +405,12 @@ struct LocationTroubleshooterView: View {
         guard systemAdmin.isSystemAdmin else { return }
         if isLoadingPaddocks { return }
 
+        let isManual: Bool = manualVineyardId != nil
+
         // Acquire a GPS fix first if we need one for radius filtering.
         var filterCoord: CLLocationCoordinate2D?
         var filterAccuracy: Double?
-        if let radiusMeters = radius.meters {
+        if !isManual, let radiusMeters = radius.meters {
             if location.authorizationStatus == .notDetermined {
                 location.requestPermission()
             }
@@ -425,7 +448,9 @@ struct LocationTroubleshooterView: View {
             let vineyardsBefore = Set(unfilteredRows.map { $0.paddock.vineyardId }).count
             let paddocksBefore = unfilteredRows.count
             let filteredRows: [(vineyard: AdminVineyardRow, paddock: AdminVineyardPaddockRow)]
-            if let radiusMeters = radius.meters, let centre = filterCoord {
+            if let manualId = manualVineyardId {
+                filteredRows = unfilteredRows.filter { $0.paddock.vineyardId == manualId }
+            } else if let radiusMeters = radius.meters, let centre = filterCoord {
                 filteredRows = unfilteredRows.filter { entry in
                     guard let c = paddockCentre(entry.paddock) else { return false }
                     return RowGuidance.metresBetween(c, centre) <= radiusMeters
@@ -459,8 +484,8 @@ struct LocationTroubleshooterView: View {
                 paddocksWithoutGeometry: result.paddocksWithoutGeometry,
                 skippedRows: result.totalSkippedRows,
                 skippedPolygonPoints: result.totalSkippedPolygonPoints,
-                filterRadiusLabel: radius.kmLabel,
-                filterModeLabel: radius == .all ? "all" : "nearby (client-side)",
+                filterRadiusLabel: isManual ? "(manual)" : radius.kmLabel,
+                filterModeLabel: filterModeLabelText(isManual: isManual),
                 filterCenter: filterCoord,
                 filterAccuracyM: filterAccuracy,
                 vineyardsBeforeFilter: vineyardsBefore,
@@ -510,8 +535,8 @@ struct LocationTroubleshooterView: View {
                 paddocksWithoutGeometry: 0,
                 skippedRows: 0,
                 skippedPolygonPoints: 0,
-                filterRadiusLabel: radius.kmLabel,
-                filterModeLabel: radius == .all ? "all" : "nearby (client-side)",
+                filterRadiusLabel: isManual ? "(manual)" : radius.kmLabel,
+                filterModeLabel: filterModeLabelText(isManual: isManual),
                 filterCenter: filterCoord,
                 filterAccuracyM: filterAccuracy,
                 vineyardsBeforeFilter: 0,
@@ -712,6 +737,125 @@ struct LocationTroubleshooterView: View {
                 .font(.callout.monospacedDigit())
                 .multilineTextAlignment(.trailing)
                 .lineLimit(2)
+        }
+    }
+
+    private func filterModeLabelText(isManual: Bool) -> String {
+        if isManual { return "manual vineyard" }
+        return radius == .all ? "all" : "nearby (client-side)"
+    }
+
+    private var shouldShowNoNearbyResults: Bool {
+        hasLoadedOnce
+            && !isLoadingPaddocks
+            && paddocks.isEmpty
+            && manualVineyardId == nil
+            && radius != .all
+            && loadError == nil
+            && (diagnosticLog?.vineyardsBeforeFilter ?? 0) > 0
+    }
+
+    private var noNearbyResultsSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("No vineyards within \(radius.kmLabel)", systemImage: "location.slash")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.orange)
+                Text("No vineyards were found within \(radius.kmLabel) of your current location. Choose a wider radius, load every vineyard, or pick a vineyard manually.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            if radius != .km100 {
+                Button {
+                    radius = .km100
+                } label: {
+                    Label("Increase radius to 100 km", systemImage: "plus.magnifyingglass")
+                }
+            }
+            if radius != .km250 {
+                Button {
+                    radius = .km250
+                } label: {
+                    Label("Increase radius to 250 km", systemImage: "plus.magnifyingglass")
+                }
+            }
+            Button {
+                radius = .all
+            } label: {
+                Label("Load all vineyards", systemImage: "globe")
+            }
+            Button {
+                openManualVineyardPicker()
+            } label: {
+                Label("Select vineyard manually", systemImage: "list.bullet.rectangle")
+            }
+        } header: {
+            Text("No Nearby Results")
+        }
+    }
+
+    private var manualVineyardSection: some View {
+        Section {
+            if let name = manualVineyardName, manualVineyardId != nil {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Manual vineyard").font(.caption).foregroundStyle(.secondary)
+                        Text(name).font(.callout.weight(.semibold))
+                    }
+                    Spacer()
+                    Button(role: .destructive) {
+                        clearManualVineyard()
+                    } label: {
+                        Text("Clear")
+                    }
+                    .buttonStyle(.borderless)
+                }
+                Button {
+                    openManualVineyardPicker()
+                } label: {
+                    Label("Choose a different vineyard", systemImage: "arrow.left.arrow.right")
+                }
+            } else {
+                Button {
+                    openManualVineyardPicker()
+                } label: {
+                    Label("Select vineyard manually", systemImage: "list.bullet.rectangle")
+                }
+            }
+        } header: {
+            Text("Manual Vineyard")
+        } footer: {
+            Text("Override the nearby filter and load geometry for a specific vineyard. Useful when testing remotely or inspecting a site without standing on it.")
+        }
+    }
+
+    private func openManualVineyardPicker() {
+        isShowingVineyardPicker = true
+        if availableVineyards.isEmpty {
+            Task { await loadVineyardList(force: false) }
+        }
+    }
+
+    private func clearManualVineyard() {
+        manualVineyardId = nil
+        manualVineyardName = nil
+        Task { await loadPaddocks(force: true) }
+    }
+
+    private func loadVineyardList(force: Bool) async {
+        if isLoadingVineyardList { return }
+        if !force && !availableVineyards.isEmpty { return }
+        isLoadingVineyardList = true
+        vineyardListError = nil
+        defer { isLoadingVineyardList = false }
+        let repo = SupabaseAdminRepository()
+        do {
+            let rows = try await repo.fetchAllVineyards()
+                .filter { $0.deletedAt == nil }
+                .sorted { $0.name.lowercased() < $1.name.lowercased() }
+            availableVineyards = rows
+        } catch {
+            vineyardListError = error.localizedDescription
         }
     }
 
@@ -1313,4 +1457,90 @@ private struct ActivityShareSheet: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ vc: UIActivityViewController, context: Context) {}
+}
+
+// MARK: - Manual vineyard picker
+
+private struct ManualVineyardPickerSheet: View {
+    let vineyards: [AdminVineyardRow]
+    let isLoading: Bool
+    let errorMessage: String?
+    let onReload: () -> Void
+    let onPick: (AdminVineyardRow) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var query: String = ""
+
+    private var filtered: [AdminVineyardRow] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return vineyards }
+        return vineyards.filter { v in
+            v.name.lowercased().contains(q)
+                || (v.ownerEmail?.lowercased().contains(q) ?? false)
+                || (v.ownerFullName?.lowercased().contains(q) ?? false)
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if isLoading && vineyards.isEmpty {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                        Text("Loading vineyards…").font(.footnote).foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let err = errorMessage, vineyards.isEmpty {
+                    ContentUnavailableView {
+                        Label("Couldn't load vineyards", systemImage: "exclamationmark.triangle")
+                    } description: {
+                        Text(err).font(.footnote)
+                    } actions: {
+                        Button("Retry", action: onReload)
+                    }
+                } else if vineyards.isEmpty {
+                    ContentUnavailableView(
+                        "No vineyards",
+                        systemImage: "leaf",
+                        description: Text("No vineyards are available in the admin scope.")
+                    )
+                } else {
+                    List {
+                        ForEach(filtered) { v in
+                            Button {
+                                onPick(v)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(v.name).font(.body).foregroundStyle(.primary)
+                                    Text(v.ownerDisplay).font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        if filtered.isEmpty {
+                            Text("No vineyards match “\(query)”.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .listStyle(.plain)
+                }
+            }
+            .searchable(text: $query, prompt: "Search vineyard or owner")
+            .navigationTitle("Select Vineyard")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        onReload()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .disabled(isLoading)
+                }
+            }
+        }
+    }
 }
