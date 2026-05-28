@@ -386,18 +386,41 @@ nonisolated private struct LossyTombstone: Decodable, Sendable {
     }
 }
 
+/// Per-record skip detail surfaced in the System Admin Location
+/// Troubleshooter diagnostic log.
+nonisolated struct AdminGeometrySkippedPaddock: Sendable {
+    let vineyardName: String
+    let vineyardId: UUID
+    let paddockName: String
+    let paddockId: UUID
+    /// Short human reason, e.g. "empty polygon geometry", "8 invalid polygon vertices skipped".
+    let reason: String
+}
+
 /// Diagnostic result for admin geometry loads. Surfaces per-vineyard
 /// failures + skipped row/polygon counts so the Location Troubleshooter
 /// can show a meaningful log instead of failing globally.
 nonisolated struct AdminGeometryLoadResult: Sendable {
     let rows: [(vineyard: AdminVineyardRow, paddock: AdminVineyardPaddockRow)]
+    /// Vineyards returned by `admin_list_vineyards` (all, incl. deleted).
+    let vineyardsReturned: Int
+    /// Active vineyards we attempted to load paddocks for.
     let vineyardsAttempted: Int
+    /// Active vineyards whose paddock RPC call succeeded (decoded without throwing).
     let vineyardsSucceeded: Int
+    /// Distinct vineyards represented in the final usable paddock set.
+    let vineyardsUsable: Int
     let vineyardErrors: [(vineyardName: String, message: String)]
+    /// Paddocks the RPC returned (before usable/empty filtering).
+    let paddocksReturned: Int
+    /// Rows the RPC returned, summed across all successful paddocks.
+    let rowsReturned: Int
     let totalRowsLoaded: Int
     let totalSkippedRows: Int
     let totalSkippedPolygonPoints: Int
     let paddocksWithoutGeometry: Int
+    /// Per-paddock skip details (empty geometry, invalid vertices, invalid rows).
+    let skippedPaddocks: [AdminGeometrySkippedPaddock]
 }
 
 nonisolated private struct VineyardIdParams: Encodable, Sendable {
@@ -625,15 +648,54 @@ final class SupabaseAdminRepository {
         var skippedRows = 0
         var skippedPoints = 0
         var withoutGeometry = 0
+        var paddocksReturnedTotal = 0
+        var rowsReturnedTotal = 0
+        var skippedDetails: [AdminGeometrySkippedPaddock] = []
         for entry in perVineyard {
             switch entry.result {
             case .success(let diags):
                 succeeded += 1
+                paddocksReturnedTotal += diags.count
                 for d in diags {
                     skippedRows += d.skippedRows
                     skippedPoints += d.skippedPolygonPoints
+                    rowsReturnedTotal += d.row.rows.count
+                    let vineyardName = byId[d.row.vineyardId]?.name ?? entry.vineyardName
                     if d.row.polygonPoints.isEmpty && d.row.rows.isEmpty {
                         withoutGeometry += 1
+                        skippedDetails.append(AdminGeometrySkippedPaddock(
+                            vineyardName: vineyardName,
+                            vineyardId: d.row.vineyardId,
+                            paddockName: d.row.name,
+                            paddockId: d.row.id,
+                            reason: "empty polygon geometry"
+                        ))
+                    } else if d.row.polygonPoints.isEmpty {
+                        skippedDetails.append(AdminGeometrySkippedPaddock(
+                            vineyardName: vineyardName,
+                            vineyardId: d.row.vineyardId,
+                            paddockName: d.row.name,
+                            paddockId: d.row.id,
+                            reason: "no polygon (\(d.row.rows.count) rows only)"
+                        ))
+                    }
+                    if d.skippedPolygonPoints > 0 {
+                        skippedDetails.append(AdminGeometrySkippedPaddock(
+                            vineyardName: vineyardName,
+                            vineyardId: d.row.vineyardId,
+                            paddockName: d.row.name,
+                            paddockId: d.row.id,
+                            reason: "\(d.skippedPolygonPoints) invalid polygon vertices skipped"
+                        ))
+                    }
+                    if d.skippedRows > 0 {
+                        skippedDetails.append(AdminGeometrySkippedPaddock(
+                            vineyardName: vineyardName,
+                            vineyardId: d.row.vineyardId,
+                            paddockName: d.row.name,
+                            paddockId: d.row.id,
+                            reason: "\(d.skippedRows) invalid row geometries skipped"
+                        ))
                     }
                     if let v = byId[d.row.vineyardId] {
                         rows.append((v, d.row))
@@ -643,6 +705,7 @@ final class SupabaseAdminRepository {
                 errors.append((entry.vineyardName, err.localizedDescription))
             }
         }
+        let vineyardsUsable = Set(rows.map { $0.1.vineyardId }).count
 
         rows.sort { lhs, rhs in
             if lhs.0.name.lowercased() == rhs.0.name.lowercased() {
@@ -653,13 +716,18 @@ final class SupabaseAdminRepository {
 
         return AdminGeometryLoadResult(
             rows: rows,
+            vineyardsReturned: vineyards.count,
             vineyardsAttempted: activeVineyards.count,
             vineyardsSucceeded: succeeded,
+            vineyardsUsable: vineyardsUsable,
             vineyardErrors: errors,
+            paddocksReturned: paddocksReturnedTotal,
+            rowsReturned: rowsReturnedTotal,
             totalRowsLoaded: rows.reduce(0) { $0 + $1.1.rows.count },
             totalSkippedRows: skippedRows,
             totalSkippedPolygonPoints: skippedPoints,
-            paddocksWithoutGeometry: withoutGeometry
+            paddocksWithoutGeometry: withoutGeometry,
+            skippedPaddocks: skippedDetails
         )
     }
 

@@ -111,9 +111,22 @@ struct LocationTroubleshooterView: View {
                     Text("Loading vineyards & blocks…").font(.footnote).foregroundStyle(.secondary)
                 }
             } else {
-                Text("\(paddocks.count) blocks loaded across \(uniqueVineyardCount) vineyards.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(paddocks.count) usable blocks loaded across \(loadedVineyardCount) vineyards.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    if let log = diagnosticLog, log.paddocksWithoutGeometry > 0 {
+                        Text("\(log.paddocksWithoutGeometry) blocks had missing geometry and were skipped.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let log = diagnosticLog,
+                       log.vineyardsAttempted - log.vineyardsSucceeded > 0 {
+                        Text("\(log.vineyardsAttempted - log.vineyardsSucceeded) vineyards had missing or incomplete geometry.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
         } header: {
             Text("Diagnostic Session")
@@ -281,7 +294,7 @@ struct LocationTroubleshooterView: View {
             HStack {
                 Text("Vineyards loaded")
                 Spacer()
-                Text("\(uniqueVineyardCount)").foregroundStyle(.secondary)
+                Text("\(loadedVineyardCount)").foregroundStyle(.secondary)
             }
             HStack {
                 Text("Blocks loaded")
@@ -345,24 +358,36 @@ struct LocationTroubleshooterView: View {
                 userIdDescription: SupabaseAuthRepository().currentUserId?.uuidString ?? "(not signed in)",
                 isSystemAdmin: systemAdmin.isSystemAdmin,
                 rpcName: "admin_list_vineyards + admin_list_vineyard_paddocks",
+                vineyardsReturned: result.vineyardsReturned,
                 vineyardsAttempted: result.vineyardsAttempted,
                 vineyardsSucceeded: result.vineyardsSucceeded,
-                paddocksLoaded: result.rows.count,
-                rowsLoaded: result.totalRowsLoaded,
+                vineyardsUsable: result.vineyardsUsable,
+                paddocksReturned: result.paddocksReturned,
                 paddocksUsable: mapped.count,
+                rowsReturned: result.rowsReturned,
+                rowsUsable: result.totalRowsLoaded,
                 paddocksWithoutGeometry: result.paddocksWithoutGeometry,
                 skippedRows: result.totalSkippedRows,
                 skippedPolygonPoints: result.totalSkippedPolygonPoints,
                 samplePaddockSummaries: mapped.prefix(5).map {
                     "\($0.vineyardName) / \($0.paddock.name) [\($0.paddock.id.uuidString.prefix(8))]"
                 },
-                vineyardErrors: result.vineyardErrors.map { "\($0.vineyardName): \($0.message)" }
+                vineyardErrors: result.vineyardErrors.map { "\($0.vineyardName): \($0.message)" },
+                skippedPaddocks: result.skippedPaddocks.map {
+                    AdminGeometryDiagnosticLog.SkippedPaddock(
+                        vineyardName: $0.vineyardName,
+                        vineyardId: $0.vineyardId,
+                        paddockName: $0.paddockName,
+                        paddockId: $0.paddockId,
+                        reason: $0.reason
+                    )
+                }
             )
             if mapped.isEmpty && !result.vineyardErrors.isEmpty {
                 loadError = "Location Troubleshooter could not load vineyard geometry. Some block or row geometry may be missing or in an unexpected format."
                 loadErrorDetail = diagnosticErrorDetail(result: result)
-            } else if !result.vineyardErrors.isEmpty || result.totalSkippedRows > 0 || result.totalSkippedPolygonPoints > 0 {
-                loadError = "Loaded \(mapped.count) blocks across \(result.vineyardsSucceeded) vineyards. Some records were skipped — see diagnostic log."
+            } else if !result.vineyardErrors.isEmpty || result.totalSkippedRows > 0 || result.totalSkippedPolygonPoints > 0 || result.paddocksWithoutGeometry > 0 {
+                loadError = "Some records were skipped — see diagnostic log below for details."
             }
         } catch {
             paddocks = []
@@ -372,16 +397,20 @@ struct LocationTroubleshooterView: View {
                 userIdDescription: SupabaseAuthRepository().currentUserId?.uuidString ?? "(not signed in)",
                 isSystemAdmin: systemAdmin.isSystemAdmin,
                 rpcName: "admin_list_vineyards",
+                vineyardsReturned: 0,
                 vineyardsAttempted: 0,
                 vineyardsSucceeded: 0,
-                paddocksLoaded: 0,
-                rowsLoaded: 0,
+                vineyardsUsable: 0,
+                paddocksReturned: 0,
                 paddocksUsable: 0,
+                rowsReturned: 0,
+                rowsUsable: 0,
                 paddocksWithoutGeometry: 0,
                 skippedRows: 0,
                 skippedPolygonPoints: 0,
                 samplePaddockSummaries: [],
-                vineyardErrors: ["(initial vineyard list): \(error.localizedDescription)"]
+                vineyardErrors: ["(initial vineyard list): \(error.localizedDescription)"],
+                skippedPaddocks: []
             )
             loadError = "Location Troubleshooter could not load vineyard geometry. Some block or row geometry may be missing or in an unexpected format."
             loadErrorDetail = diagnosticDescription(for: error)
@@ -390,6 +419,7 @@ struct LocationTroubleshooterView: View {
 
     private func diagnosticErrorDetail(result: AdminGeometryLoadResult) -> String {
         var parts: [String] = []
+        parts.append("vineyards returned: \(result.vineyardsReturned)")
         parts.append("vineyards attempted: \(result.vineyardsAttempted)")
         parts.append("succeeded: \(result.vineyardsSucceeded)")
         parts.append("errors: \(result.vineyardErrors.count)")
@@ -455,6 +485,14 @@ struct LocationTroubleshooterView: View {
 
     private var uniqueVineyardCount: Int {
         Set(paddocks.map { $0.vineyardId }).count
+    }
+
+    /// Single source of truth for the vineyard count shown on the screen.
+    /// Prefers the diagnostic log's `vineyardsUsable` (distinct vineyards in
+    /// the usable paddock set) when available so the main summary and the
+    /// warning never disagree.
+    private var loadedVineyardCount: Int {
+        diagnosticLog?.vineyardsUsable ?? uniqueVineyardCount
     }
 
     // MARK: - Capture
@@ -669,21 +707,35 @@ private struct DiagnosticSample: Codable, Identifiable, Hashable {
 /// Plain diagnostic log surfaced in the System Admin Location Troubleshooter
 /// so admins can copy / share what the geometry load actually saw.
 private struct AdminGeometryDiagnosticLog {
+    struct SkippedPaddock {
+        let vineyardName: String
+        let vineyardId: UUID
+        let paddockName: String
+        let paddockId: UUID
+        let reason: String
+    }
+
     let startedAt: Date
     let finishedAt: Date
     let userIdDescription: String
     let isSystemAdmin: Bool
     let rpcName: String
+    let vineyardsReturned: Int
     let vineyardsAttempted: Int
     let vineyardsSucceeded: Int
-    let paddocksLoaded: Int
-    let rowsLoaded: Int
+    let vineyardsUsable: Int
+    let paddocksReturned: Int
     let paddocksUsable: Int
+    let rowsReturned: Int
+    let rowsUsable: Int
     let paddocksWithoutGeometry: Int
     let skippedRows: Int
     let skippedPolygonPoints: Int
     let samplePaddockSummaries: [String]
     let vineyardErrors: [String]
+    let skippedPaddocks: [SkippedPaddock]
+
+    var vineyardsSkipped: Int { max(0, vineyardsAttempted - vineyardsSucceeded) }
 
     var renderedText: String {
         var lines: [String] = []
@@ -692,15 +744,38 @@ private struct AdminGeometryDiagnosticLog {
         lines.append("Finished: \(DiagnosticFormat.isoTimestamp(finishedAt))")
         lines.append("User:     \(userIdDescription)")
         lines.append("Admin:    \(isSystemAdmin ? "yes" : "no")")
-        lines.append("RPC:      \(rpcName)")
-        lines.append("Vineyards: \(vineyardsSucceeded)/\(vineyardsAttempted) succeeded")
-        lines.append("Paddocks loaded: \(paddocksLoaded) (usable: \(paddocksUsable), empty geometry: \(paddocksWithoutGeometry))")
-        lines.append("Rows loaded:     \(rowsLoaded)")
-        lines.append("Skipped rows:    \(skippedRows)")
-        lines.append("Skipped polygon vertices: \(skippedPolygonPoints)")
+        lines.append("")
+        lines.append("RPC source:")
+        lines.append("  \(rpcName)")
+        lines.append("")
+        lines.append("Returned:")
+        lines.append("  Vineyards returned: \(vineyardsReturned)")
+        lines.append("  Paddocks returned: \(paddocksReturned)")
+        lines.append("  Rows returned:     \(rowsReturned)")
+        lines.append("")
+        lines.append("Usable:")
+        lines.append("  Vineyards loaded: \(vineyardsUsable)")
+        lines.append("  Paddocks usable:  \(paddocksUsable)")
+        lines.append("  Rows usable:      \(rowsUsable)")
+        lines.append("")
+        lines.append("Skipped:")
+        lines.append("  Vineyards skipped: \(vineyardsSkipped) (\(vineyardsSucceeded)/\(vineyardsAttempted) succeeded)")
+        lines.append("  Paddocks with empty geometry: \(paddocksWithoutGeometry)")
+        lines.append("  Invalid polygon vertices skipped: \(skippedPolygonPoints)")
+        lines.append("  Rows skipped: \(skippedRows)")
+
+        if !skippedPaddocks.isEmpty {
+            lines.append("")
+            lines.append("Skipped records:")
+            for s in skippedPaddocks {
+                let vidShort = s.vineyardId.uuidString.prefix(8)
+                let pidShort = s.paddockId.uuidString.prefix(8)
+                lines.append("  • \(s.vineyardName) [\(vidShort)] / \(s.paddockName) [\(pidShort)] — \(s.reason)")
+            }
+        }
         if !samplePaddockSummaries.isEmpty {
             lines.append("")
-            lines.append("Sample paddocks:")
+            lines.append("Sample usable paddocks:")
             for s in samplePaddockSummaries { lines.append("  • \(s)") }
         }
         if !vineyardErrors.isEmpty {
