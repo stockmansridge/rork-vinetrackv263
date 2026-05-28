@@ -20,6 +20,8 @@ struct LocationTroubleshooterView: View {
     @State private var isRunning: Bool = false
     @State private var isLoadingPaddocks: Bool = false
     @State private var loadError: String?
+    @State private var loadErrorDetail: String?
+    @State private var diagnosticLog: AdminGeometryDiagnosticLog?
     @State private var paddocks: [TroubleshooterPaddock] = []
     @State private var samples: [DiagnosticSample] = []
     @State private var sessionStartedAt: Date?
@@ -59,7 +61,16 @@ struct LocationTroubleshooterView: View {
                     Label(loadError, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                         .font(.footnote)
+                    if let detail = loadErrorDetail {
+                        Text(detail)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
                 }
+            }
+            if diagnosticLog != nil {
+                diagnosticLogSection
             }
             if isRunning {
                 livePositionSection
@@ -318,13 +329,110 @@ struct LocationTroubleshooterView: View {
         if isLoadingPaddocks { return }
         isLoadingPaddocks = true
         loadError = nil
+        loadErrorDetail = nil
         defer { isLoadingPaddocks = false }
+        let repo = SupabaseAdminRepository()
+        let startedAt = Date()
         do {
-            let repo = SupabaseAdminRepository()
-            let rows = try await repo.fetchAllPaddocks()
-            paddocks = rows.compactMap { TroubleshooterPaddock(vineyard: $0.vineyard, paddock: $0.paddock) }
+            let result = try await repo.fetchAllPaddocksDiagnostic()
+            let mapped = result.rows.compactMap {
+                TroubleshooterPaddock(vineyard: $0.vineyard, paddock: $0.paddock)
+            }
+            paddocks = mapped
+            diagnosticLog = AdminGeometryDiagnosticLog(
+                startedAt: startedAt,
+                finishedAt: Date(),
+                userIdDescription: SupabaseAuthRepository().currentUserId?.uuidString ?? "(not signed in)",
+                isSystemAdmin: systemAdmin.isSystemAdmin,
+                rpcName: "admin_list_vineyards + admin_list_vineyard_paddocks",
+                vineyardsAttempted: result.vineyardsAttempted,
+                vineyardsSucceeded: result.vineyardsSucceeded,
+                paddocksLoaded: result.rows.count,
+                rowsLoaded: result.totalRowsLoaded,
+                paddocksUsable: mapped.count,
+                paddocksWithoutGeometry: result.paddocksWithoutGeometry,
+                skippedRows: result.totalSkippedRows,
+                skippedPolygonPoints: result.totalSkippedPolygonPoints,
+                samplePaddockSummaries: mapped.prefix(5).map {
+                    "\($0.vineyardName) / \($0.paddock.name) [\($0.paddock.id.uuidString.prefix(8))]"
+                },
+                vineyardErrors: result.vineyardErrors.map { "\($0.vineyardName): \($0.message)" }
+            )
+            if mapped.isEmpty && !result.vineyardErrors.isEmpty {
+                loadError = "Location Troubleshooter could not load vineyard geometry. Some block or row geometry may be missing or in an unexpected format."
+                loadErrorDetail = diagnosticErrorDetail(result: result)
+            } else if !result.vineyardErrors.isEmpty || result.totalSkippedRows > 0 || result.totalSkippedPolygonPoints > 0 {
+                loadError = "Loaded \(mapped.count) blocks across \(result.vineyardsSucceeded) vineyards. Some records were skipped — see diagnostic log."
+            }
         } catch {
-            loadError = "Could not load admin geometry: \(error.localizedDescription)"
+            paddocks = []
+            diagnosticLog = AdminGeometryDiagnosticLog(
+                startedAt: startedAt,
+                finishedAt: Date(),
+                userIdDescription: SupabaseAuthRepository().currentUserId?.uuidString ?? "(not signed in)",
+                isSystemAdmin: systemAdmin.isSystemAdmin,
+                rpcName: "admin_list_vineyards",
+                vineyardsAttempted: 0,
+                vineyardsSucceeded: 0,
+                paddocksLoaded: 0,
+                rowsLoaded: 0,
+                paddocksUsable: 0,
+                paddocksWithoutGeometry: 0,
+                skippedRows: 0,
+                skippedPolygonPoints: 0,
+                samplePaddockSummaries: [],
+                vineyardErrors: ["(initial vineyard list): \(error.localizedDescription)"]
+            )
+            loadError = "Location Troubleshooter could not load vineyard geometry. Some block or row geometry may be missing or in an unexpected format."
+            loadErrorDetail = diagnosticDescription(for: error)
+        }
+    }
+
+    private func diagnosticErrorDetail(result: AdminGeometryLoadResult) -> String {
+        var parts: [String] = []
+        parts.append("vineyards attempted: \(result.vineyardsAttempted)")
+        parts.append("succeeded: \(result.vineyardsSucceeded)")
+        parts.append("errors: \(result.vineyardErrors.count)")
+        if let first = result.vineyardErrors.first {
+            parts.append("first: \(first.vineyardName) — \(first.message)")
+        }
+        return parts.joined(separator: "\n")
+    }
+
+    private func diagnosticDescription(for error: Error) -> String {
+        if let decoding = error as? DecodingError {
+            switch decoding {
+            case .keyNotFound(let key, let ctx):
+                return "decoding: keyNotFound \(key.stringValue) at \(ctx.codingPath.map { $0.stringValue }.joined(separator: "."))"
+            case .valueNotFound(let type, let ctx):
+                return "decoding: valueNotFound \(type) at \(ctx.codingPath.map { $0.stringValue }.joined(separator: "."))"
+            case .typeMismatch(let type, let ctx):
+                return "decoding: typeMismatch \(type) at \(ctx.codingPath.map { $0.stringValue }.joined(separator: "."))"
+            case .dataCorrupted(let ctx):
+                return "decoding: dataCorrupted at \(ctx.codingPath.map { $0.stringValue }.joined(separator: "."))"
+            @unknown default:
+                return "decoding: \(decoding)"
+            }
+        }
+        return String(describing: error)
+    }
+
+    private var diagnosticLogSection: some View {
+        Section {
+            if let log = diagnosticLog {
+                Text(log.renderedText)
+                    .font(.caption2.monospaced())
+                    .textSelection(.enabled)
+                Button {
+                    UIPasteboard.general.string = log.renderedText
+                } label: {
+                    Label("Copy diagnostic log", systemImage: "doc.on.doc")
+                }
+            }
+        } header: {
+            Text("Diagnostic Log")
+        } footer: {
+            Text("Tap to copy. Share this with the VineTrack team when reporting row-alignment or geometry issues.")
         }
     }
 
@@ -556,6 +664,52 @@ private struct DiagnosticSample: Codable, Identifiable, Hashable {
     let headingDifferenceDegrees: Double?
     let confidence: DiagnosticConfidence
     let diagnosticNotes: String?
+}
+
+/// Plain diagnostic log surfaced in the System Admin Location Troubleshooter
+/// so admins can copy / share what the geometry load actually saw.
+private struct AdminGeometryDiagnosticLog {
+    let startedAt: Date
+    let finishedAt: Date
+    let userIdDescription: String
+    let isSystemAdmin: Bool
+    let rpcName: String
+    let vineyardsAttempted: Int
+    let vineyardsSucceeded: Int
+    let paddocksLoaded: Int
+    let rowsLoaded: Int
+    let paddocksUsable: Int
+    let paddocksWithoutGeometry: Int
+    let skippedRows: Int
+    let skippedPolygonPoints: Int
+    let samplePaddockSummaries: [String]
+    let vineyardErrors: [String]
+
+    var renderedText: String {
+        var lines: [String] = []
+        lines.append("VineTrack Admin Geometry Diagnostic")
+        lines.append("Started:  \(DiagnosticFormat.isoTimestamp(startedAt))")
+        lines.append("Finished: \(DiagnosticFormat.isoTimestamp(finishedAt))")
+        lines.append("User:     \(userIdDescription)")
+        lines.append("Admin:    \(isSystemAdmin ? "yes" : "no")")
+        lines.append("RPC:      \(rpcName)")
+        lines.append("Vineyards: \(vineyardsSucceeded)/\(vineyardsAttempted) succeeded")
+        lines.append("Paddocks loaded: \(paddocksLoaded) (usable: \(paddocksUsable), empty geometry: \(paddocksWithoutGeometry))")
+        lines.append("Rows loaded:     \(rowsLoaded)")
+        lines.append("Skipped rows:    \(skippedRows)")
+        lines.append("Skipped polygon vertices: \(skippedPolygonPoints)")
+        if !samplePaddockSummaries.isEmpty {
+            lines.append("")
+            lines.append("Sample paddocks:")
+            for s in samplePaddockSummaries { lines.append("  • \(s)") }
+        }
+        if !vineyardErrors.isEmpty {
+            lines.append("")
+            lines.append("Per-vineyard errors:")
+            for e in vineyardErrors { lines.append("  • \(e)") }
+        }
+        return lines.joined(separator: "\n")
+    }
 }
 
 private struct DiagnosticSession: Codable {

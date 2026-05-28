@@ -299,8 +299,8 @@ nonisolated private struct VineyardPaddockDTO: Decodable, Sendable {
     let id: UUID
     let vineyardId: UUID
     let name: String
-    let polygonPoints: [CoordinatePoint]?
-    let rows: [PaddockRow]?
+    let polygonPoints: [CoordinatePoint]
+    let rows: [PaddockRow]
     let rowCount: Int?
     let rowDirection: Double?
     let rowWidth: Double?
@@ -308,6 +308,10 @@ nonisolated private struct VineyardPaddockDTO: Decodable, Sendable {
     let createdAt: Date?
     let updatedAt: Date?
     let deletedAt: Date?
+    /// Number of row entries that failed to decode and were skipped.
+    let skippedRowCount: Int
+    /// Number of polygon vertices that failed to decode and were skipped.
+    let skippedPolygonPointCount: Int
 
     enum CodingKeys: String, CodingKey {
         case id, name, rows
@@ -321,6 +325,79 @@ nonisolated private struct VineyardPaddockDTO: Decodable, Sendable {
         case updatedAt = "updated_at"
         case deletedAt = "deleted_at"
     }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(UUID.self, forKey: .id)
+        self.vineyardId = try c.decode(UUID.self, forKey: .vineyardId)
+        self.name = (try? c.decode(String.self, forKey: .name)) ?? ""
+        let polygon = Self.decodeLossy(CoordinatePoint.self, container: c, key: .polygonPoints)
+        self.polygonPoints = polygon.values
+        self.skippedPolygonPointCount = polygon.skipped
+        let rows = Self.decodeLossy(PaddockRow.self, container: c, key: .rows)
+        self.rows = rows.values
+        self.skippedRowCount = rows.skipped
+        self.rowCount = try? c.decodeIfPresent(Int.self, forKey: .rowCount)
+        self.rowDirection = try? c.decodeIfPresent(Double.self, forKey: .rowDirection)
+        self.rowWidth = try? c.decodeIfPresent(Double.self, forKey: .rowWidth)
+        self.vineSpacing = try? c.decodeIfPresent(Double.self, forKey: .vineSpacing)
+        self.createdAt = try? c.decodeIfPresent(Date.self, forKey: .createdAt)
+        self.updatedAt = try? c.decodeIfPresent(Date.self, forKey: .updatedAt)
+        self.deletedAt = try? c.decodeIfPresent(Date.self, forKey: .deletedAt)
+    }
+
+    /// Decode a homogeneous array tolerantly — individual elements that fail
+    /// to decode are skipped and counted rather than throwing the entire
+    /// paddock away. Used by the Location Troubleshooter so one bad polygon
+    /// vertex or row geometry doesn't blank out global admin geometry.
+    private static func decodeLossy<T: Decodable>(
+        _ type: T.Type,
+        container: KeyedDecodingContainer<CodingKeys>,
+        key: CodingKeys
+    ) -> (values: [T], skipped: Int) {
+        guard container.contains(key),
+              (try? container.decodeNil(forKey: key)) != true else {
+            return ([], 0)
+        }
+        guard var unkeyed = try? container.nestedUnkeyedContainer(forKey: key) else {
+            return ([], 0)
+        }
+        var values: [T] = []
+        var skipped = 0
+        if let count = unkeyed.count { values.reserveCapacity(count) }
+        while !unkeyed.isAtEnd {
+            do {
+                let v = try unkeyed.decode(T.self)
+                values.append(v)
+            } catch {
+                skipped += 1
+                _ = try? unkeyed.decode(LossyTombstone.self)
+            }
+        }
+        return (values, skipped)
+    }
+}
+
+/// Throwaway value used to advance a lossy unkeyed container past an
+/// element that failed to decode.
+nonisolated private struct LossyTombstone: Decodable, Sendable {
+    init(from decoder: Decoder) throws {
+        _ = try? decoder.singleValueContainer()
+    }
+}
+
+/// Diagnostic result for admin geometry loads. Surfaces per-vineyard
+/// failures + skipped row/polygon counts so the Location Troubleshooter
+/// can show a meaningful log instead of failing globally.
+nonisolated struct AdminGeometryLoadResult: Sendable {
+    let rows: [(vineyard: AdminVineyardRow, paddock: AdminVineyardPaddockRow)]
+    let vineyardsAttempted: Int
+    let vineyardsSucceeded: Int
+    let vineyardErrors: [(vineyardName: String, message: String)]
+    let totalRowsLoaded: Int
+    let totalSkippedRows: Int
+    let totalSkippedPolygonPoints: Int
+    let paddocksWithoutGeometry: Int
 }
 
 nonisolated private struct VineyardIdParams: Encodable, Sendable {
@@ -490,9 +567,9 @@ final class SupabaseAdminRepository {
                 id: $0.id,
                 vineyardId: $0.vineyardId,
                 name: $0.name,
-                polygonPoints: $0.polygonPoints ?? [],
-                rows: $0.rows ?? [],
-                rowCount: $0.rowCount ?? ($0.rows?.count ?? 0),
+                polygonPoints: $0.polygonPoints,
+                rows: $0.rows,
+                rowCount: $0.rowCount ?? $0.rows.count,
                 rowDirection: $0.rowDirection,
                 rowWidth: $0.rowWidth,
                 vineSpacing: $0.vineSpacing,
@@ -507,29 +584,119 @@ final class SupabaseAdminRepository {
     /// Issues one call per vineyard in parallel. Annotates rows with vineyard name
     /// for display in admin lists.
     func fetchAllPaddocks() async throws -> [(vineyard: AdminVineyardRow, paddock: AdminVineyardPaddockRow)] {
+        try await fetchAllPaddocksDiagnostic().rows
+    }
+
+    /// Variant of `fetchAllPaddocks` that does NOT abort on a single
+    /// vineyard's failure. Returns the rows that decoded successfully
+    /// together with per-vineyard error messages and lossy-decoding
+    /// counts so admin diagnostic surfaces can show what worked vs. what
+    /// was skipped. Used by the System Admin Location Troubleshooter.
+    func fetchAllPaddocksDiagnostic() async throws -> AdminGeometryLoadResult {
         let vineyards = try await fetchAllVineyards()
+        let activeVineyards = vineyards.filter { $0.deletedAt == nil }
         let byId: [UUID: AdminVineyardRow] = Dictionary(uniqueKeysWithValues: vineyards.map { ($0.id, $0) })
-        var results: [(AdminVineyardRow, AdminVineyardPaddockRow)] = []
-        try await withThrowingTaskGroup(of: [AdminVineyardPaddockRow].self) { group in
-            for v in vineyards where v.deletedAt == nil {
+
+        struct Per: Sendable {
+            let vineyardName: String
+            let result: Result<[AdminVineyardPaddockDiagnostic], Error>
+        }
+
+        var perVineyard: [Per] = []
+        await withTaskGroup(of: Per.self) { group in
+            for v in activeVineyards {
                 let vid = v.id
-                group.addTask { try await self.fetchVineyardPaddocks(vineyardId: vid) }
-            }
-            for try await rows in group {
-                for r in rows {
-                    if let v = byId[r.vineyardId] {
-                        results.append((v, r))
+                let name = v.name
+                group.addTask {
+                    do {
+                        let rows = try await self.fetchVineyardPaddocksDiagnostic(vineyardId: vid)
+                        return Per(vineyardName: name, result: .success(rows))
+                    } catch {
+                        return Per(vineyardName: name, result: .failure(error))
                     }
                 }
             }
+            for await item in group { perVineyard.append(item) }
         }
-        results.sort { lhs, rhs in
+
+        var rows: [(AdminVineyardRow, AdminVineyardPaddockRow)] = []
+        var errors: [(String, String)] = []
+        var succeeded = 0
+        var skippedRows = 0
+        var skippedPoints = 0
+        var withoutGeometry = 0
+        for entry in perVineyard {
+            switch entry.result {
+            case .success(let diags):
+                succeeded += 1
+                for d in diags {
+                    skippedRows += d.skippedRows
+                    skippedPoints += d.skippedPolygonPoints
+                    if d.row.polygonPoints.isEmpty && d.row.rows.isEmpty {
+                        withoutGeometry += 1
+                    }
+                    if let v = byId[d.row.vineyardId] {
+                        rows.append((v, d.row))
+                    }
+                }
+            case .failure(let err):
+                errors.append((entry.vineyardName, err.localizedDescription))
+            }
+        }
+
+        rows.sort { lhs, rhs in
             if lhs.0.name.lowercased() == rhs.0.name.lowercased() {
                 return lhs.1.name.lowercased() < rhs.1.name.lowercased()
             }
             return lhs.0.name.lowercased() < rhs.0.name.lowercased()
         }
-        return results
+
+        return AdminGeometryLoadResult(
+            rows: rows,
+            vineyardsAttempted: activeVineyards.count,
+            vineyardsSucceeded: succeeded,
+            vineyardErrors: errors,
+            totalRowsLoaded: rows.reduce(0) { $0 + $1.1.rows.count },
+            totalSkippedRows: skippedRows,
+            totalSkippedPolygonPoints: skippedPoints,
+            paddocksWithoutGeometry: withoutGeometry
+        )
+    }
+
+    private struct AdminVineyardPaddockDiagnostic: Sendable {
+        let row: AdminVineyardPaddockRow
+        let skippedRows: Int
+        let skippedPolygonPoints: Int
+    }
+
+    private func fetchVineyardPaddocksDiagnostic(
+        vineyardId: UUID
+    ) async throws -> [AdminVineyardPaddockDiagnostic] {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let dtos: [VineyardPaddockDTO] = try await provider.client
+            .rpc("admin_list_vineyard_paddocks", params: VineyardIdParams(vineyardId: vineyardId))
+            .execute()
+            .value
+        return dtos.map { dto in
+            AdminVineyardPaddockDiagnostic(
+                row: AdminVineyardPaddockRow(
+                    id: dto.id,
+                    vineyardId: dto.vineyardId,
+                    name: dto.name,
+                    polygonPoints: dto.polygonPoints,
+                    rows: dto.rows,
+                    rowCount: dto.rowCount ?? dto.rows.count,
+                    rowDirection: dto.rowDirection,
+                    rowWidth: dto.rowWidth,
+                    vineSpacing: dto.vineSpacing,
+                    createdAt: dto.createdAt,
+                    updatedAt: dto.updatedAt,
+                    deletedAt: dto.deletedAt
+                ),
+                skippedRows: dto.skippedRowCount,
+                skippedPolygonPoints: dto.skippedPolygonPointCount
+            )
+        }
     }
 
     func fetchWorkTasks(limit: Int = 500) async throws -> [AdminWorkTaskRow] {
