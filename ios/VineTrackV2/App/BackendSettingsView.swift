@@ -573,18 +573,16 @@ struct BackendSettingsView: View {
 
     private var supportSection: some View {
         Section {
-            Button {
-                openSupportEmail()
+            NavigationLink {
+                SupportRequestView()
             } label: {
-                externalLinkRow(
+                SettingsRow(
                     title: "Contact Support",
                     subtitle: "Send feedback, feature requests or report an issue",
                     symbol: "envelope.fill",
                     color: .green
                 )
             }
-            .buttonStyle(.plain)
-            .contentShape(Rectangle())
         } header: {
             SettingsSectionHeader(title: "Help & Support", symbol: "questionmark.circle.fill", color: .green)
         } footer: {
@@ -609,30 +607,6 @@ struct BackendSettingsView: View {
                 .foregroundStyle(.secondary)
         }
         .contentShape(Rectangle())
-    }
-
-    private func openSupportEmail() {
-        let address = "support@vinetrack.com.au"
-        let subject = "VineTrack feedback / support — v\(appVersion) (\(appBuild))"
-        let bodyLines = [
-            "Hi VineTrack team,",
-            "",
-            "",
-            "— — —",
-            "App version: \(appVersion) (\(appBuild))",
-            "User: \(auth.userEmail ?? "—")"
-        ]
-        let body = bodyLines.joined(separator: "\n")
-        var components = URLComponents()
-        components.scheme = "mailto"
-        components.path = address
-        components.queryItems = [
-            URLQueryItem(name: "subject", value: subject),
-            URLQueryItem(name: "body", value: body)
-        ]
-        if let url = components.url {
-            openURL(url)
-        }
     }
 
     // MARK: - Helpers
