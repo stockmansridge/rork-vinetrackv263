@@ -790,6 +790,133 @@ final class FuelPurchaseSyncService {
     }
 }
 
+// MARK: - TractorFuelLogSyncService
+
+@Observable
+@MainActor
+final class TractorFuelLogSyncService {
+    typealias Status = ManagementSyncStatus
+
+    var syncStatus: Status = .idle
+    var lastSyncDate: Date?
+    var errorMessage: String?
+
+    private weak var store: MigratedDataStore?
+    private weak var auth: NewBackendAuthService?
+    private let repository: any TractorFuelLogSyncRepositoryProtocol
+    private let metadata: ManagementSyncMetadata
+    private var isConfigured: Bool = false
+
+    init(repository: (any TractorFuelLogSyncRepositoryProtocol)? = nil) {
+        self.repository = repository ?? SupabaseTractorFuelLogSyncRepository()
+        self.metadata = ManagementSyncMetadata(key: "vinetrack_tractor_fuel_log_sync_metadata")
+    }
+
+    func configure(store: MigratedDataStore, auth: NewBackendAuthService) {
+        self.store = store
+        self.auth = auth
+        guard !isConfigured else { return }
+        isConfigured = true
+        store.onTractorFuelLogChanged = { [weak self] id in self?.metadata.markDirty(id, at: Date()) }
+        store.onTractorFuelLogDeleted = { [weak self] id in self?.metadata.markDeleted(id, at: Date()) }
+    }
+
+    func syncForSelectedVineyard() async {
+        guard let store, let auth, auth.isSignedIn,
+              let vineyardId = store.selectedVineyardId else { return }
+        await sync(vineyardId: vineyardId)
+    }
+
+    func sync(vineyardId: UUID) async {
+        guard SupabaseClientProvider.shared.isConfigured else {
+            errorMessage = "Supabase not configured"
+            syncStatus = .failure("Supabase not configured")
+            return
+        }
+        syncStatus = .syncing
+        errorMessage = nil
+        do {
+            try await push(vineyardId: vineyardId)
+            try await pull(vineyardId: vineyardId)
+            metadata.setLastSync(Date(), for: vineyardId)
+            lastSyncDate = Date()
+            syncStatus = .success
+        } catch {
+            errorMessage = error.localizedDescription
+            syncStatus = .failure(error.localizedDescription)
+        }
+    }
+
+    private func push(vineyardId: UUID) async throws {
+        guard let store else { return }
+        let createdBy = auth?.userId
+        let dirty = metadata.pendingUpserts
+        if !dirty.isEmpty {
+            let byId = Dictionary(store.tractorFuelLogs.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+            var payloads: [BackendTractorFuelLogUpsert] = []
+            var pushed: [UUID] = []
+            for (id, ts) in dirty {
+                guard let item = byId[id], item.vineyardId == vineyardId else { continue }
+                payloads.append(BackendTractorFuelLog.upsert(from: item, createdBy: createdBy, clientUpdatedAt: ts))
+                pushed.append(id)
+            }
+            if !payloads.isEmpty {
+                try await repository.upsertMany(payloads)
+                metadata.clearDirty(pushed)
+            }
+        }
+        for (id, _) in metadata.pendingDeletes {
+            do {
+                try await repository.softDelete(id: id)
+                metadata.clearDeleted([id])
+            } catch {
+                if isMissingRowError(error) { metadata.clearDeleted([id]) }
+            }
+        }
+    }
+
+    private func pull(vineyardId: UUID) async throws {
+        guard let store else { return }
+        let lastSync = metadata.lastSync(for: vineyardId)
+        let remote = try await repository.fetch(vineyardId: vineyardId, since: lastSync)
+        if lastSync == nil {
+            let remoteIds = Set(remote.map { $0.id })
+            let local = store.tractorFuelLogs.filter { $0.vineyardId == vineyardId }
+            let missing = local.filter { !remoteIds.contains($0.id) }
+            if !missing.isEmpty {
+                let now = Date()
+                let createdBy = auth?.userId
+                let payloads = missing.map { BackendTractorFuelLog.upsert(from: $0, createdBy: createdBy, clientUpdatedAt: now) }
+                do {
+                    try await repository.upsertMany(payloads)
+                    #if DEBUG
+                    print("[TractorFuelLogSync] initial seed pushed \(payloads.count) local row(s) missing remotely")
+                    #endif
+                } catch {
+                    #if DEBUG
+                    print("[TractorFuelLogSync] initial seed push failed: \(error.localizedDescription)")
+                    #endif
+                }
+            }
+            if remote.isEmpty { return }
+        }
+        for item in remote {
+            if item.deletedAt != nil {
+                store.applyRemoteTractorFuelLogDelete(item.id)
+                metadata.clearDirty([item.id])
+                metadata.clearDeleted([item.id])
+                continue
+            }
+            if let pendingAt = metadata.pendingUpserts[item.id] {
+                let remoteAt = item.clientUpdatedAt ?? item.updatedAt ?? .distantPast
+                if pendingAt > remoteAt { continue }
+            }
+            store.applyRemoteTractorFuelLogUpsert(item.toTractorFuelLog())
+            metadata.clearDirty([item.id])
+        }
+    }
+}
+
 // MARK: - OperatorCategorySyncService
 
 @Observable

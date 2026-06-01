@@ -34,6 +34,7 @@ final class MigratedDataStore {
 
     var tractors: [Tractor] = []
     var fuelPurchases: [FuelPurchase] = []
+    var tractorFuelLogs: [TractorFuelLog] = []
     var operatorCategories: [OperatorCategory] = []
     var workTaskTypes: [WorkTaskType] = []
     var equipmentItems: [EquipmentItem] = []
@@ -127,6 +128,8 @@ final class MigratedDataStore {
     var onTractorDeleted: ((UUID) -> Void)?
     var onFuelPurchaseChanged: ((UUID) -> Void)?
     var onFuelPurchaseDeleted: ((UUID) -> Void)?
+    var onTractorFuelLogChanged: ((UUID) -> Void)?
+    var onTractorFuelLogDeleted: ((UUID) -> Void)?
     var onOperatorCategoryChanged: ((UUID) -> Void)?
     var onOperatorCategoryDeleted: ((UUID) -> Void)?
     var onWorkTaskTypeChanged: ((UUID) -> Void)?
@@ -190,6 +193,7 @@ final class MigratedDataStore {
         static let savedCustomPatterns = "vinetrack_saved_custom_patterns"
         static let tractors = "vinetrack_tractors"
         static let fuelPurchases = "vinetrack_fuel_purchases"
+        static let tractorFuelLogs = "vinetrack_tractor_fuel_logs"
         static let operatorCategories = "vinetrack_operator_categories"
         static let buttonTemplates = "vinetrack_button_templates"
         static let grapeVarieties = "vinetrack_grape_varieties"
@@ -233,6 +237,7 @@ final class MigratedDataStore {
         savedCustomPatterns = persistence.load(key: Keys.savedCustomPatterns) ?? []
         tractors = persistence.load(key: Keys.tractors) ?? []
         fuelPurchases = persistence.load(key: Keys.fuelPurchases) ?? []
+        tractorFuelLogs = persistence.load(key: Keys.tractorFuelLogs) ?? []
         operatorCategories = persistence.load(key: Keys.operatorCategories) ?? []
         buttonTemplates = persistence.load(key: Keys.buttonTemplates) ?? []
         grapeVarieties = persistence.load(key: Keys.grapeVarieties) ?? []
@@ -250,6 +255,7 @@ final class MigratedDataStore {
         let originalTemplates = buttonTemplates.count
         let originalTractors = tractors.count
         let originalFuel = fuelPurchases.count
+        let originalFuelLogs = tractorFuelLogs.count
 
         grapeVarieties = Self.dedupById(grapeVarieties) { $0.id }
         operatorCategories = Self.dedupById(operatorCategories) { $0.id }
@@ -259,6 +265,7 @@ final class MigratedDataStore {
         buttonTemplates = Self.collapseDefaultTemplates(buttonTemplates)
         tractors = Self.dedupById(tractors) { $0.id }
         fuelPurchases = Self.dedupById(fuelPurchases) { $0.id }
+        tractorFuelLogs = Self.dedupById(tractorFuelLogs) { $0.id }
 
         if grapeVarieties.count != originalGrape {
             persistence.save(grapeVarieties, key: Keys.grapeVarieties)
@@ -274,6 +281,9 @@ final class MigratedDataStore {
         }
         if fuelPurchases.count != originalFuel {
             persistence.save(fuelPurchases, key: Keys.fuelPurchases)
+        }
+        if tractorFuelLogs.count != originalFuelLogs {
+            persistence.save(tractorFuelLogs, key: Keys.tractorFuelLogs)
         }
     }
 
@@ -434,6 +444,7 @@ final class MigratedDataStore {
         tripCostAllocations = []
         tractors = []
         fuelPurchases = []
+        tractorFuelLogs = []
         operatorCategories = []
         buttonTemplates = []
         yieldSessions = []
@@ -484,6 +495,7 @@ final class MigratedDataStore {
             Keys.savedCustomPatterns,
             Keys.tractors,
             Keys.fuelPurchases,
+            Keys.tractorFuelLogs,
             Keys.operatorCategories,
             Keys.buttonTemplates,
             Keys.grapeVarieties,

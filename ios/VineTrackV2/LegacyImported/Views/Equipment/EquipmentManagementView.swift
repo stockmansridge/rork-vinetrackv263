@@ -23,6 +23,17 @@ struct EquipmentManagementView: View {
         return "\(count) item\(count == 1 ? "" : "s")"
     }
 
+    private var fuelLogCount: Int {
+        guard let vid = store.selectedVineyardId else { return 0 }
+        return store.tractorFuelLogs.filter { $0.vineyardId == vid }.count
+    }
+
+    private var fuelLogSubtitle: String {
+        let count = fuelLogCount
+        if count == 0 { return "Record diesel fills to track L/hr" }
+        return "\(count) fill\(count == 1 ? "" : "s") recorded"
+    }
+
     var body: some View {
         List {
             Section {
@@ -129,6 +140,32 @@ struct EquipmentManagementView: View {
                 if canManageSetup {
                     Text("Fuel usage (L/hr) can typically be found in your tractor's user manual under engine specifications.")
                 }
+            }
+
+            Section {
+                NavigationLink {
+                    FuelLogView()
+                } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Fuel Log")
+                                .font(.body.weight(.medium))
+                            Text(fuelLogSubtitle)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                }
+            } header: {
+                HStack {
+                    Label("Fuel Log", systemImage: "gauge.with.needle")
+                        .font(.caption.weight(.semibold))
+                        .textCase(.uppercase)
+                    Spacer()
+                }
+            } footer: {
+                Text("Record litres of diesel added and engine hours each time a tractor is filled. VineTrack calculates litres per hour from consecutive fills. Operators can record fills.")
             }
 
             Section {

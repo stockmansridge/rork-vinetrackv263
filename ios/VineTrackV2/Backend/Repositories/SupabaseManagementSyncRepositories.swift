@@ -165,6 +165,33 @@ final class SupabaseFuelPurchaseSyncRepository: FuelPurchaseSyncRepositoryProtoc
     }
 }
 
+// MARK: - Tractor Fuel Logs
+
+final class SupabaseTractorFuelLogSyncRepository: TractorFuelLogSyncRepositoryProtocol {
+    private let provider: SupabaseClientProvider
+    init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
+
+    func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendTractorFuelLog] {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let q = provider.client.from("tractor_fuel_logs").select().eq("vineyard_id", value: vineyardId.uuidString)
+        if let since {
+            return try await q.gte("updated_at", value: iso(since)).order("updated_at", ascending: true).execute().value
+        }
+        return try await q.order("updated_at", ascending: true).execute().value
+    }
+
+    func upsertMany(_ items: [BackendTractorFuelLogUpsert]) async throws {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        guard !items.isEmpty else { return }
+        try await provider.client.from("tractor_fuel_logs").upsert(items, onConflict: "id").execute()
+    }
+
+    func softDelete(id: UUID) async throws {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        try await provider.client.rpc("soft_delete_tractor_fuel_log", params: SoftDeleteByIdRequest(id: id)).execute()
+    }
+}
+
 // MARK: - Operator Categories
 
 final class SupabaseOperatorCategorySyncRepository: OperatorCategorySyncRepositoryProtocol {

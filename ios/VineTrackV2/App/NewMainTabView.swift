@@ -17,6 +17,7 @@ struct NewMainTabView: View {
     @Environment(SprayEquipmentSyncService.self) private var sprayEquipmentSync
     @Environment(TractorSyncService.self) private var tractorSync
     @Environment(FuelPurchaseSyncService.self) private var fuelPurchaseSync
+    @Environment(TractorFuelLogSyncService.self) private var tractorFuelLogSync
     @Environment(OperatorCategorySyncService.self) private var operatorCategorySync
     @Environment(WorkTaskTypeSyncService.self) private var workTaskTypeSync
     @Environment(EquipmentItemSyncService.self) private var equipmentItemSync
@@ -90,6 +91,7 @@ struct NewMainTabView: View {
             sprayEquipmentSync.configure(store: store, auth: auth)
             tractorSync.configure(store: store, auth: auth)
             fuelPurchaseSync.configure(store: store, auth: auth)
+            tractorFuelLogSync.configure(store: store, auth: auth)
             operatorCategorySync.configure(store: store, auth: auth)
             workTaskTypeSync.configure(store: store, auth: auth)
             equipmentItemSync.configure(store: store, auth: auth)
@@ -190,6 +192,7 @@ struct NewMainTabView: View {
         await sprayEquipmentSync.syncForSelectedVineyard()
         await tractorSync.syncForSelectedVineyard()
         await fuelPurchaseSync.syncForSelectedVineyard()
+        await tractorFuelLogSync.syncForSelectedVineyard()
         await operatorCategorySync.syncForSelectedVineyard()
         await workTaskTypeSync.syncForSelectedVineyard()
         await equipmentItemSync.syncForSelectedVineyard()

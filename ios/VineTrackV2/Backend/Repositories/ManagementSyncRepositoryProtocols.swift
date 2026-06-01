@@ -54,6 +54,12 @@ protocol FuelPurchaseSyncRepositoryProtocol: Sendable {
     func softDelete(id: UUID) async throws
 }
 
+protocol TractorFuelLogSyncRepositoryProtocol: Sendable {
+    func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendTractorFuelLog]
+    func upsertMany(_ items: [BackendTractorFuelLogUpsert]) async throws
+    func softDelete(id: UUID) async throws
+}
+
 protocol OperatorCategorySyncRepositoryProtocol: Sendable {
     func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendOperatorCategory]
     func upsertMany(_ items: [BackendOperatorCategoryUpsert]) async throws

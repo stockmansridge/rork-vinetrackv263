@@ -468,6 +468,118 @@ extension BackendFuelPurchase {
     }
 }
 
+// MARK: - Tractor Fuel Logs
+
+nonisolated struct BackendTractorFuelLog: Codable, Sendable, Identifiable {
+    let id: UUID
+    let vineyardId: UUID
+    let tractorId: UUID?
+    let fillDatetime: Date?
+    let litresAdded: Double?
+    let engineHours: Double?
+    let operatorUserId: UUID?
+    let operatorName: String?
+    let costPerLitre: Double?
+    let totalCost: Double?
+    let filledToFull: Bool?
+    let notes: String?
+    let createdAt: Date?
+    let updatedAt: Date?
+    let deletedAt: Date?
+    let clientUpdatedAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case vineyardId = "vineyard_id"
+        case tractorId = "tractor_id"
+        case fillDatetime = "fill_datetime"
+        case litresAdded = "litres_added"
+        case engineHours = "engine_hours"
+        case operatorUserId = "operator_user_id"
+        case operatorName = "operator_name"
+        case costPerLitre = "cost_per_litre"
+        case totalCost = "total_cost"
+        case filledToFull = "filled_to_full"
+        case notes
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+        case deletedAt = "deleted_at"
+        case clientUpdatedAt = "client_updated_at"
+    }
+}
+
+nonisolated struct BackendTractorFuelLogUpsert: Encodable, Sendable {
+    let id: UUID
+    let vineyardId: UUID
+    let tractorId: UUID?
+    let fillDatetime: Date
+    let litresAdded: Double
+    let engineHours: Double?
+    let operatorUserId: UUID?
+    let operatorName: String?
+    let costPerLitre: Double?
+    let totalCost: Double?
+    let filledToFull: Bool?
+    let notes: String?
+    let createdBy: UUID?
+    let clientUpdatedAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case vineyardId = "vineyard_id"
+        case tractorId = "tractor_id"
+        case fillDatetime = "fill_datetime"
+        case litresAdded = "litres_added"
+        case engineHours = "engine_hours"
+        case operatorUserId = "operator_user_id"
+        case operatorName = "operator_name"
+        case costPerLitre = "cost_per_litre"
+        case totalCost = "total_cost"
+        case filledToFull = "filled_to_full"
+        case notes
+        case createdBy = "created_by"
+        case clientUpdatedAt = "client_updated_at"
+    }
+}
+
+extension BackendTractorFuelLog {
+    static func upsert(from f: TractorFuelLog, createdBy: UUID?, clientUpdatedAt: Date) -> BackendTractorFuelLogUpsert {
+        BackendTractorFuelLogUpsert(
+            id: f.id,
+            vineyardId: f.vineyardId,
+            tractorId: f.tractorId,
+            fillDatetime: f.fillDateTime,
+            litresAdded: f.litresAdded,
+            engineHours: f.engineHours,
+            operatorUserId: f.operatorUserId,
+            operatorName: f.operatorName,
+            costPerLitre: f.costPerLitre,
+            totalCost: f.totalCost,
+            filledToFull: f.filledToFull,
+            notes: f.notes,
+            createdBy: createdBy,
+            clientUpdatedAt: clientUpdatedAt
+        )
+    }
+
+    func toTractorFuelLog() -> TractorFuelLog {
+        TractorFuelLog(
+            id: id,
+            vineyardId: vineyardId,
+            tractorId: tractorId,
+            fillDateTime: fillDatetime ?? Date(),
+            litresAdded: litresAdded ?? 0,
+            engineHours: engineHours,
+            operatorUserId: operatorUserId,
+            operatorName: operatorName,
+            costPerLitre: costPerLitre,
+            totalCost: totalCost,
+            filledToFull: filledToFull,
+            notes: notes
+        )
+    }
+}
+
 // MARK: - Operator Categories
 
 nonisolated struct BackendOperatorCategory: Codable, Sendable, Identifiable {

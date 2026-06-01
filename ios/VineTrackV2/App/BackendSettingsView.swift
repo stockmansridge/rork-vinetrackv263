@@ -663,6 +663,7 @@ struct SyncSettingsView: View {
     @Environment(SprayEquipmentSyncService.self) private var sprayEquipmentSync
     @Environment(TractorSyncService.self) private var tractorSync
     @Environment(FuelPurchaseSyncService.self) private var fuelPurchaseSync
+    @Environment(TractorFuelLogSyncService.self) private var tractorFuelLogSync
     @Environment(OperatorCategorySyncService.self) private var operatorCategorySync
     @Environment(WorkTaskTypeSyncService.self) private var workTaskTypeSync
     @Environment(GrowthStageImageSyncService.self) private var growthStageImageSync
@@ -762,6 +763,14 @@ struct SyncSettingsView: View {
                 }
                 .disabled(isSyncingMgmt(fuelPurchaseSync.syncStatus))
                 VineyardSyncStatusRow(label: "fuel purchases", state: mgmtStateFrom(fuelPurchaseSync.syncStatus, lastSync: fuelPurchaseSync.lastSyncDate))
+
+                Button {
+                    Task { await tractorFuelLogSync.syncForSelectedVineyard() }
+                } label: {
+                    syncButtonLabel(title: "Sync Fuel Logs", icon: "gauge.with.needle", isSyncing: isSyncingMgmt(tractorFuelLogSync.syncStatus))
+                }
+                .disabled(isSyncingMgmt(tractorFuelLogSync.syncStatus))
+                VineyardSyncStatusRow(label: "fuel logs", state: mgmtStateFrom(tractorFuelLogSync.syncStatus, lastSync: tractorFuelLogSync.lastSyncDate))
 
                 Button {
                     Task { await operatorCategorySync.syncForSelectedVineyard() }

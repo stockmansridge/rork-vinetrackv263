@@ -8,6 +8,7 @@ extension MigratedDataStore {
         static let paddocks = "vinetrack_paddocks"
         static let tractors = "vinetrack_tractors"
         static let fuelPurchases = "vinetrack_fuel_purchases"
+        static let tractorFuelLogs = "vinetrack_tractor_fuel_logs"
         static let operatorCategories = "vinetrack_operator_categories"
         static let buttonTemplates = "vinetrack_button_templates"
         static let grapeVarieties = "vinetrack_grape_varieties"
@@ -178,6 +179,80 @@ extension MigratedDataStore {
         var all: [FuelPurchase] = persistenceStore.load(key: MgmtKeys.fuelPurchases) ?? []
         all.removeAll { $0.id == id }
         persistenceStore.save(all, key: MgmtKeys.fuelPurchases)
+    }
+
+    // MARK: - Tractor Fuel Logs
+
+    private func saveTractorFuelLogsToDisk() {
+        guard let vineyardId = selectedVineyardId else { return }
+        var all: [TractorFuelLog] = persistenceStore.load(key: MgmtKeys.tractorFuelLogs) ?? []
+        all.removeAll { $0.vineyardId == vineyardId }
+        all.append(contentsOf: tractorFuelLogs.filter { $0.vineyardId == vineyardId })
+        persistenceStore.save(all, key: MgmtKeys.tractorFuelLogs)
+    }
+
+    /// Fuel logs for the given tractor in the current vineyard, newest first.
+    func fuelLogs(forTractor tractorId: UUID?) -> [TractorFuelLog] {
+        tractorFuelLogs
+            .filter { $0.vineyardId == selectedVineyardId && $0.tractorId == tractorId }
+            .sorted { $0.fillDateTime > $1.fillDateTime }
+    }
+
+    /// The most recent fuel log for `tractorId` strictly earlier than
+    /// `before`, used to derive a litres/hour rate for a new fill.
+    func previousFuelLog(forTractor tractorId: UUID?, before date: Date, excluding id: UUID?) -> TractorFuelLog? {
+        tractorFuelLogs
+            .filter {
+                $0.vineyardId == selectedVineyardId &&
+                $0.tractorId == tractorId &&
+                $0.id != id &&
+                $0.fillDateTime < date
+            }
+            .max { $0.fillDateTime < $1.fillDateTime }
+    }
+
+    func addTractorFuelLog(_ log: TractorFuelLog) {
+        guard let vineyardId = selectedVineyardId else { return }
+        var entry = log
+        entry.vineyardId = vineyardId
+        tractorFuelLogs.append(entry)
+        saveTractorFuelLogsToDisk()
+        onTractorFuelLogChanged?(entry.id)
+    }
+
+    func updateTractorFuelLog(_ log: TractorFuelLog) {
+        guard let idx = tractorFuelLogs.firstIndex(where: { $0.id == log.id }) else { return }
+        tractorFuelLogs[idx] = log
+        saveTractorFuelLogsToDisk()
+        onTractorFuelLogChanged?(log.id)
+    }
+
+    func deleteTractorFuelLog(_ log: TractorFuelLog) {
+        tractorFuelLogs.removeAll { $0.id == log.id }
+        saveTractorFuelLogsToDisk()
+        onTractorFuelLogDeleted?(log.id)
+    }
+
+    func applyRemoteTractorFuelLogUpsert(_ log: TractorFuelLog) {
+        if let idx = tractorFuelLogs.firstIndex(where: { $0.id == log.id }) {
+            tractorFuelLogs[idx] = log
+        } else {
+            tractorFuelLogs.append(log)
+        }
+        var all: [TractorFuelLog] = persistenceStore.load(key: MgmtKeys.tractorFuelLogs) ?? []
+        if let idx = all.firstIndex(where: { $0.id == log.id }) {
+            all[idx] = log
+        } else {
+            all.append(log)
+        }
+        persistenceStore.save(all, key: MgmtKeys.tractorFuelLogs)
+    }
+
+    func applyRemoteTractorFuelLogDelete(_ id: UUID) {
+        tractorFuelLogs.removeAll { $0.id == id }
+        var all: [TractorFuelLog] = persistenceStore.load(key: MgmtKeys.tractorFuelLogs) ?? []
+        all.removeAll { $0.id == id }
+        persistenceStore.save(all, key: MgmtKeys.tractorFuelLogs)
     }
 
     // MARK: - Operator Categories
