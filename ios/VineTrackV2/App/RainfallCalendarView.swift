@@ -8,6 +8,12 @@ struct RainfallCalendarView: View {
     @State private var year: Int = Calendar.current.component(.year, from: Date())
     @State private var didInitialLoad = false
 
+    /// Live station provider configured for this vineyard. This is what
+    /// powers the Home card's "Today's rain" value, so we surface it here
+    /// as the "Today / current" source to keep the two screens consistent.
+    @State private var liveStationProvider: LocalObservationProvider = .none
+    @State private var liveStationName: String?
+
     private let dayColumnWidth: CGFloat = 28
     private let monthColumnWidth: CGFloat = 44
     private let cellHeight: CGFloat = 18
@@ -121,14 +127,32 @@ struct RainfallCalendarView: View {
 
     private var sourceCard: some View {
         VStack(alignment: .leading, spacing: 6) {
+            // 1) Today / current — the live station that powers the Home
+            //    card's "Today's rain". Shown so the two screens don't look
+            //    like they disagree about the source.
+            if liveStationProvider != .none {
+                calendarSourceRow(
+                    label: "Today / current",
+                    value: liveStationProvider.displayName
+                        + (liveStationName.map { " — \($0)" } ?? ""),
+                    icon: liveStationProvider.symbol,
+                    tint: VineyardTheme.leafGreen
+                )
+            }
+
+            // 2) Saved daily rainfall — the persisted vineyard history that
+            //    fills the calendar grid.
             if service.usedPersistedHistory {
                 calendarSourceRow(
-                    label: "History",
-                    value: "Persisted vineyard rainfall",
+                    label: "Saved daily rainfall",
+                    value: "Vineyard rainfall history",
                     icon: "externaldrive.fill.badge.icloud",
                     tint: VineyardTheme.leafGreen
                 )
             }
+
+            // 3) Measured-day breakdown (manual / Davis / WU). These are
+            //    real recorded rainfall, distinct from the archive fallback.
             if service.manualDaysCovered > 0 {
                 calendarSourceRow(
                     label: "Manual entries",
@@ -139,46 +163,50 @@ struct RainfallCalendarView: View {
             }
             if service.davisDaysCovered > 0 {
                 calendarSourceRow(
-                    label: "Recent actual",
+                    label: "Station record",
                     value: "Davis WeatherLink — \(service.stationName ?? "station") · \(service.davisDaysCovered) day\(service.davisDaysCovered == 1 ? "" : "s")",
                     icon: "sensor.tag.radiowaves.forward.fill",
                     tint: VineyardTheme.leafGreen
                 )
-                if service.wuDaysCovered > 0 {
-                    calendarSourceRow(
-                        label: "Also from",
-                        value: "Weather Underground · \(service.wuDaysCovered) day\(service.wuDaysCovered == 1 ? "" : "s")",
-                        icon: "antenna.radiowaves.left.and.right",
-                        tint: .orange
-                    )
-                }
-            } else if service.wuDaysCovered > 0 {
+            }
+            if service.wuDaysCovered > 0 {
                 calendarSourceRow(
-                    label: "Recent actual",
-                    value: "Weather Underground — \(service.stationName ?? "station") · \(service.wuDaysCovered) day\(service.wuDaysCovered == 1 ? "" : "s")",
+                    label: "Station record",
+                    value: "Weather Underground\(service.davisDaysCovered == 0 ? " — \(service.stationName ?? "station")" : "") · \(service.wuDaysCovered) day\(service.wuDaysCovered == 1 ? "" : "s")",
                     icon: "antenna.radiowaves.left.and.right",
                     tint: .orange
                 )
-            } else {
-                calendarSourceRow(
-                    label: "Recent actual",
-                    value: actualRainValue,
-                    icon: "cloud.sun.fill",
-                    tint: .secondary
-                )
             }
+
+            // 4) Fallback source — Open-Meteo archive, used only for days
+            //    with no station/manual record. Never labelled as actual
+            //    station rainfall.
             if service.archiveDaysCovered > 0 {
                 calendarSourceRow(
-                    label: "Older / fallback",
-                    value: "Open-Meteo (fallback) · \(service.archiveDaysCovered) day\(service.archiveDaysCovered == 1 ? "" : "s")",
+                    label: "Fallback source",
+                    value: "Open-Meteo archive · used for \(service.archiveDaysCovered) missing day\(service.archiveDaysCovered == 1 ? "" : "s")",
                     icon: "tray.full.fill",
                     tint: .secondary
                 )
             }
+
+            // Honest warning when the whole calendar period has no station /
+            // manual rainfall and is entirely Open-Meteo archive estimates.
+            if service.usedPersistedHistory,
+               service.davisDaysCovered == 0,
+               service.wuDaysCovered == 0,
+               service.manualDaysCovered == 0,
+               service.archiveDaysCovered > 0 {
+                Label("No station rainfall recorded for this period — daily values are Open-Meteo archive estimates, not station readings.",
+                      systemImage: "info.circle")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
+
             if service.todayFromLiveDavis {
                 calendarSourceRow(
                     label: "Today",
-                    value: "Live Davis cache (no persisted row yet)",
+                    value: "Live Davis cache (no saved row yet)",
                     icon: "clock.arrow.circlepath",
                     tint: .orange
                 )
@@ -199,7 +227,7 @@ struct RainfallCalendarView: View {
             }
             HStack(spacing: 12) {
                 if let updated = service.lastUpdated {
-                    Text("Updated \(updated.formatted(.relative(presentation: .named)))")
+                    Text("Last refreshed \(updated.formatted(.relative(presentation: .named)))")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 } else if service.isLoading {
@@ -231,14 +259,6 @@ struct RainfallCalendarView: View {
         .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: 10))
     }
 
-    private var actualRainValue: String {
-        let raw = service.providerLabel
-        if raw.hasPrefix("Source: ") {
-            return String(raw.dropFirst("Source: ".count))
-        }
-        return raw
-    }
-
     private func calendarSourceRow(label: String, value: String, icon: String, tint: Color) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: icon)
@@ -264,7 +284,7 @@ struct RainfallCalendarView: View {
                 RoundedRectangle(cornerRadius: 2)
                     .fill(VineyardTheme.leafGreen.opacity(0.8))
                     .frame(width: 10, height: 10)
-                Text("Local station")
+                Text("Station (measured)")
             }
             HStack(spacing: 4) {
                 ZStack {
@@ -276,7 +296,7 @@ struct RainfallCalendarView: View {
                         .frame(width: 10, height: 1)
                         .offset(y: 4)
                 }
-                Text("Archive fallback")
+                Text("Open-Meteo fallback")
             }
             Spacer()
         }
@@ -522,6 +542,17 @@ struct RainfallCalendarView: View {
 
     private func reload() async {
         guard let lat = latitude, let lon = longitude else { return }
+        // Resolve the live station provider so the "Today / current" row
+        // matches what the Home card uses. Best-effort; never blocks load.
+        if let vid = store.selectedVineyardId {
+            await VineyardWeatherIntegrationCache.shared.ensureLoaded(for: vid)
+            let cfg = WeatherProviderStore.shared.config(for: vid)
+            liveStationProvider = cfg.localObservationProvider
+            liveStationName = cfg.davisStationName
+        } else {
+            liveStationProvider = .none
+            liveStationName = nil
+        }
         await service.load(
             year: year,
             vineyardId: store.selectedVineyardId,

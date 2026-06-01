@@ -31,6 +31,12 @@ struct HomeRainSummaryCard: View {
     @State private var isStaleSnapshot: Bool = false
     @State private var refreshDidFail: Bool = false
 
+    /// `true` when today's value came from a live station current reading
+    /// (Davis WeatherLink / Weather Underground) rather than a persisted
+    /// daily row or the forecast fallback. Drives the "Live station:" prefix
+    /// so it's clear this is the current station reading, not history.
+    @State private var todayIsLiveStation: Bool = false
+
     @State private var forecastDays: [ForecastDay] = []
     @State private var hasLoadedForecast: Bool = false
     @State private var isLoading: Bool = false
@@ -120,7 +126,7 @@ struct HomeRainSummaryCard: View {
             return "\(source) · could not refresh"
         }
         guard let source = sourceLabel else { return nil }
-        var parts: [String] = [source]
+        var parts: [String] = [todayIsLiveStation ? "Live station: \(source)" : source]
         if let observed = lastObservedAt {
             parts.append("updated \(Self.formatTime(observed))")
         }
@@ -147,6 +153,7 @@ struct HomeRainSummaryCard: View {
             sourceLabel = nil
             lastObservedAt = nil
             isStaleSnapshot = false
+            todayIsLiveStation = false
             refreshDidFail = false
             forecastDays = []
             hasLoadedForecast = false
@@ -199,6 +206,7 @@ struct HomeRainSummaryCard: View {
         var resolvedSource: String?
         var resolvedObserved: Date?
         var resolvedStale = false
+        var resolvedIsLiveStation = false
         if let snap = try? await WeatherCurrentService().fetchCachedCurrent(vineyardId: vid) {
             if let r = snap.rainTodayMm { resolvedToday = r }
             resolvedObserved = snap.observedAt
@@ -207,6 +215,13 @@ struct HomeRainSummaryCard: View {
                 rawSource: snap.source,
                 stationName: snap.stationName
             )
+            // A live station reading is one sourced from Davis/WU current
+            // conditions (not the archive/manual). This is what powers the
+            // "Today's rain" value and we label it as the live station.
+            if snap.rainTodayMm != nil {
+                resolvedIsLiveStation = (snap.source == "davis_weatherlink"
+                    || snap.source == "wunderground_pws")
+            }
         }
 
         // 3) Fallback: persisted daily rainfall row for today.
@@ -230,6 +245,7 @@ struct HomeRainSummaryCard: View {
         sourceLabel = resolvedSource
         lastObservedAt = resolvedObserved
         isStaleSnapshot = resolvedStale
+        todayIsLiveStation = resolvedIsLiveStation
 
         // 4) 7-day forecast rain.
         if let lat = latitude, let lon = longitude {
@@ -341,13 +357,13 @@ struct HomeRainSummaryCard: View {
         let largest = meaningful.max(by: { $0.forecastRainMm < $1.forecastRainMm }) ?? first
         if largest.date != first.date, largest.forecastRainMm >= first.forecastRainMm + 2 {
             return String(
-                format: "Rain: %.1f mm %@ · %.1f mm %@",
+                format: "Forecast: %.1f mm %@ · %.1f mm %@",
                 first.forecastRainMm, relativeDay(first.date),
                 largest.forecastRainMm, relativeDay(largest.date)
             )
         }
         return String(
-            format: "Rain forecast: %.1f mm %@",
+            format: "Forecast: %.1f mm %@",
             first.forecastRainMm, relativeDay(first.date)
         )
     }
