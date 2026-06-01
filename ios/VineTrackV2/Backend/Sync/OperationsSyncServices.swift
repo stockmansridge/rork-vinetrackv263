@@ -156,6 +156,14 @@ final class WorkTaskSyncService {
                 guard let item = byId[id], item.vineyardId == vineyardId else { continue }
                 payloads.append(BackendWorkTask.upsert(from: item, createdBy: createdBy, clientUpdatedAt: ts))
                 pushed.append(id)
+                #if DEBUG
+                print("""
+                [WorkTaskSync] push payload id=\(item.id) type=\(item.taskType) \
+                paddock_id=\(item.paddockId?.uuidString ?? "nil") \
+                paddock_name=\(item.paddockName.isEmpty ? "<none>" : item.paddockName) \
+                area_ha=\(item.areaHa.map { String(format: "%.4f", $0) } ?? "nil")
+                """)
+                #endif
             }
             if !payloads.isEmpty {
                 try await repository.upsertMany(payloads)

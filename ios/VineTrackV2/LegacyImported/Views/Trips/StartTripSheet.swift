@@ -817,9 +817,11 @@ struct StartTripSheet: View {
     /// Combined, alphabetically sorted list of built-in and active custom
     /// trip functions for the current vineyard.
     private var allFunctionOptions: [TripFunctionOption] {
-        var opts: [TripFunctionOption] = TripFunction.allCases.map {
-            TripFunctionOption(id: $0.rawValue, label: $0.displayName, icon: $0.icon, isCustom: false)
-        }
+        var opts: [TripFunctionOption] = TripFunction.allCases
+            .filter { !$0.isUndervineWeedingSubtype }
+            .map {
+                TripFunctionOption(id: $0.rawValue, label: $0.displayName, icon: $0.icon, isCustom: false)
+            }
         for fn in tripFunctionService.activeSortedByLabel {
             opts.append(
                 TripFunctionOption(
@@ -837,6 +839,14 @@ struct StartTripSheet: View {
         accessControl.canChangeSettings
     }
 
+    /// Undervine weeding method subtypes shown as a dedicated section in the
+    /// trip function picker.
+    private var undervineSubtypeOptions: [TripFunctionOption] {
+        TripFunction.undervineWeedingSubtypes.map {
+            TripFunctionOption(id: $0.rawValue, label: $0.displayName, icon: $0.icon, isCustom: false)
+        }
+    }
+
     private var functionSection: some View {
         sectionContainer(title: "Trip Function", icon: "wrench.and.screwdriver", tint: VineyardTheme.earthBrown) {
             VStack(spacing: 10) {
@@ -850,6 +860,11 @@ struct StartTripSheet: View {
                                 ForEach(builtins) { option in
                                     functionMenuButton(option)
                                 }
+                            }
+                        }
+                        Section("Undervine Weeding") {
+                            ForEach(undervineSubtypeOptions) { option in
+                                functionMenuButton(option)
                             }
                         }
                         if !customs.isEmpty {

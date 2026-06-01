@@ -352,6 +352,36 @@ struct AddEditWorkTaskView: View {
         let userName = auth.userName ?? ""
         task.createdBy = userName.isEmpty ? nil : userName
 
+        // Auto-populate area (hectares) from the selected block so portal
+        // reports can show hectares without the operator entering them.
+        // Portal-created tasks persist `area_ha` directly; iPhone-created
+        // tasks now match by deriving it from the linked block. The block ID
+        // is still synced (`paddock_id`) so the portal can re-derive if needed.
+        var areaSource = "none"
+        if let pid = paddockId,
+           let paddock = store.paddocks.first(where: { $0.id == pid }) {
+            let derived = paddock.areaHectares
+            if derived > 0 {
+                task.areaHa = derived
+                areaSource = "derived-from-block"
+            } else if task.areaHa != nil {
+                areaSource = "existing"
+            }
+        } else if task.areaHa != nil {
+            // No block selected (All Blocks / None) — keep any existing value.
+            areaSource = "existing"
+        }
+
+        #if DEBUG
+        print("""
+        [WorkTask] saveTask id=\(task.id) type=\(task.taskType) \
+        blockId=\(task.paddockId?.uuidString ?? "nil") \
+        block=\(task.paddockName.isEmpty ? "<none>" : task.paddockName) \
+        areaHa=\(task.areaHa.map { String(format: "%.4f", $0) } ?? "nil") \
+        areaSource=\(areaSource)
+        """)
+        #endif
+
         if isEditing {
             store.updateWorkTask(task)
         } else {

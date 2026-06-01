@@ -11,6 +11,13 @@ nonisolated enum TripFunction: String, CaseIterable, Codable, Sendable, Identifi
     case spraying
     case fertilising
     case undervineWeeding
+    // Undervine weeding method subtypes. Stored as stable raw values so the
+    // portal can report on each as a separate operation type.
+    case undervineMowing
+    case undervineMulticlean
+    case undervineRollHacke
+    case undervineDisc
+    case undervineKnifing
     case interRowCultivation
     case pruning
     case shootThinning
@@ -32,6 +39,11 @@ nonisolated enum TripFunction: String, CaseIterable, Codable, Sendable, Identifi
         case .spraying:           return "Spraying"
         case .fertilising:        return "Fertilising"
         case .undervineWeeding:   return "Undervine weeding"
+        case .undervineMowing:    return "Mowing"
+        case .undervineMulticlean:return "Multiclean"
+        case .undervineRollHacke: return "Roll Hacke"
+        case .undervineDisc:      return "Undervine Disc"
+        case .undervineKnifing:   return "Undervine Knifing"
         case .interRowCultivation:return "Inter-row cultivation"
         case .pruning:            return "Pruning"
         case .shootThinning:      return "Shoot thinning"
@@ -44,6 +56,20 @@ nonisolated enum TripFunction: String, CaseIterable, Codable, Sendable, Identifi
         }
     }
 
+    /// Undervine weeding method subtypes, grouped under "Undervine weeding"
+    /// in the trip function picker.
+    nonisolated static let undervineWeedingSubtypes: [TripFunction] = [
+        .undervineMowing,
+        .undervineMulticlean,
+        .undervineRollHacke,
+        .undervineDisc,
+        .undervineKnifing
+    ]
+
+    nonisolated var isUndervineWeedingSubtype: Bool {
+        TripFunction.undervineWeedingSubtypes.contains(self)
+    }
+
     nonisolated var icon: String {
         switch self {
         case .slashing:           return "scissors"
@@ -53,6 +79,11 @@ nonisolated enum TripFunction: String, CaseIterable, Codable, Sendable, Identifi
         case .spraying:           return "sprinkler.and.droplets.fill"
         case .fertilising:        return "drop.fill"
         case .undervineWeeding:   return "leaf"
+        case .undervineMowing:    return "scissors.badge.ellipsis"
+        case .undervineMulticlean:return "sparkles"
+        case .undervineRollHacke: return "circle.grid.cross"
+        case .undervineDisc:      return "circle.circle"
+        case .undervineKnifing:   return "line.diagonal"
         case .interRowCultivation:return "square.grid.3x3"
         case .pruning:            return "scissors.circle"
         case .shootThinning:      return "leaf.arrow.triangle.circlepath"
