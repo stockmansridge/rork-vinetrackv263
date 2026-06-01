@@ -15,6 +15,10 @@ struct EndTripReviewSheet: View {
     /// Optional free-text completion notes typed by the operator.
     /// Persisted onto the trip and synced as `trips.completion_notes`.
     @State private var completionNotes: String = ""
+    /// Optional engine-hour meter reading at trip end. Free text so it can be
+    /// left blank; parsed to `Double` on finish. Persists as
+    /// `trips.end_engine_hours` for fuel allocation (Phase 3).
+    @State private var endEngineHoursText: String = ""
     @FocusState private var notesFocused: Bool
 
     // Collapsible sections (secondary detail). Row completion stays
@@ -122,6 +126,10 @@ struct EndTripReviewSheet: View {
                     Text("Optional notes for this completed job. These will appear in reports.")
                 }
 
+                if liveTrip.tractorId != nil {
+                    engineHoursSection
+                }
+
                 if !tripPins.isEmpty {
                     Section {
                         DisclosureGroup(isExpanded: $pinsExpanded) {
@@ -163,6 +171,10 @@ struct EndTripReviewSheet: View {
                    !existing.isEmpty {
                     completionNotes = existing
                 }
+                if endEngineHoursText.isEmpty,
+                   let existing = tracking.activeTrip?.endEngineHours {
+                    endEngineHoursText = Self.engineHoursFormatter.string(from: NSNumber(value: existing)) ?? ""
+                }
             }
             .scrollDismissesKeyboard(.interactively)
             .toolbar {
@@ -176,6 +188,63 @@ struct EndTripReviewSheet: View {
                     .fontWeight(.semibold)
                 }
             }
+        }
+    }
+
+    // MARK: - Engine hours
+
+    static let engineHoursFormatter: NumberFormatter = {
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        f.maximumFractionDigits = 1
+        return f
+    }()
+
+    private var parsedEndEngineHours: Double? {
+        let trimmed = endEngineHoursText.trimmingCharacters(in: .whitespaces)
+        guard let value = Double(trimmed), value >= 0 else { return nil }
+        return value
+    }
+
+    private var endBelowStartWarning: Bool {
+        guard let start = liveTrip.startEngineHours, let end = parsedEndEngineHours else { return false }
+        return end < start
+    }
+
+    @ViewBuilder
+    private var engineHoursSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 8) {
+                if let start = liveTrip.startEngineHours {
+                    HStack {
+                        Text("Start engine hours")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text("\(Self.engineHoursFormatter.string(from: NSNumber(value: start)) ?? "\(start)") hrs")
+                            .font(.subheadline.weight(.medium))
+                    }
+                }
+                HStack {
+                    Text("End engine hours")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    TextField("hrs", text: $endEngineHoursText)
+                        .keyboardType(.decimalPad)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 100)
+                }
+                if endBelowStartWarning {
+                    Label("End reading is lower than the start reading. Fuel will fall back to trip duration.", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
+            .padding(.vertical, 2)
+        } header: {
+            Text("Engine hours")
+        } footer: {
+            Text("Optional. If higher than the start reading, fuel use is calculated from the engine-hour difference. Otherwise trip duration is used.")
         }
     }
 
@@ -382,6 +451,11 @@ struct EndTripReviewSheet: View {
             }
             if (live.completionNotes ?? "") != trimmedNotes {
                 live.completionNotes = trimmedNotes.isEmpty ? nil : trimmedNotes
+                changed = true
+            }
+            // Phase 3 fuel allocation: optional end engine-hour reading.
+            if live.endEngineHours != parsedEndEngineHours {
+                live.endEngineHours = parsedEndEngineHours
                 changed = true
             }
             if changed {

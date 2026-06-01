@@ -24,6 +24,21 @@ nonisolated enum TripCostService {
         let warning: String?
     }
 
+    /// How fuel litres were derived for a trip.
+    nonisolated enum FuelBasis: String, Sendable {
+        /// Engine-hour delta (end - start) × tractor L/hr. Preferred when valid.
+        case engineHours
+        /// Active trip duration (excluding pauses) × tractor L/hr. Fallback.
+        case duration
+
+        var label: String {
+            switch self {
+            case .engineHours: return "Engine hours"
+            case .duration: return "Trip duration"
+            }
+        }
+    }
+
     nonisolated struct FuelBreakdown: Sendable {
         let tractorName: String?
         let fuelUsageLPerHour: Double?
@@ -31,6 +46,12 @@ nonisolated enum TripCostService {
         let litres: Double
         let cost: Double
         let warning: String?
+        /// Which basis produced `litres` (engine hours vs trip duration).
+        let basis: FuelBasis
+        /// Hours used for the litres calculation (engine-hour delta or active hours).
+        let fuelHours: Double
+        /// Engine-hour delta when start/end readings are valid (end > start), else nil.
+        let engineHourDelta: Double?
     }
 
     nonisolated struct ChemicalBreakdown: Sendable {
@@ -142,17 +163,28 @@ nonisolated enum TripCostService {
         }
 
         // ---- Fuel -----------------------------------------------------------
+        // Prefer engine-hour delta (end - start) when both readings are present
+        // and end > start; otherwise fall back to active trip duration.
+        let engineHourDelta: Double? = {
+            guard let s = trip.startEngineHours, let e = trip.endEngineHours, e > s else { return nil }
+            return e - s
+        }()
+        let fuelBasis: FuelBasis = engineHourDelta != nil ? .engineHours : .duration
+        let fuelHours = engineHourDelta ?? hours
         let weightedCostPerLitre = weightedFuelCostPerLitre(fuelPurchases)
         let fuel: FuelBreakdown
-        if let t = tractor, t.fuelUsageLPerHour > 0, hours > 0, let perL = weightedCostPerLitre {
-            let litres = t.fuelUsageLPerHour * hours
+        if let t = tractor, t.fuelUsageLPerHour > 0, fuelHours > 0, let perL = weightedCostPerLitre {
+            let litres = t.fuelUsageLPerHour * fuelHours
             fuel = FuelBreakdown(
                 tractorName: t.displayName,
                 fuelUsageLPerHour: t.fuelUsageLPerHour,
                 costPerLitre: perL,
                 litres: litres,
                 cost: litres * perL,
-                warning: nil
+                warning: nil,
+                basis: fuelBasis,
+                fuelHours: fuelHours,
+                engineHourDelta: engineHourDelta
             )
         } else if tractor == nil, trip.tractorId == nil {
             fuel = FuelBreakdown(
@@ -161,7 +193,10 @@ nonisolated enum TripCostService {
                 costPerLitre: weightedCostPerLitre,
                 litres: 0,
                 cost: 0,
-                warning: "No tractor linked to this trip."
+                warning: "No tractor linked to this trip.",
+                basis: fuelBasis,
+                fuelHours: fuelHours,
+                engineHourDelta: engineHourDelta
             )
         } else if let t = tractor, t.fuelUsageLPerHour <= 0 {
             fuel = FuelBreakdown(
@@ -170,16 +205,22 @@ nonisolated enum TripCostService {
                 costPerLitre: weightedCostPerLitre,
                 litres: 0,
                 cost: 0,
-                warning: "Tractor has no fuel usage (L/hr) configured."
+                warning: "Fuel rate missing \u{2014} set the tractor's fuel usage (L/hr) in Equipment.",
+                basis: fuelBasis,
+                fuelHours: fuelHours,
+                engineHourDelta: engineHourDelta
             )
         } else if weightedCostPerLitre == nil {
             fuel = FuelBreakdown(
                 tractorName: tractor?.displayName,
                 fuelUsageLPerHour: tractor?.fuelUsageLPerHour,
                 costPerLitre: nil,
-                litres: (tractor?.fuelUsageLPerHour ?? 0) * hours,
+                litres: (tractor?.fuelUsageLPerHour ?? 0) * fuelHours,
                 cost: 0,
-                warning: "No fuel purchases recorded \u{2014} add one in Equipment to enable fuel cost."
+                warning: "No fuel purchases recorded \u{2014} add one in Equipment to enable fuel cost.",
+                basis: fuelBasis,
+                fuelHours: fuelHours,
+                engineHourDelta: engineHourDelta
             )
         } else {
             fuel = FuelBreakdown(
@@ -188,7 +229,10 @@ nonisolated enum TripCostService {
                 costPerLitre: weightedCostPerLitre,
                 litres: 0,
                 cost: 0,
-                warning: "Fuel cost unavailable."
+                warning: "Fuel cost unavailable.",
+                basis: fuelBasis,
+                fuelHours: fuelHours,
+                engineHourDelta: engineHourDelta
             )
         }
 

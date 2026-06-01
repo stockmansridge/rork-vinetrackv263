@@ -564,9 +564,15 @@ struct TripDetailView: View {
     }
 
     private func fuelDetailLabel(_ f: TripCostService.FuelBreakdown) -> String? {
-        guard f.warning == nil else { return nil }
-        guard let perL = f.costPerLitre, f.litres > 0 else { return nil }
-        return "\(formatLitres(f.litres)) · \(formatCurrency(perL))/L"
+        // Show the fuel basis, rate and litres even when cost per litre is
+        // unavailable, as long as we could estimate litres.
+        guard f.litres > 0, let rate = f.fuelUsageLPerHour, rate > 0 else { return nil }
+        var parts: [String] = ["\(formatLitres(f.litres)) · \(String(format: "%.1f", rate)) L/hr"]
+        if let perL = f.costPerLitre {
+            parts.append("\(formatCurrency(perL))/L")
+        }
+        parts.append(f.basis.label)
+        return parts.joined(separator: " · ")
     }
 
     @ViewBuilder

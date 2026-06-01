@@ -102,6 +102,15 @@ nonisolated struct Trip: Codable, Identifiable, Sendable, Hashable {
     /// falls back to `vineyard_members.operator_category_id` of the operator.
     /// Synced as `trips.operator_category_id` (see sql/057_trips_costing_links.sql).
     var operatorCategoryId: UUID?
+
+    /// Optional tractor engine-hour meter reading captured at trip start.
+    /// When both start/end are present and end > start, the engine-hour delta
+    /// is the preferred basis for fuel allocation. Synced as
+    /// `trips.start_engine_hours` (see sql/093_trips_engine_hours.sql).
+    var startEngineHours: Double?
+    /// Optional tractor engine-hour meter reading captured at trip end.
+    /// Synced as `trips.end_engine_hours` (see sql/093_trips_engine_hours.sql).
+    var endEngineHours: Double?
     /// Optional structured Seeding Details (only normally populated when
     /// `tripFunction == "seeding"`). Persisted to Supabase as JSONB at
     /// `trips.seeding_details`. Encoded with snake_case nested keys.
@@ -192,6 +201,8 @@ nonisolated struct Trip: Codable, Identifiable, Sendable, Hashable {
         tractorId: UUID? = nil,
         operatorUserId: UUID? = nil,
         operatorCategoryId: UUID? = nil,
+        startEngineHours: Double? = nil,
+        endEngineHours: Double? = nil,
         seedingDetails: SeedingDetails? = nil,
         manualCorrectionEvents: [String] = [],
         completionNotes: String? = nil
@@ -229,6 +240,8 @@ nonisolated struct Trip: Codable, Identifiable, Sendable, Hashable {
         self.tractorId = tractorId
         self.operatorUserId = operatorUserId
         self.operatorCategoryId = operatorCategoryId
+        self.startEngineHours = startEngineHours
+        self.endEngineHours = endEngineHours
         self.seedingDetails = seedingDetails
         self.manualCorrectionEvents = manualCorrectionEvents
         self.completionNotes = completionNotes
@@ -245,6 +258,7 @@ nonisolated struct Trip: Codable, Identifiable, Sendable, Hashable {
         case isFillingTank, fillingTankNumber
         case tripFunction, tripTitle
         case tractorId, operatorUserId, operatorCategoryId
+        case startEngineHours, endEngineHours
         case seedingDetails
         case manualCorrectionEvents
         case completionNotes
@@ -282,6 +296,8 @@ nonisolated struct Trip: Codable, Identifiable, Sendable, Hashable {
         tractorId = try container.decodeIfPresent(UUID.self, forKey: .tractorId)
         operatorUserId = try container.decodeIfPresent(UUID.self, forKey: .operatorUserId)
         operatorCategoryId = try container.decodeIfPresent(UUID.self, forKey: .operatorCategoryId)
+        startEngineHours = try container.decodeIfPresent(Double.self, forKey: .startEngineHours)
+        endEngineHours = try container.decodeIfPresent(Double.self, forKey: .endEngineHours)
         seedingDetails = try container.decodeIfPresent(SeedingDetails.self, forKey: .seedingDetails)
         manualCorrectionEvents = try container.decodeIfPresent([String].self, forKey: .manualCorrectionEvents) ?? []
         completionNotes = try container.decodeIfPresent(String.self, forKey: .completionNotes)

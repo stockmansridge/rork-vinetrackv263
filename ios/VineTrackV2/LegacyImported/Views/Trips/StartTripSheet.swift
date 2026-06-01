@@ -26,6 +26,10 @@ struct StartTripSheet: View {
     /// fuel cost estimates can be calculated downstream (TripCostService).
     /// Optional — if left unset, the trip continues without fuel costing.
     @State private var selectedTractorId: UUID?
+    /// Optional engine-hour meter reading at trip start. Free text so it can be
+    /// left blank; parsed to `Double` on start. Persists as
+    /// `trips.start_engine_hours` for fuel allocation (Phase 3).
+    @State private var startEngineHoursText: String = ""
     @State private var showPaddockPicker: Bool = false
     /// Stable selection key for the trip function:
     ///   - Built-in: the `TripFunction` raw value (e.g. "seeding").
@@ -1065,8 +1069,64 @@ struct StartTripSheet: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 4)
                 }
+
+                if selectedTractorId != nil {
+                    HStack(spacing: 12) {
+                        Image(systemName: "gauge.with.needle")
+                            .foregroundStyle(.indigo)
+                            .frame(width: 24)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Start engine hours")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+                            Text("Optional — for accurate fuel use")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        TextField(lastKnownEngineHoursPlaceholder, text: $startEngineHoursText)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 90)
+                    }
+                    .padding(14)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(.rect(cornerRadius: 12))
+
+                    if let last = lastKnownEngineHours {
+                        Text("Last recorded: \(Self.engineHoursFormatter.string(from: NSNumber(value: last)) ?? "\(last)") hrs (from fuel log)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 4)
+                    }
+                }
             }
         }
+    }
+
+    static let engineHoursFormatter: NumberFormatter = {
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        f.maximumFractionDigits = 1
+        return f
+    }()
+
+    /// Latest engine-hour reading recorded for the selected tractor via the
+    /// fuel log (newest fill with engine hours). Used as a hint only.
+    private var lastKnownEngineHours: Double? {
+        guard let tractorId = selectedTractorId else { return nil }
+        return store.tractorFuelLogs
+            .filter { $0.tractorId == tractorId && $0.engineHours != nil }
+            .sorted { $0.fillDateTime > $1.fillDateTime }
+            .first?.engineHours
+    }
+
+    private var lastKnownEngineHoursPlaceholder: String {
+        if let last = lastKnownEngineHours {
+            return Self.engineHoursFormatter.string(from: NSNumber(value: last)) ?? "hrs"
+        }
+        return "hrs"
     }
 
     // MARK: Operator
@@ -1191,6 +1251,13 @@ struct StartTripSheet: View {
             // vineyard_members.operator_category_id (see TripCostService).
             if let userId = auth.userId {
                 trip.operatorUserId = userId
+            }
+
+            // Phase 3 fuel allocation: optional start engine-hour reading.
+            if selectedTractorId != nil,
+               let hours = Double(startEngineHoursText.trimmingCharacters(in: .whitespaces)),
+               hours >= 0 {
+                trip.startEngineHours = hours
             }
 
             if isSeedingSelected {

@@ -37,6 +37,9 @@ nonisolated struct BackendTrip: Codable, Sendable, Identifiable {
     let tractorId: UUID?
     let operatorUserId: UUID?
     let operatorCategoryId: UUID?
+    /// Optional engine-hour meter readings (see sql/093_trips_engine_hours.sql).
+    let startEngineHours: Double?
+    let endEngineHours: Double?
     let tripFunction: String?
     let tripTitle: String?
     let seedingDetails: SeedingDetails?
@@ -87,6 +90,8 @@ nonisolated struct BackendTrip: Codable, Sendable, Identifiable {
         case tractorId = "tractor_id"
         case operatorUserId = "operator_user_id"
         case operatorCategoryId = "operator_category_id"
+        case startEngineHours = "start_engine_hours"
+        case endEngineHours = "end_engine_hours"
         case tripFunction = "trip_function"
         case tripTitle = "trip_title"
         case seedingDetails = "seeding_details"
@@ -136,6 +141,10 @@ nonisolated struct BackendTripUpsert: Encodable, Sendable {
     let tractorId: UUID?
     let operatorUserId: UUID?
     let operatorCategoryId: UUID?
+    /// Optional engine-hour meter readings. Encoded only when non-nil so older
+    /// clients re-upserting a trip do not clobber existing server values.
+    let startEngineHours: Double?
+    let endEngineHours: Double?
     let tripFunction: String?
     let tripTitle: String?
     /// Optional structured seeding payload. Encoded only when non-nil so older
@@ -186,6 +195,8 @@ nonisolated struct BackendTripUpsert: Encodable, Sendable {
         case tractorId = "tractor_id"
         case operatorUserId = "operator_user_id"
         case operatorCategoryId = "operator_category_id"
+        case startEngineHours = "start_engine_hours"
+        case endEngineHours = "end_engine_hours"
         case tripFunction = "trip_function"
         case tripTitle = "trip_title"
         case seedingDetails = "seeding_details"
@@ -239,6 +250,8 @@ extension BackendTrip {
             tractorId: trip.tractorId,
             operatorUserId: trip.operatorUserId,
             operatorCategoryId: trip.operatorCategoryId,
+            startEngineHours: trip.startEngineHours,
+            endEngineHours: trip.endEngineHours,
             tripFunction: trip.tripFunction,
             tripTitle: trip.tripTitle,
             seedingDetails: trip.seedingDetails,
@@ -287,6 +300,8 @@ extension BackendTrip {
             tractorId: tractorId,
             operatorUserId: operatorUserId,
             operatorCategoryId: operatorCategoryId,
+            startEngineHours: startEngineHours,
+            endEngineHours: endEngineHours,
             seedingDetails: seedingDetails,
             manualCorrectionEvents: manualCorrectionEvents ?? [],
             completionNotes: completionNotes
