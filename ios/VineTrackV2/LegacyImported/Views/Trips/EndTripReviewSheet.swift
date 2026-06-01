@@ -128,6 +128,7 @@ struct EndTripReviewSheet: View {
 
                 if liveTrip.tractorId != nil {
                     engineHoursSection
+                    fuelEstimateSection
                 }
 
                 if !tripPins.isEmpty {
@@ -246,6 +247,104 @@ struct EndTripReviewSheet: View {
         } footer: {
             Text("Optional. If higher than the start reading, fuel use is calculated from the engine-hour difference. Otherwise trip duration is used.")
         }
+    }
+
+    // MARK: - Fuel estimate (display-only)
+
+    /// Live trip with the operator's just-entered end engine-hour reading
+    /// applied, so the estimate previews the same value that will be saved
+    /// on finish. Never persisted from here — display only.
+    private var fuelEstimateTrip: Trip {
+        var t = liveTrip
+        t.endEngineHours = parsedEndEngineHours
+        return t
+    }
+
+    private var fuelTractor: Tractor? {
+        guard let tid = liveTrip.tractorId else { return nil }
+        return store.tractors.first { $0.id == tid }
+    }
+
+    /// Fuel-only breakdown reused from the shared `TripCostService` so the
+    /// preview matches the trip detail / report figures exactly.
+    private var fuelBreakdown: TripCostService.FuelBreakdown {
+        TripCostService.estimate(
+            trip: fuelEstimateTrip,
+            operatorCategory: nil,
+            tractor: fuelTractor,
+            fuelPurchases: store.fuelPurchases.filter { $0.vineyardId == liveTrip.vineyardId },
+            sprayRecord: nil
+        ).fuel
+    }
+
+    @ViewBuilder
+    private var fuelEstimateSection: some View {
+        let f = fuelBreakdown
+        let rateMissing = (f.fuelUsageLPerHour ?? 0) <= 0
+        Section {
+            VStack(alignment: .leading, spacing: 8) {
+                if let name = f.tractorName {
+                    fuelRow("Tractor", value: name)
+                }
+                fuelRow("Fuel basis", value: f.basis.label)
+                if let delta = f.engineHourDelta {
+                    fuelRow("Engine hour delta", value: "\(Self.engineHoursFormatter.string(from: NSNumber(value: delta)) ?? "\(delta)") hrs")
+                }
+                if let rate = f.fuelUsageLPerHour, rate > 0 {
+                    fuelRow("Fuel rate", value: String(format: "%.1f L/hr", rate))
+                }
+                if !rateMissing, f.litres > 0 {
+                    fuelRow("Estimated litres", value: String(format: "%.1f L", f.litres))
+                }
+                if !rateMissing, f.litres > 0 {
+                    if let perL = f.costPerLitre {
+                        fuelRow("Estimated fuel cost", value: formatCurrency(f.litres * perL), emphasised: true)
+                    } else {
+                        fuelRow("Estimated fuel cost", value: "Unavailable", muted: true)
+                    }
+                }
+
+                if rateMissing {
+                    fuelWarning("Fuel rate missing — set the tractor's fuel usage (L/hr) in Equipment to estimate litres.")
+                }
+                if endBelowStartWarning {
+                    fuelWarning("End engine hours are lower than the start reading — falling back to trip duration.")
+                }
+                if !rateMissing, f.litres > 0, f.costPerLitre == nil {
+                    fuelWarning("No fuel cost per litre available — add a fuel purchase in Equipment to estimate cost.")
+                }
+            }
+            .padding(.vertical, 2)
+        } header: {
+            Text("Fuel estimate")
+        } footer: {
+            Text("Estimate only — not stored on the trip.")
+        }
+    }
+
+    private func fuelRow(_ label: String, value: String, emphasised: Bool = false, muted: Bool = false) -> some View {
+        HStack {
+            Text(label)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .font(.subheadline.weight(emphasised ? .semibold : .medium))
+                .foregroundStyle(muted ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+        }
+    }
+
+    private func fuelWarning(_ message: String) -> some View {
+        Label(message, systemImage: "exclamationmark.triangle.fill")
+            .font(.caption)
+            .foregroundStyle(.orange)
+    }
+
+    private func formatCurrency(_ value: Double) -> String {
+        let f = NumberFormatter()
+        f.numberStyle = .currency
+        f.maximumFractionDigits = 2
+        return f.string(from: NSNumber(value: value)) ?? String(format: "$%.2f", value)
     }
 
     // MARK: - Trip Summary
