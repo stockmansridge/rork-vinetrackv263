@@ -474,7 +474,7 @@ struct BackendSettingsView: View {
 
     private var aboutSection: some View {
         Section {
-            LabeledContent("Version", value: "\(appVersion) (\(appBuild))")
+            LabeledContent("Version", value: AppBuildInfo.displayVersion)
             LabeledContent("Disclaimer", value: "v\(DisclaimerInfo.version)")
             LabeledContent("Backend", value: SupabaseClientProvider.shared.isConfigured ? "Connected" : "Not configured")
         } header: {
@@ -623,14 +623,6 @@ struct BackendSettingsView: View {
         case .loading, .unknown: return "Checking…"
         default: return "Manage your plan"
         }
-    }
-
-    private var appVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
-    }
-
-    private var appBuild: String {
-        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
     }
 
     private func refreshVineyards() async {

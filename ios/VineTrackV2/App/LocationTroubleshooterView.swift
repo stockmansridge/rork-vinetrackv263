@@ -693,9 +693,9 @@ struct LocationTroubleshooterView: View {
         let session = DiagnosticSession(
             sessionStartedAt: sessionStartedAt ?? Date(),
             sessionEndedAt: sessionEndedAt ?? Date(),
-            appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?",
-            deviceModel: UIDevice.current.model,
-            iosVersion: UIDevice.current.systemVersion,
+            appVersion: AppBuildInfo.displayVersion,
+            deviceModel: AppBuildInfo.deviceModel,
+            iosVersion: AppBuildInfo.iosVersion,
             vineyardCountAvailableToAdmin: uniqueVineyardCount,
             sampleCount: samples.count,
             samples: samples

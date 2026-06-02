@@ -127,7 +127,7 @@ struct SupportRequestView: View {
                 }
                 .disabled(!canSubmit)
             } footer: {
-                Text("App \(appVersion) (\(appBuild)) · \(deviceModel) · iOS \(osVersion)")
+                Text("\(AppBuildInfo.appName) \(AppBuildInfo.displayVersion) · \(AppBuildInfo.deviceModel) · iOS \(AppBuildInfo.iosVersion)")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -229,10 +229,10 @@ struct SupportRequestView: View {
         do {
             let diagnostics = SupportDiagnostics(
                 appPlatform: "iOS",
-                appVersion: appVersion,
-                appBuild: appBuild,
-                deviceModel: deviceModel,
-                osVersion: osVersion
+                appVersion: AppBuildInfo.version,
+                appBuild: AppBuildInfo.buildNumber,
+                deviceModel: AppBuildInfo.deviceModel,
+                osVersion: AppBuildInfo.iosVersion
             )
             let outcome = try await repository.submit(
                 category: category,
@@ -251,28 +251,4 @@ struct SupportRequestView: View {
         }
     }
 
-    // MARK: - Diagnostics
-
-    private var appVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
-    }
-
-    private var appBuild: String {
-        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
-    }
-
-    private var deviceModel: String {
-        var systemInfo = utsname()
-        uname(&systemInfo)
-        let mirror = Mirror(reflecting: systemInfo.machine)
-        let identifier = mirror.children.reduce("") { partial, element in
-            guard let value = element.value as? Int8, value != 0 else { return partial }
-            return partial + String(UnicodeScalar(UInt8(value)))
-        }
-        return identifier.isEmpty ? UIDevice.current.model : identifier
-    }
-
-    private var osVersion: String {
-        UIDevice.current.systemVersion
-    }
 }
