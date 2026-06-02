@@ -122,6 +122,130 @@ nonisolated private struct SystemAdminRowDTO: Decodable, Sendable {
     }
 }
 
+// MARK: - User Login / Activity
+
+/// Login-recency status tier, mirrors the `status` string returned by
+/// `admin_list_user_login_activity()`.
+nonisolated enum UserActivityStatus: String, Sendable {
+    case never
+    case activeRecent  = "active_recent"
+    case active30d     = "active_30d"
+    case inactive30d   = "inactive_30d"
+    case inactive90d   = "inactive_90d"
+
+    var label: String {
+        switch self {
+        case .never:        return "Never logged in"
+        case .activeRecent: return "Active recently"
+        case .active30d:    return "Active last 30 days"
+        case .inactive30d:  return "Inactive over 30 days"
+        case .inactive90d:  return "Inactive over 90 days"
+        }
+    }
+}
+
+/// One row per user for the System Admin → User Activity / Logins screen.
+nonisolated struct UserLoginActivity: Identifiable, Sendable, Hashable {
+    let userId: UUID
+    let email: String
+    let displayName: String?
+    let accountCreatedAt: Date?
+    let lastSignInAt: Date?
+    let vineyardIds: [UUID]
+    let vineyardNames: [String]
+    let roles: [String]
+    let appPlatform: String?
+    let appVersion: String?
+    let appBuild: String?
+    let deviceModel: String?
+    let osVersion: String?
+    let status: UserActivityStatus
+
+    var id: UUID { userId }
+
+    /// Best display name, falling back to the email local part, then email.
+    var bestName: String {
+        if let displayName, !displayName.trimmingCharacters(in: .whitespaces).isEmpty {
+            return displayName
+        }
+        if let local = email.split(separator: "@").first, !local.isEmpty {
+            return String(local)
+        }
+        return email
+    }
+
+    /// Combined app version + build, e.g. "1.4.2 (87)".
+    var displayAppVersion: String? {
+        guard let appVersion, !appVersion.isEmpty else { return nil }
+        if let appBuild, !appBuild.isEmpty {
+            return "\(appVersion) (\(appBuild))"
+        }
+        return appVersion
+    }
+
+    /// Combined device + OS, e.g. "iPhone15,2 · iOS 18.2".
+    var displayDevice: String? {
+        let parts = [deviceModel, osVersion].compactMap { value -> String? in
+            guard let value, !value.isEmpty else { return nil }
+            return value
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+}
+
+nonisolated private struct UserLoginActivityRowDTO: Decodable, Sendable {
+    let userId: UUID
+    let email: String?
+    let displayName: String?
+    let accountCreatedAt: Date?
+    let lastSignInAt: Date?
+    let vineyardIds: [UUID]?
+    let vineyardNames: [String]?
+    let roles: [String]?
+    let appPlatform: String?
+    let appVersion: String?
+    let appBuild: String?
+    let deviceModel: String?
+    let osVersion: String?
+    let status: String?
+
+    enum CodingKeys: String, CodingKey {
+        case userId           = "user_id"
+        case email
+        case displayName      = "display_name"
+        case accountCreatedAt = "account_created_at"
+        case lastSignInAt     = "last_sign_in_at"
+        case vineyardIds      = "vineyard_ids"
+        case vineyardNames    = "vineyard_names"
+        case roles
+        case appPlatform      = "app_platform"
+        case appVersion       = "app_version"
+        case appBuild         = "app_build"
+        case deviceModel      = "device_model"
+        case osVersion        = "os_version"
+        case status
+    }
+
+    func toModel() -> UserLoginActivity {
+        UserLoginActivity(
+            userId: userId,
+            email: email ?? "",
+            displayName: displayName,
+            accountCreatedAt: accountCreatedAt,
+            lastSignInAt: lastSignInAt,
+            vineyardIds: vineyardIds ?? [],
+            vineyardNames: vineyardNames ?? [],
+            roles: roles ?? [],
+            appPlatform: appPlatform,
+            appVersion: appVersion,
+            appBuild: appBuild,
+            deviceModel: deviceModel,
+            osVersion: osVersion,
+            status: UserActivityStatus(rawValue: status ?? "") ?? .never
+        )
+    }
+}
+
 nonisolated private struct AddAdminParams: Encodable, Sendable {
     let email: String
     enum CodingKeys: String, CodingKey { case email = "p_email" }
@@ -209,5 +333,18 @@ final class SupabaseSystemAdminRepository {
             .execute()
             .value
         return rows.first?.toModel()
+    }
+
+    // MARK: - User Login / Activity
+
+    /// One row per user with login recency, vineyard memberships/roles and
+    /// last-known device metadata. System-admin only (RPC enforces it).
+    func listUserLoginActivity() async throws -> [UserLoginActivity] {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let rows: [UserLoginActivityRowDTO] = try await provider.client
+            .rpc("admin_list_user_login_activity")
+            .execute()
+            .value
+        return rows.map { $0.toModel() }
     }
 }

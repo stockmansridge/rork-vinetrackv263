@@ -446,6 +446,16 @@ struct BackendSettingsView: View {
                 )
             }
             NavigationLink {
+                SystemAdminUserActivityView()
+            } label: {
+                SettingsRow(
+                    title: "User Activity / Logins",
+                    subtitle: "View user login recency, roles & devices",
+                    symbol: "person.2.wave.2.fill",
+                    color: .purple
+                )
+            }
+            NavigationLink {
                 LocationTroubleshooterView()
             } label: {
                 SettingsRow(
