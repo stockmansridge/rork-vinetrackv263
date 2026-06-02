@@ -14,6 +14,7 @@ struct BackendDiagnosticView: View {
 
     @Environment(MigratedDataStore.self) private var migratedStore
     @Environment(OperatorCategorySyncService.self) private var operatorCategorySync
+    @Environment(SubscriptionService.self) private var subscription
 
     @State private var name: String = ""
     @State private var email: String = ""
@@ -36,6 +37,12 @@ struct BackendDiagnosticView: View {
     @State private var currentAction: String?
     @State private var lastStatus: String = "Ready"
 
+    // VineTrack access resolution (read-only diagnostics).
+    @State private var accessOutcome: VineTrackAccessResolver.Outcome?
+    @State private var accessIsResolving: Bool = false
+    @State private var accessError: String?
+    @State private var accessDidRun: Bool = false
+
     private var selectedRole: BackendRole {
         BackendRole(rawValue: selectedRoleValue) ?? .owner
     }
@@ -52,6 +59,7 @@ struct BackendDiagnosticView: View {
             profileSection
             vineyardSection
             teamSection
+            vineTrackAccessSection
             disclaimerSection
             auditSection
             pinSyncDiagnosticsSection
@@ -251,6 +259,138 @@ struct BackendDiagnosticView: View {
             }
         }
         .disabled(isRunning)
+    }
+
+    private var vineTrackAccessSection: some View {
+        Section {
+            Text("Read-only preview of VineTrackAccessResolver. Does NOT enforce access or replace the RevenueCat gate.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+            if !provider.isConfigured {
+                Label("Supabase not configured — the RPC will fall back to RevenueCat.", systemImage: "exclamationmark.triangle")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+            }
+            if currentUserId == nil {
+                Label("Not signed in — sign in above to resolve backend access.", systemImage: "person.crop.circle.badge.exclamationmark")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+            }
+
+            if accessIsResolving {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Resolving access…")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            } else if let outcome = accessOutcome {
+                accessOutcomeRows(outcome)
+            } else if accessDidRun {
+                Text("No result.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Tap Resolve to run the resolver.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let accessError {
+                Text(accessError)
+                    .font(.footnote.monospaced())
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+            }
+
+            Button("Resolve VineTrack Access", systemImage: "arrow.clockwise") {
+                Task { await resolveVineTrackAccess() }
+            }
+            .disabled(accessIsResolving)
+        } header: {
+            Text("VineTrack Access Resolution")
+        }
+    }
+
+    @ViewBuilder
+    private func accessOutcomeRows(_ outcome: VineTrackAccessResolver.Outcome) -> some View {
+        let access = outcome.backendAccess
+        LabeledContent("Access granted", value: outcome.hasAccess ? "yes" : "no")
+        LabeledContent("Access source", value: accessSourceLabel(outcome.source))
+        LabeledContent("Fallback on RPC error", value: outcome.didFallBackOnError ? "yes" : "no")
+
+        LabeledContent("Plan code", value: access?.planCode ?? "—")
+        LabeledContent("Plan name", value: access?.planName ?? "—")
+        LabeledContent("Billing provider", value: access?.billingProvider ?? access?.provider ?? "—")
+        LabeledContent("Subscription status", value: access?.subscriptionStatus ?? "—")
+        LabeledContent("Role", value: access?.role ?? "—")
+        LabeledContent("Portal access level", value: access?.portalAccessLevel ?? "—")
+
+        LabeledContent("Can use iOS app", value: boolLabel(access?.canUseIOSApp))
+        LabeledContent("Can use portal", value: boolLabel(access?.canUsePortal))
+        LabeledContent("Solo check required", value: access == nil ? "—" : (access!.requiresSoloCheck ? "yes" : "no"))
+
+        LabeledContent("Trial end", value: dateLabel(access?.trialEnd))
+        LabeledContent("Current period end", value: dateLabel(access?.currentPeriodEnd))
+
+        LabeledContent("Included licences", value: intLabel(access?.includedLicences))
+        LabeledContent("Active licences", value: intLabel(access?.activeLicences))
+        LabeledContent("Additional licences", value: intLabel(access?.additionalLicences))
+
+        LabeledContent("Vineyard ID", value: shortId(access?.vineyardId))
+        LabeledContent("Subscription ID", value: shortId(access?.subscriptionId))
+        LabeledContent("Licence ID", value: shortId(access?.licenceId))
+
+        if !outcome.hasAccess, let reason = access?.reason, !reason.isEmpty {
+            LabeledContent("Reason", value: reason)
+        }
+    }
+
+    private func resolveVineTrackAccess() async {
+        guard !accessIsResolving else { return }
+        accessIsResolving = true
+        accessError = nil
+        accessDidRun = true
+        let resolver = VineTrackAccessResolver(subscription: subscription)
+        let outcome = await resolver.resolve()
+        accessOutcome = outcome
+        if outcome.source == .none && outcome.didFallBackOnError {
+            accessError = "Backend RPC failed; fell back to RevenueCat, which is not active."
+        }
+        accessIsResolving = false
+        appendLog("INFO VineTrack access resolved: granted=\(outcome.hasAccess), source=\(accessSourceLabel(outcome.source)), fallback=\(outcome.didFallBackOnError)")
+    }
+
+    private func accessSourceLabel(_ source: VineTrackAccessResolver.Source) -> String {
+        switch source {
+        case .supabaseTeam:       return "backend · team"
+        case .supabaseEnterprise: return "backend · enterprise"
+        case .supabaseLegacy:     return "backend · legacy"
+        case .supabaseOther:      return "backend"
+        case .revenueCat:         return "revenuecat"
+        case .none:               return "none"
+        }
+    }
+
+    private func boolLabel(_ value: Bool?) -> String {
+        guard let value else { return "—" }
+        return value ? "yes" : "no"
+    }
+
+    private func intLabel(_ value: Int?) -> String {
+        guard let value else { return "—" }
+        return "\(value)"
+    }
+
+    private func dateLabel(_ value: Date?) -> String {
+        guard let value else { return "—" }
+        return value.formatted(.dateTime.year().month().day().hour().minute())
+    }
+
+    private func shortId(_ id: UUID?) -> String {
+        guard let id else { return "—" }
+        return String(id.uuidString.prefix(8)) + "…"
     }
 
     private var disclaimerSection: some View {
