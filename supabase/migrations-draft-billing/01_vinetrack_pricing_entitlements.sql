@@ -359,13 +359,19 @@ returns table (
   plan_code             text,
   plan_tier             text,
   plan_name             text,
+  billing_provider      text,     -- 'apple' | 'stripe' | 'manual'
   status                text,
   trial_end             timestamptz,
   current_period_end    timestamptz,
   portal_access         boolean,
   portal_access_level   text,
+  can_use_ios_app       boolean,
+  can_use_portal        boolean,
   seats_included        integer,
   seats_purchased       integer,
+  active_licences       integer,
+  vineyard_id           uuid,
+  licence_id            uuid,
   solo_check_required   boolean
 )
 language plpgsql
@@ -388,6 +394,8 @@ begin
       s.owner_user_id,
       (s.owner_user_id = v_uid) as is_owner,
       s.status,
+      s.billing_provider,
+      s.primary_vineyard_id,
       s.trial_end,
       s.current_period_end,
       s.seats_included,
@@ -396,6 +404,35 @@ begin
       p.tier as plan_tier,
       p.name as plan_name,
       p.portal_access_level,
+      -- Count of active licences consumed under this subscription.
+      (
+        select count(*)::integer
+        from public.vinetrack_user_licences cl
+        where cl.subscription_id = s.id
+          and cl.status = 'active'
+      ) as active_licences,
+      -- The caller's own active licence under this subscription (if any).
+      (
+        select ul.id
+        from public.vinetrack_user_licences ul
+        where ul.subscription_id = s.id
+          and ul.user_id = v_uid
+          and ul.status = 'active'
+        limit 1
+      ) as caller_licence_id,
+      -- The vineyard the caller's licence is scoped to, else the subscription's
+      -- primary vineyard.
+      coalesce(
+        (
+          select ul.vineyard_id
+          from public.vinetrack_user_licences ul
+          where ul.subscription_id = s.id
+            and ul.user_id = v_uid
+            and ul.status = 'active'
+          limit 1
+        ),
+        s.primary_vineyard_id
+      ) as resolved_vineyard_id,
       -- Ranking: prefer enterprise > team > legacy, owner over licensee.
       case p.tier
         when 'enterprise' then 3
@@ -431,6 +468,7 @@ begin
     b.plan_code,
     b.plan_tier,
     b.plan_name,
+    b.billing_provider,
     b.status,
     b.trial_end,
     b.current_period_end,
@@ -438,8 +476,15 @@ begin
     -- grants any portal level beyond 'none'.
     (b.id is not null and coalesce(b.portal_access_level, 'none') <> 'none') as portal_access,
     coalesce(b.portal_access_level, 'none') as portal_access_level,
+    -- Capability flags. iOS app access mirrors having a backend entitlement;
+    -- portal access mirrors portal_access above.
+    (b.id is not null) as can_use_ios_app,
+    (b.id is not null and coalesce(b.portal_access_level, 'none') <> 'none') as can_use_portal,
     b.seats_included,
     b.seats_purchased,
+    coalesce(b.active_licences, 0) as active_licences,
+    b.resolved_vineyard_id as vineyard_id,
+    b.caller_licence_id as licence_id,
     -- If no Supabase Team/Enterprise/legacy access was found, the client must
     -- fall back to RevenueCat Solo verification.
     (b.id is null) as solo_check_required

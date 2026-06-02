@@ -150,7 +150,7 @@ nonisolated struct BackendVineTrackAccess: Decodable, Sendable, Hashable {
         planTier           = string("plan_tier", "tier")
 
         provider           = string("provider")
-        billingProvider    = string("billing_provider")
+        billingProvider    = string("billing_provider", "provider")
 
         subscriptionStatus = string("subscription_status", "status")
 
@@ -164,17 +164,17 @@ nonisolated struct BackendVineTrackAccess: Decodable, Sendable, Hashable {
         currentPeriodEnd   = date("current_period_end")
 
         includedLicences   = int("included_licences", "seats_included")
-        activeLicences     = int("active_licences")
-        additionalLicences = int("additional_licences", "seats_purchased")
+        activeLicences     = int("active_licences", "active_licenses", "active_seats", "seats_used")
+        additionalLicences = int("additional_licences", "additional_licenses", "seats_purchased")
 
-        canUseIOSApp        = bool("can_use_ios_app")
-        canUsePortal        = bool("can_use_portal")
+        canUseIOSApp        = bool("can_use_ios_app", "ios_access", "app_access")
+        canUsePortal        = bool("can_use_portal", "portal_access")
         canInviteTeam       = bool("can_invite_team")
         canUseLiveDashboard = bool("can_use_live_dashboard")
         canExport           = bool("can_export")
 
-        vineyardId         = uuid("vineyard_id")
+        vineyardId         = uuid("vineyard_id", "primary_vineyard_id")
         subscriptionId     = uuid("subscription_id")
-        licenceId          = uuid("licence_id")
+        licenceId          = uuid("licence_id", "license_id", "user_licence_id", "user_license_id")
     }
 }
