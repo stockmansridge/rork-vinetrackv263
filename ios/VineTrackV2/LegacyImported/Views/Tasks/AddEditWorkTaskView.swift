@@ -5,6 +5,7 @@ struct AddEditWorkTaskView: View {
     @Environment(NewBackendAuthService.self) private var auth
     @Environment(WorkTaskSyncService.self) private var workTaskSync
     @Environment(WorkTaskTypeSyncService.self) private var workTaskTypeSync
+    @Environment(WorkTaskPaddockSyncService.self) private var workTaskPaddockSync
     @Environment(PaddockSyncService.self) private var paddockSync
     @Environment(\.accessControl) private var accessControl
     @Environment(\.dismiss) private var dismiss
@@ -15,8 +16,8 @@ struct AddEditWorkTaskView: View {
     @State private var taskType: String = ""
     @State private var customTaskType: String = ""
     @State private var showCustomTaskField: Bool = false
-    @State private var paddockId: UUID?
-    @State private var paddockName: String = ""
+    @State private var selectedBlockIds: Set<UUID> = []
+    @State private var showBlockPicker: Bool = false
     @State private var durationText: String = ""
     @State private var notes: String = ""
     @State private var resources: [WorkTaskResource] = []
@@ -45,6 +46,55 @@ struct AddEditWorkTaskView: View {
     /// the vineyard/block data has previously synced.
     private var assignableBlocks: [Paddock] {
         store.orderedPaddocks
+    }
+
+    /// Selected blocks, returned in the same stable order as the assignable
+    /// list so backward-compat fields and breakdowns are deterministic.
+    private var selectedBlocksOrdered: [Paddock] {
+        assignableBlocks.filter { selectedBlockIds.contains($0.id) }
+    }
+
+    /// Collapsed picker label per the multi-select rules.
+    private var blockCollapsedLabel: String {
+        let selected = selectedBlocksOrdered
+        if selected.isEmpty { return "Does not apply to a block" }
+        if selected.count == 1 { return selected[0].name }
+        return "\(selected.count) blocks selected"
+    }
+
+    /// Block area (ha) only when known/positive; nil otherwise.
+    private func areaFor(_ p: Paddock) -> Double? {
+        let a = p.areaHectares
+        return a > 0 ? a : nil
+    }
+
+    /// Sum of known selected block areas.
+    private var totalSelectedArea: Double {
+        selectedBlocksOrdered.compactMap { areaFor($0) }.reduce(0, +)
+    }
+
+    private var hasMissingArea: Bool {
+        selectedBlocksOrdered.contains { areaFor($0) == nil }
+    }
+
+    /// Per-block hours/cost allocation proportional to block area.
+    private var blockAllocations: [BlockAllocation] {
+        let total = totalSelectedArea
+        return selectedBlocksOrdered.map { p in
+            let area = areaFor(p)
+            let share = (total > 0 && area != nil) ? (area! / total) : 0
+            let cost = totalCost * share
+            let cph: Double? = (area ?? 0) > 0 ? cost / area! : nil
+            return BlockAllocation(
+                id: p.id,
+                name: p.name,
+                areaHa: area,
+                pctOfTotal: share,
+                allocatedHours: durationHours * share,
+                allocatedCost: cost,
+                costPerHa: cph
+            )
+        }
     }
 
     /// Vineyard-scoped catalog merged with the built-in defaults. Drives the
@@ -101,30 +151,22 @@ struct AddEditWorkTaskView: View {
                             .onChange(of: customTaskType) { _, v in taskType = v }
                     }
 
-                    Menu {
-                        Button("Does not apply to a block") {
-                            selectNoBlock()
-                        }
-                        if !assignableBlocks.isEmpty {
-                            Divider()
-                            ForEach(assignableBlocks) { p in
-                                Button(p.name) {
-                                    paddockId = p.id
-                                    paddockName = p.name
-                                }
-                            }
-                        }
+                    Button {
+                        showBlockPicker = true
                     } label: {
                         HStack {
                             Text("Block")
+                                .foregroundStyle(.primary)
                             Spacer()
-                            Text(paddockName.isEmpty ? "Does not apply to a block" : paddockName)
-                                .foregroundStyle(paddockName.isEmpty ? .secondary : .primary)
-                            Image(systemName: "chevron.up.chevron.down")
+                            Text(blockCollapsedLabel)
+                                .foregroundStyle(selectedBlockIds.isEmpty ? .secondary : .primary)
+                                .lineLimit(1)
+                            Image(systemName: "chevron.right")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    .buttonStyle(.plain)
 
                     HStack {
                         Text("Duration (hours)")
@@ -207,6 +249,29 @@ struct AddEditWorkTaskView: View {
                     }
                 }
 
+                if selectedBlockIds.count > 1 {
+                    Section("Block Breakdown") {
+                        if hasMissingArea {
+                            Label("One or more selected blocks are missing area, so the cost per hectare breakdown may be incomplete.", systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
+                        ForEach(blockAllocations) { alloc in
+                            blockAllocationRow(alloc)
+                        }
+                        LabeledContent("Total Area") {
+                            Text(totalSelectedArea > 0 ? String(format: "%.2f ha", totalSelectedArea) : "—")
+                                .foregroundStyle(.secondary)
+                        }
+                        if (accessControl?.canViewFinancials ?? false) && totalSelectedArea > 0 {
+                            LabeledContent("Cost / ha") {
+                                Text(totalCost / totalSelectedArea, format: .currency(code: currencyCode))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+
                 Section("Notes") {
                     TextField("Optional notes…", text: $notes, axis: .vertical)
                         .lineLimit(2...5)
@@ -254,6 +319,9 @@ struct AddEditWorkTaskView: View {
                 Button("Cancel", role: .cancel) {}
             }
             .onAppear(perform: loadIfEditing)
+            .sheet(isPresented: $showBlockPicker) {
+                BlockMultiSelectSheet(blocks: assignableBlocks, selected: $selectedBlockIds)
+            }
             .sheet(isPresented: $showWorkerTypes) {
                 NavigationStack {
                     OperatorCategoriesView()
@@ -267,18 +335,31 @@ struct AddEditWorkTaskView: View {
         }
     }
 
-    /// Clears the block assignment. Stores nil block id, clears the cached
-    /// block name, and removes any work_task_paddocks link rows for this task
-    /// when editing so the record is genuinely unassigned.
-    private func selectNoBlock() {
-        paddockId = nil
-        paddockName = ""
-        if let task = existingTask {
-            let links = store.workTaskPaddocks.filter { $0.workTaskId == task.id }
-            for link in links {
-                store.deleteWorkTaskPaddock(link.id)
+    @ViewBuilder
+    private func blockAllocationRow(_ alloc: BlockAllocation) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(alloc.name)
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text(alloc.areaHa.map { String(format: "%.2f ha", $0) } ?? "— ha")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
+            HStack(spacing: 10) {
+                Text("\(Int((alloc.pctOfTotal * 100).rounded()))%")
+                Text(String(format: "%.1fh", alloc.allocatedHours))
+                if accessControl?.canViewFinancials ?? false {
+                    Text(alloc.allocatedCost, format: .currency(code: currencyCode))
+                    if let cph = alloc.costPerHa {
+                        Text(cph, format: .currency(code: currencyCode)) + Text("/ha")
+                    }
+                }
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
         }
+        .padding(.vertical, 2)
     }
 
     private func resourceRow(_ res: Binding<WorkTaskResource>) -> some View {
@@ -364,8 +445,17 @@ struct AddEditWorkTaskView: View {
                 showCustomTaskField = true
                 customTaskType = t.taskType
             }
-            paddockId = t.paddockId
-            paddockName = t.paddockName
+            // Prefer existing work_task_paddocks join rows for the selected
+            // block set; fall back to the legacy single paddock_id when no join
+            // rows exist. Works fully offline once paddock data has synced.
+            let links = store.workTaskPaddocks.filter { $0.workTaskId == t.id }
+            if !links.isEmpty {
+                selectedBlockIds = Set(links.map { $0.paddockId })
+            } else if let pid = t.paddockId {
+                selectedBlockIds = [pid]
+            } else {
+                selectedBlockIds = []
+            }
             durationText = t.durationHours > 0 ? String(format: "%.2f", t.durationHours) : ""
             notes = t.notes
             resources = t.resources
@@ -390,11 +480,17 @@ struct AddEditWorkTaskView: View {
             ))
         }
 
+        // Backward-compat scalar fields: first selected block id, and a
+        // comma-separated list of selected block names. Empty when no block.
+        let orderedSelected = selectedBlocksOrdered
+        let primaryBlockId = orderedSelected.first?.id
+        let blockNames = orderedSelected.map { $0.name }.joined(separator: ", ")
+
         var task = existingTask ?? WorkTask()
         task.date = date
         task.taskType = trimmed
-        task.paddockId = paddockId
-        task.paddockName = paddockName
+        task.paddockId = primaryBlockId
+        task.paddockName = blockNames
         task.durationHours = durationHours
         task.resources = resources
         task.notes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -407,17 +503,14 @@ struct AddEditWorkTaskView: View {
         // tasks now match by deriving it from the linked block. The block ID
         // is still synced (`paddock_id`) so the portal can re-derive if needed.
         var areaSource = "none"
-        if let pid = paddockId,
-           let paddock = store.paddocks.first(where: { $0.id == pid }) {
-            let derived = paddock.areaHectares
-            if derived > 0 {
-                task.areaHa = derived
-                areaSource = "derived-from-block"
-            } else if task.areaHa != nil {
-                areaSource = "existing"
-            }
-        } else if task.areaHa != nil {
+        let summedArea = totalSelectedArea
+        if summedArea > 0 {
+            task.areaHa = summedArea
+            areaSource = orderedSelected.count > 1 ? "summed-from-blocks" : "derived-from-block"
+        } else if orderedSelected.isEmpty, task.areaHa != nil {
             // No block selected (Does not apply to a block) — keep existing value.
+            areaSource = "existing"
+        } else if task.areaHa != nil {
             areaSource = "existing"
         }
 
@@ -436,10 +529,129 @@ struct AddEditWorkTaskView: View {
         } else {
             store.addWorkTask(task)
         }
+
+        reconcileBlockLinks(for: task.id)
+
         Task {
             await workTaskTypeSync.syncForSelectedVineyard()
             await workTaskSync.syncForSelectedVineyard()
+            await workTaskPaddockSync.syncForSelectedVineyard()
         }
         dismiss()
+    }
+
+    /// Reconciles work_task_paddocks join rows against the selected block set:
+    /// inserts newly selected blocks, refreshes area snapshots for still-selected
+    /// blocks, and removes (soft-deletes via sync) blocks that were deselected.
+    private func reconcileBlockLinks(for taskId: UUID) {
+        guard let vineyardId = store.selectedVineyardId else { return }
+        let existing = store.workTaskPaddocks.filter { $0.workTaskId == taskId }
+        let existingByPaddock = Dictionary(existing.map { ($0.paddockId, $0) }, uniquingKeysWith: { a, _ in a })
+
+        // Remove links no longer selected.
+        for link in existing where !selectedBlockIds.contains(link.paddockId) {
+            store.deleteWorkTaskPaddock(link.id)
+        }
+
+        // Insert or update selected links with an area snapshot.
+        for pid in selectedBlockIds {
+            let area = store.paddocks.first(where: { $0.id == pid }).flatMap { areaFor($0) }
+            if var row = existingByPaddock[pid] {
+                if row.areaHa != area {
+                    row.areaHa = area
+                    store.updateWorkTaskPaddock(row)
+                }
+            } else {
+                store.addWorkTaskPaddock(WorkTaskPaddock(
+                    workTaskId: taskId,
+                    vineyardId: vineyardId,
+                    paddockId: pid,
+                    areaHa: area
+                ))
+            }
+        }
+    }
+}
+
+/// Per-block hours/cost allocation used by the breakdown section.
+private struct BlockAllocation: Identifiable {
+    let id: UUID
+    let name: String
+    let areaHa: Double?
+    let pctOfTotal: Double
+    let allocatedHours: Double
+    let allocatedCost: Double
+    let costPerHa: Double?
+}
+
+/// Multi-select block picker presented as a sheet. Selecting “Does not apply
+/// to a block” clears the set; selecting any block clears the no-block state.
+private struct BlockMultiSelectSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let blocks: [Paddock]
+    @Binding var selected: Set<UUID>
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Button {
+                        selected.removeAll()
+                    } label: {
+                        HStack {
+                            Text("Does not apply to a block")
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            if selected.isEmpty {
+                                Image(systemName: "checkmark")
+                                    .foregroundStyle(.tint)
+                            }
+                        }
+                    }
+                }
+
+                if blocks.isEmpty {
+                    Section {
+                        Text("No blocks available for this vineyard yet.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Section("Blocks") {
+                        ForEach(blocks) { p in
+                            Button {
+                                toggle(p.id)
+                            } label: {
+                                HStack {
+                                    Text(p.name)
+                                        .foregroundStyle(.primary)
+                                    Spacer()
+                                    if selected.contains(p.id) {
+                                        Image(systemName: "checkmark")
+                                            .foregroundStyle(.tint)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Select Blocks")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                        .fontWeight(.semibold)
+                }
+            }
+        }
+    }
+
+    private func toggle(_ id: UUID) {
+        if selected.contains(id) {
+            selected.remove(id)
+        } else {
+            selected.insert(id)
+        }
     }
 }

@@ -204,6 +204,7 @@ struct WorkTasksHubView: View {
 
 struct WorkTaskRow: View {
     let task: WorkTask
+    @Environment(MigratedDataStore.self) private var store
     @Environment(\.accessControl) private var accessControl
     @Environment(WorkTaskSyncService.self) private var workTaskSync
 
@@ -232,12 +233,10 @@ struct WorkTaskRow: View {
                         .foregroundStyle(.primary)
                         .lineLimit(1)
 
-                    if !task.paddockName.isEmpty {
-                        Text(task.paddockName)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
+                    Text(task.blockDisplay(in: store))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
 
                     HStack(spacing: 8) {
                         Label(String(format: "%.1fh", task.durationHours), systemImage: "clock")

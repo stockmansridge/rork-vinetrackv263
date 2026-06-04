@@ -261,14 +261,39 @@ struct WorkTaskLogView: View {
     }
 }
 
+extension WorkTask {
+    /// List-friendly block label: “No block”, the single block name, or
+    /// “N blocks”. Prefers work_task_paddocks join rows; falls back to the
+    /// legacy single paddock_id/name when no join rows exist.
+    func blockDisplay(in store: MigratedDataStore) -> String {
+        let links = store.workTaskPaddocks.filter { $0.workTaskId == id }
+        let count = links.isEmpty ? (paddockId != nil ? 1 : 0) : links.count
+        switch count {
+        case 0:
+            return "No block"
+        case 1:
+            if let link = links.first,
+               let p = store.paddocks.first(where: { $0.id == link.paddockId }) {
+                return p.name
+            }
+            return paddockName.isEmpty ? "1 block" : paddockName
+        default:
+            return "\(count) blocks"
+        }
+    }
+}
+
 private struct WorkTaskLogRow: View {
     let task: WorkTask
+    @Environment(MigratedDataStore.self) private var store
     @Environment(\.accessControl) private var accessControl
     @Environment(WorkTaskSyncService.self) private var workTaskSync
 
     private var currencyCode: String {
         Locale.current.currency?.identifier ?? "USD"
     }
+
+    private var blockDisplay: String { task.blockDisplay(in: store) }
 
     var body: some View {
         HStack(spacing: 14) {
@@ -286,12 +311,10 @@ private struct WorkTaskLogRow: View {
                     .foregroundStyle(.primary)
                     .lineLimit(1)
 
-                if !task.paddockName.isEmpty {
-                    Text(task.paddockName)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+                Text(blockDisplay)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
 
                 HStack(spacing: 8) {
                     Label(String(format: "%.1fh", task.durationHours), systemImage: "clock")
