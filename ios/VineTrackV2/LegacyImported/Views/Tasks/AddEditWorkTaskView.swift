@@ -5,6 +5,7 @@ struct AddEditWorkTaskView: View {
     @Environment(NewBackendAuthService.self) private var auth
     @Environment(WorkTaskSyncService.self) private var workTaskSync
     @Environment(WorkTaskTypeSyncService.self) private var workTaskTypeSync
+    @Environment(PaddockSyncService.self) private var paddockSync
     @Environment(\.accessControl) private var accessControl
     @Environment(\.dismiss) private var dismiss
 
@@ -38,6 +39,13 @@ struct AddEditWorkTaskView: View {
     }
 
     private var totalPeople: Int { resources.reduce(0) { $0 + $1.count } }
+
+    /// Active blocks/paddocks for the selected vineyard, loaded from the same
+    /// offline-first store every other screen uses. Works fully offline once
+    /// the vineyard/block data has previously synced.
+    private var assignableBlocks: [Paddock] {
+        store.orderedPaddocks
+    }
 
     /// Vineyard-scoped catalog merged with the built-in defaults. Drives the
     /// Task Type picker so Lovable-created custom types appear alongside the
@@ -94,22 +102,23 @@ struct AddEditWorkTaskView: View {
                     }
 
                     Menu {
-                        Button("All Blocks / None") {
-                            paddockId = nil
-                            paddockName = ""
+                        Button("Does not apply to a block") {
+                            selectNoBlock()
                         }
-                        Divider()
-                        ForEach(store.paddocks) { p in
-                            Button(p.name) {
-                                paddockId = p.id
-                                paddockName = p.name
+                        if !assignableBlocks.isEmpty {
+                            Divider()
+                            ForEach(assignableBlocks) { p in
+                                Button(p.name) {
+                                    paddockId = p.id
+                                    paddockName = p.name
+                                }
                             }
                         }
                     } label: {
                         HStack {
                             Text("Block")
                             Spacer()
-                            Text(paddockName.isEmpty ? "Select" : paddockName)
+                            Text(paddockName.isEmpty ? "Does not apply to a block" : paddockName)
                                 .foregroundStyle(paddockName.isEmpty ? .secondary : .primary)
                             Image(systemName: "chevron.up.chevron.down")
                                 .font(.caption)
@@ -258,6 +267,20 @@ struct AddEditWorkTaskView: View {
         }
     }
 
+    /// Clears the block assignment. Stores nil block id, clears the cached
+    /// block name, and removes any work_task_paddocks link rows for this task
+    /// when editing so the record is genuinely unassigned.
+    private func selectNoBlock() {
+        paddockId = nil
+        paddockName = ""
+        if let task = existingTask {
+            let links = store.workTaskPaddocks.filter { $0.workTaskId == task.id }
+            for link in links {
+                store.deleteWorkTaskPaddock(link.id)
+            }
+        }
+    }
+
     private func resourceRow(_ res: Binding<WorkTaskResource>) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Menu {
@@ -312,7 +335,28 @@ struct AddEditWorkTaskView: View {
         ))
     }
 
+    /// Emits a diagnostic when the selected vineyard has no assignable blocks
+    /// in the local store so we can tell whether the data simply hasn't synced
+    /// yet versus a filtering bug. Read-only; never blocks the form.
+    private func logBlockPickerDiagnosticsIfEmpty() {
+        guard assignableBlocks.isEmpty else { return }
+        #if DEBUG
+        let allLocal: Int = store.paddocks.count
+        let lastSync = paddockSync.lastSyncDate.map { ISO8601DateFormatter().string(from: $0) } ?? "never"
+        let roleHint = "manageSetup=\(accessControl?.canManageSetup ?? false) delete=\(accessControl?.canDelete ?? false)"
+        print("""
+        [WorkTask] block picker has no assignable blocks \
+        vineyardId=\(store.selectedVineyardId?.uuidString ?? "nil") \
+        localPaddocks=\(allLocal) \
+        afterActiveFilter=\(assignableBlocks.count) \
+        role=\(roleHint) \
+        syncStatus=\(String(describing: paddockSync.syncStatus)) lastSync=\(lastSync)
+        """)
+        #endif
+    }
+
     private func loadIfEditing() {
+        logBlockPickerDiagnosticsIfEmpty()
         if let t = existingTask {
             date = t.date
             taskType = t.taskType
@@ -373,7 +417,7 @@ struct AddEditWorkTaskView: View {
                 areaSource = "existing"
             }
         } else if task.areaHa != nil {
-            // No block selected (All Blocks / None) — keep any existing value.
+            // No block selected (Does not apply to a block) — keep existing value.
             areaSource = "existing"
         }
 
