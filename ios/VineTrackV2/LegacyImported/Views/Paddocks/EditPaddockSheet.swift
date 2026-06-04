@@ -899,12 +899,16 @@ struct EditPaddockSheet: View {
     }
 
     private var availableVarieties: [GrapeVariety] {
-        let usedIds = Set(varietyAllocations.map { $0.varietyId })
+        // NOTE: deliberately does NOT filter out varieties already present
+        // in `varietyAllocations`. A block can carry the same variety more
+        // than once (e.g. different clones/rootstocks of Pinot Noir), so
+        // re-selecting an already-used variety must stay allowed. The only
+        // dedupe here is on the master list itself (by display name) to
+        // avoid showing the same master variety twice in the picker.
         let vineyardId = store.selectedVineyardId
         var seenNames = Set<String>()
         return store.grapeVarieties
             .filter { variety in
-                guard !usedIds.contains(variety.id) else { return false }
                 if let vid = vineyardId, variety.vineyardId != vid { return false }
                 let key = variety.name.lowercased()
                 if seenNames.contains(key) { return false }
@@ -1178,7 +1182,7 @@ struct EditPaddockSheet: View {
                 if filteredAvailableVarieties.isEmpty && matchingBuiltInSuggestions.isEmpty && !canOfferCustomAdd {
                     Section {
                         Text(trimmedVarietySearch.isEmpty
-                             ? "All varieties from your vineyard list are already on this block."
+                             ? "No varieties in your vineyard list yet. Search to add one from the catalogue or as a custom variety."
                              : "No matches.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
