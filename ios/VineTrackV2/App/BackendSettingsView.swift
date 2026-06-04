@@ -456,6 +456,16 @@ struct BackendSettingsView: View {
                 )
             }
             NavigationLink {
+                BillingGrantsView()
+            } label: {
+                SettingsRow(
+                    title: "Billing Grants / Internal Access",
+                    subtitle: "Grant or revoke manual unlimited licences",
+                    symbol: "infinity.circle.fill",
+                    color: .purple
+                )
+            }
+            NavigationLink {
                 SystemAdminUserActivityView()
             } label: {
                 SettingsRow(
