@@ -50,6 +50,42 @@ object AppConfig {
     private const val TAG = "VineTrackConfig"
 
     /**
+     * A single source-by-source diagnostic snapshot for the on-screen debug panel.
+     * Reports presence/length only — never the key itself. Each field is read
+     * directly from its source (not via [resolve]) so we can see exactly which
+     * layer is or isn't landing in the running APK.
+     */
+    data class Diagnostics(
+        val supabaseUrl: String,
+        val supabaseUrlPresent: Boolean,
+        val rorkConfigAnonKeyPresent: Boolean,
+        val rorkConfigAnonKeyLength: Int,
+        val buildConfigAnonKeyPresent: Boolean,
+        val buildConfigAnonKeyLength: Int,
+        val finalAnonKeyPresent: Boolean,
+        val finalAnonKeyLength: Int,
+    )
+
+    fun diagnostics(): Diagnostics {
+        val rorkConfigKey = Config.allValues["EXPO_PUBLIC_SUPABASE_ANON_KEY"]
+            ?.trim()
+            .orEmpty()
+        val buildConfigKey = BuildConfig.SUPABASE_ANON_KEY.trim()
+        val finalKey = supabaseAnonKey
+        val url = supabaseUrl
+        return Diagnostics(
+            supabaseUrl = url,
+            supabaseUrlPresent = url.isNotBlank(),
+            rorkConfigAnonKeyPresent = rorkConfigKey.isNotBlank(),
+            rorkConfigAnonKeyLength = rorkConfigKey.length,
+            buildConfigAnonKeyPresent = buildConfigKey.isNotBlank(),
+            buildConfigAnonKeyLength = buildConfigKey.length,
+            finalAnonKeyPresent = finalKey.isNotBlank(),
+            finalAnonKeyLength = finalKey.length,
+        )
+    }
+
+    /**
      * Resolves a value from, in priority order:
      *   1. The Rork build-injected [Config] map (EXPO_PUBLIC_* values).
      *   2. Gradle [BuildConfig] fields injected from the build environment.

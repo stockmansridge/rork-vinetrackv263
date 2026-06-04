@@ -46,6 +46,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.rork.vinetrack.BuildConfig
+import com.rork.vinetrack.data.AppConfig
 import com.rork.vinetrack.ui.AuthFormState
 import com.rork.vinetrack.ui.components.LoginVineyardBackground
 import com.rork.vinetrack.ui.theme.VineColors
@@ -198,8 +200,54 @@ fun LoginScreen(
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                 )
             }
+            if (BuildConfig.DEBUG) {
+                DebugConfigPanel()
+            }
+
             Spacer(Modifier.height(24.dp))
         }
+    }
+}
+
+@Composable
+private fun DebugConfigPanel() {
+    val d = remember { AppConfig.diagnostics() }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.Black.copy(alpha = 0.55f))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(
+            "DEBUG · Supabase config",
+            color = Color(0xFFEFEBB8),
+            fontWeight = FontWeight.Bold,
+            fontSize = 12.sp,
+        )
+        DebugRow("Supabase URL present", d.supabaseUrlPresent.toString())
+        DebugRow("Supabase URL", d.supabaseUrl)
+        DebugRow("Config.kt key present", d.rorkConfigAnonKeyPresent.toString())
+        DebugRow("Config.kt key length", d.rorkConfigAnonKeyLength.toString())
+        DebugRow("BuildConfig key present", d.buildConfigAnonKeyPresent.toString())
+        DebugRow("BuildConfig key length", d.buildConfigAnonKeyLength.toString())
+        DebugRow("Final key present", d.finalAnonKeyPresent.toString())
+        DebugRow("Final key length", d.finalAnonKeyLength.toString())
+    }
+}
+
+@Composable
+private fun DebugRow(label: String, value: String) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(label, color = Color.White.copy(alpha = 0.85f), fontSize = 11.sp)
+        Text(
+            value,
+            color = Color.White,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+        )
     }
 }
 
