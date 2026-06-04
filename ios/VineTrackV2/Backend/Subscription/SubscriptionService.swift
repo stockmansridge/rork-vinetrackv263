@@ -33,6 +33,23 @@ final class SubscriptionService {
         case failure(String)
     }
 
+    /// High-level access state used by the Subscription settings screen and
+    /// the in-app grace banner. Derived from the live/cached subscription,
+    /// the initial free-access window, and the persisted offline grace.
+    enum AccessState: Equatable {
+        /// Live or cached RevenueCat entitlement is active.
+        case subscribed
+        /// Inside the initial 3-month free-access window.
+        case freeAccess
+        /// Offline and currently being allowed in via the grace window.
+        case offlineGrace
+        /// A prior verification exists but the grace window has lapsed — a
+        /// fresh online check is required.
+        case needsVerification
+        /// No successful verification has ever been recorded on this device.
+        case notVerified
+    }
+
     var status: Status = .unknown
     var customerInfo: CustomerInfo?
     var currentOffering: Offering?
@@ -116,6 +133,40 @@ final class SubscriptionService {
     var shouldShowOfflineAccessNotice: Bool {
         guard isOffline else { return false }
         return !hasAccess
+    }
+
+    /// Coarse access state for display. Order matters: an active subscription
+    /// always wins, then the free window, then the offline grace.
+    var accessState: AccessState {
+        if isSubscribed { return .subscribed }
+        if isInInitialFreeAccessPeriod { return .freeAccess }
+        if isOffline && isWithinOfflineGracePeriod { return .offlineGrace }
+        if offlineGraceAnchorDate != nil { return .needsVerification }
+        return .notVerified
+    }
+
+    /// True only when the offline grace window is the sole reason the user
+    /// currently has access — i.e. offline, not subscribed (even via cache),
+    /// and outside the initial free window. Drives the in-app grace banner.
+    var isRelyingOnOfflineGrace: Bool {
+        guard isOffline else { return false }
+        if isSubscribed { return false }
+        if isInInitialFreeAccessPeriod { return false }
+        return isWithinOfflineGracePeriod
+    }
+
+    /// Whole days remaining in the offline grace window (rounded up), or nil
+    /// when no grace anchor applies / it has already expired.
+    var offlineGraceRemainingDays: Int? {
+        guard let remaining = offlineGraceRemaining else { return nil }
+        return max(1, Int(ceil(remaining / 86_400)))
+    }
+
+    /// True when the last successful online verification is missing or older
+    /// than a day, so a manual "Refresh access" is worthwhile.
+    var isVerificationStale: Bool {
+        guard let last = lastVerifiedEntitlementAt else { return true }
+        return Date().timeIntervalSince(last) > 86_400
     }
 
     var hasResolvedStatus: Bool {

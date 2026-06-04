@@ -3,8 +3,10 @@ import RevenueCat
 
 struct SubscriptionSettingsView: View {
     @Environment(SubscriptionService.self) private var subscription
+    @Environment(NewBackendAuthService.self) private var auth
     @State private var showPaywall: Bool = false
     @State private var statusMessage: String?
+    @State private var isRefreshingAccess: Bool = false
 
     private var entitlement: EntitlementInfo? {
         subscription.customerInfo?.entitlements[SubscriptionService.entitlementIdentifier]
@@ -13,6 +15,7 @@ struct SubscriptionSettingsView: View {
     var body: some View {
         Form {
             statusSection
+            accessStatusSection
             actionsSection
             if let entitlement {
                 detailsSection(entitlement)
@@ -80,6 +83,136 @@ struct SubscriptionSettingsView: View {
         case .failure(let m): return m
         default: return "Subscribe to unlock all vineyard features"
         }
+    }
+
+    // MARK: - Access status
+
+    private var accessStatusSection: some View {
+        Section {
+            HStack(spacing: 12) {
+                Image(systemName: accessStateIcon)
+                    .font(.title3)
+                    .foregroundStyle(accessStateColor)
+                    .frame(width: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(accessStateTitle)
+                        .font(.subheadline.weight(.semibold))
+                    Text(accessStateDetail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            LabeledContent("Last verified", value: lastVerifiedText)
+            LabeledContent("Offline grace remaining", value: graceRemainingText)
+            if let account = accountIdentifier {
+                LabeledContent("Account", value: account)
+            }
+            if showRefreshAccessButton {
+                Button {
+                    Task { await refreshAccess() }
+                } label: {
+                    HStack {
+                        Label("Refresh access", systemImage: "arrow.clockwise.circle")
+                        Spacer()
+                        if isRefreshingAccess { ProgressView() }
+                    }
+                }
+                .disabled(isRefreshingAccess || subscription.isOffline)
+            }
+        } header: {
+            Text("Access")
+        } footer: {
+            Text(accessStateFooter)
+        }
+    }
+
+    private var accessStateTitle: String {
+        switch subscription.accessState {
+        case .subscribed: return "Subscription active"
+        case .freeAccess: return "Free access period"
+        case .offlineGrace: return "Offline grace active"
+        case .needsVerification: return "Needs online verification"
+        case .notVerified: return "Not verified"
+        }
+    }
+
+    private var accessStateDetail: String {
+        switch subscription.accessState {
+        case .subscribed:
+            return "Verified with the App Store."
+        case .freeAccess:
+            if let endsAt = subscription.freeAccessEndsAt {
+                return "Free until \(endsAt.formatted(date: .abbreviated, time: .omitted))."
+            }
+            return "Inside your first 3 months."
+        case .offlineGrace:
+            if let days = subscription.offlineGraceRemainingDays {
+                return "Working offline — \(days) day\(days == 1 ? "" : "s") of grace remaining."
+            }
+            return "Working offline on cached access."
+        case .needsVerification:
+            return "Connect to the internet to refresh your subscription."
+        case .notVerified:
+            return "Subscribe to unlock all vineyard features."
+        }
+    }
+
+    private var accessStateFooter: String {
+        "Your last successful subscription check is stored on this device. If you go offline, a verified subscriber keeps full access for \(SubscriptionService.offlineGraceDays) days before a fresh check is needed."
+    }
+
+    private var accessStateIcon: String {
+        switch subscription.accessState {
+        case .subscribed: return "checkmark.seal.fill"
+        case .freeAccess: return "gift.fill"
+        case .offlineGrace: return "wifi.slash"
+        case .needsVerification: return "exclamationmark.arrow.triangle.2.circlepath"
+        case .notVerified: return "lock.fill"
+        }
+    }
+
+    private var accessStateColor: Color {
+        switch subscription.accessState {
+        case .subscribed, .freeAccess: return .green
+        case .offlineGrace, .needsVerification: return .orange
+        case .notVerified: return .red
+        }
+    }
+
+    private var lastVerifiedText: String {
+        guard let date = subscription.lastVerifiedEntitlementAt else { return "Never" }
+        return date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    private var graceRemainingText: String {
+        guard let days = subscription.offlineGraceRemainingDays else {
+            return subscription.offlineGraceAnchorDate == nil ? "—" : "Expired"
+        }
+        return "\(days) day\(days == 1 ? "" : "s")"
+    }
+
+    private var accountIdentifier: String? {
+        if let email = auth.userEmail, !email.isEmpty { return email }
+        return nil
+    }
+
+    /// Offer a manual refresh when online and either stale or not currently
+    /// fully verified. Hidden when there's nothing useful a refresh would do.
+    private var showRefreshAccessButton: Bool {
+        if subscription.isOffline { return false }
+        if subscription.accessState == .subscribed && !subscription.isVerificationStale { return false }
+        return true
+    }
+
+    private func refreshAccess() async {
+        guard !isRefreshingAccess else { return }
+        isRefreshingAccess = true
+        defer { isRefreshingAccess = false }
+        await subscription.refreshCustomerInfo()
+        statusMessage = subscription.hasAccess
+            ? "Access refreshed."
+            : (subscription.lastError ?? "Subscription not found.")
     }
 
     @ViewBuilder

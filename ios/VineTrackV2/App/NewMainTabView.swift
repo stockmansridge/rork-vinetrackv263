@@ -6,6 +6,7 @@ struct NewMainTabView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(LocationService.self) private var locationService
     @Environment(BackendAccessControl.self) private var accessControl
+    @Environment(SubscriptionService.self) private var subscription
     @Environment(TripTrackingService.self) private var tripTracking
     @Environment(PinSyncService.self) private var pinSync
     @Environment(PaddockSyncService.self) private var paddockSync
@@ -66,6 +67,10 @@ struct NewMainTabView: View {
                 .tag(4)
         }
         .environment(\.accessControl, accessControl.legacyAccessControl)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            OfflineGraceBanner()
+                .animation(.easeInOut(duration: 0.25), value: subscription.isRelyingOnOfflineGrace)
+        }
         .onAppear {
             if locationService.authorizationStatus == .notDetermined {
                 locationService.requestPermission()
