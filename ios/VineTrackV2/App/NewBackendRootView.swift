@@ -18,6 +18,11 @@ struct NewBackendRootView: View {
     @State private var disclaimerError: String?
     @State private var didApplyDefaultVineyard: Bool = false
     @State private var isLoadingVineyards: Bool = false
+    /// True when the membership/vineyard load failed AND we have no cached
+    /// vineyards to fall back on. This is NOT the same as "genuinely zero
+    /// vineyards" — it means we couldn't confirm membership, so we must show a
+    /// retryable state rather than the no-vineyards onboarding screen.
+    @State private var vineyardLoadFailedNoCache: Bool = false
     @State private var lastScenePhase: ScenePhase = .active
     @State private var didEnterBackground: Bool = false
     @State private var showInvitationsSheet: Bool = false
@@ -49,7 +54,16 @@ struct NewBackendRootView: View {
                 // 3. Load the user's vineyards so we know they are in the
                 //    authenticated app shell before evaluating the disclaimer.
                 vineyardLoadingView
+            } else if store.selectedVineyard == nil && vineyardLoadFailedNoCache {
+                // 3a. We are authenticated but could NOT confirm membership
+                //     (offline / transient backend error) and have no cached
+                //     vineyards. Showing the no-vineyards onboarding here would
+                //     be wrong — the user may well have vineyards we just can't
+                //     see yet. Offer a retry instead.
+                vineyardLoadFailedView
             } else if store.selectedVineyard == nil {
+                // 3b. Membership load completed and the user genuinely has no
+                //     vineyard access — invite/create onboarding.
                 BackendVineyardListView()
             } else if !didCheckDisclaimer {
                 // 4. Now that the user is signed in and inside a vineyard,
@@ -78,9 +92,14 @@ struct NewBackendRootView: View {
                 }
             }
         }
+        .onChange(of: currentRoute) { _, newRoute in
+            StartupDiagnostics.route(newRoute)
+        }
         .task {
             if !didAttemptRestore {
+                StartupDiagnostics.log("auth restore started")
                 await auth.restoreSession()
+                StartupDiagnostics.log("auth restore completed: signedIn=\(auth.isSignedIn)")
                 if auth.isSignedIn {
                     biometric.lockIfEnabled()
                     biometric.updateSavedEmailIfEnabled(auth.userEmail)
@@ -142,6 +161,7 @@ struct NewBackendRootView: View {
                 didCheckDisclaimer = false
                 disclaimerError = nil
                 didApplyDefaultVineyard = false
+                vineyardLoadFailedNoCache = false
                 await subscription.logout()
             }
         }
@@ -266,6 +286,7 @@ struct NewBackendRootView: View {
 
     private func loadVineyardsAndApplyDefault(forceReload: Bool = false) async {
         isLoadingVineyards = true
+        StartupDiagnostics.log("vineyard sync started (forceReload=\(forceReload))")
         defer { isLoadingVineyards = false }
         do {
             let backendVineyards = try await vineyardRepository.listMyVineyards()
@@ -278,13 +299,38 @@ struct NewBackendRootView: View {
                !store.vineyards.contains(where: { $0.id == defaultId }) {
                 _ = await auth.setDefaultVineyard(nil)
             }
+            vineyardLoadFailedNoCache = false
+            StartupDiagnostics.log("vineyard sync completed: membershipCount=\(store.vineyards.count)")
+            didApplyDefaultVineyard = true
         } catch {
-            // Network/listing failed — fall back to whatever local state exists.
+            // The membership load failed. Decide *why* before routing.
+            if SupabaseAuthRepository.isAuthRejection(error) {
+                // The session was rejected by the server (e.g. refresh token
+                // expired between restore and this call). Sign out so the app
+                // routes to login — never to the no-vineyards onboarding.
+                StartupDiagnostics.log("vineyard sync failed: auth rejected — signing out")
+                await auth.signOut()
+                return
+            }
+            // Offline / transient backend error — fall back to local cache.
             if !forceReload {
                 store.applyDefaultVineyardSelection(defaultId: auth.defaultVineyardId)
             }
+            // Only treat this as a genuine "no vineyards" state if we actually
+            // have cached vineyards. Otherwise flag it as a retryable failure so
+            // routing shows a retry screen, not invite/create onboarding.
+            vineyardLoadFailedNoCache = store.vineyards.isEmpty
+            StartupDiagnostics.log("vineyard sync failed offline: cachedVineyards=\(store.vineyards.count), retryable=\(vineyardLoadFailedNoCache)")
+            didApplyDefaultVineyard = true
         }
-        didApplyDefaultVineyard = true
+    }
+
+    /// Reset state and re-run the membership load. Used by the retry button on
+    /// the vineyard-load-failed screen.
+    private func retryVineyardLoad() async {
+        vineyardLoadFailedNoCache = false
+        didApplyDefaultVineyard = false
+        await loadVineyardsAndApplyDefault()
     }
 
     /// True once the user has cleared auth/onboarding/disclaimer/vineyard
@@ -330,6 +376,56 @@ struct NewBackendRootView: View {
 
     private var loadingView: some View {
         LoadingSplashView()
+    }
+
+    /// Shown when the user is authenticated but we couldn't confirm vineyard
+    /// membership and have nothing cached. Distinct from the no-vineyards
+    /// onboarding so we never imply the user has no access when we simply
+    /// couldn't reach the backend.
+    private var vineyardLoadFailedView: some View {
+        ZStack {
+            VineyardTheme.appBackground.ignoresSafeArea()
+            VStack(spacing: 16) {
+                Image(systemName: "wifi.exclamationmark")
+                    .font(.system(size: 44))
+                    .foregroundStyle(.orange)
+                Text("Couldn't load your vineyards")
+                    .font(.headline)
+                Text("We couldn't reach the server to confirm your vineyard access. Check your connection and try again.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+                Button("Retry") {
+                    Task { await retryVineyardLoad() }
+                }
+                .buttonStyle(.vineyardPrimary)
+                .padding(.horizontal, 40)
+                Button("Sign out") {
+                    Task { await auth.signOut() }
+                }
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// Pure, side-effect-free derivation of the screen the body is presenting.
+    /// Logged on change for startup diagnostics.
+    private var currentRoute: StartupDiagnostics.Route {
+        if !didAttemptRestore { return .sessionRestoring }
+        if auth.isSignedIn && biometric.requiresUnlock { return .biometricLock }
+        if !auth.isSignedIn { return .login }
+        if !onboardingCompleted { return .onboarding }
+        if !didApplyDefaultVineyard { return .vineyardLoading }
+        if store.selectedVineyard == nil && vineyardLoadFailedNoCache { return .vineyardLoadFailed }
+        if store.selectedVineyard == nil { return .noVineyards }
+        if !didCheckDisclaimer { return .disclaimer }
+        if !disclaimerAccepted { return .disclaimer }
+        if subscription.hasAccess { return .dashboard }
+        if !subscription.hasResolvedStatus { return .subscriptionLoading }
+        if subscription.shouldShowOfflineAccessNotice { return .offlineAccessNotice }
+        return .paywall
     }
 
     private var disclaimerLoadingView: some View {
