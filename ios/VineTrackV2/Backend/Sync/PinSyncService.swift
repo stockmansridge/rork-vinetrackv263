@@ -77,6 +77,18 @@ final class PinSyncService {
     /// Diagnostics-only: count of locally pending soft-deletes not yet pushed.
     var pendingDeleteCount: Int { metadata.pendingDeletes.count }
 
+    /// Whether a specific pin has local changes queued for upload.
+    func isPendingUpsert(_ id: UUID) -> Bool { metadata.pendingUpserts[id] != nil }
+
+    /// Whether a specific pin is queued for a remote delete.
+    func isPendingDelete(_ id: UUID) -> Bool { metadata.pendingDeletes[id] != nil }
+
+    /// True while a full sweep is actively pushing/pulling pins.
+    var isSyncing: Bool { syncStatus == .syncing }
+
+    /// True if the last sweep failed.
+    var hasFailure: Bool { if case .failure = syncStatus { return true }; return false }
+
     private weak var store: MigratedDataStore?
     private weak var auth: NewBackendAuthService?
     private let repository: any PinSyncRepositoryProtocol

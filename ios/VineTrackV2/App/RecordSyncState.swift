@@ -97,4 +97,19 @@ extension RecordSyncState {
             serviceHasFailure: tripSync.hasFailure
         )
     }
+
+    /// Convenience resolver for pins, reading the live `PinSyncService` state.
+    ///
+    /// A pin created or edited offline (including one with a photo still
+    /// waiting to upload) is tracked as a pending upsert, so it resolves to
+    /// `.queued` until the sweep confirms it, `.syncing` during an active
+    /// sweep, and `.error` if the last sweep failed while still pending.
+    @MainActor
+    static func forPin(_ pinId: UUID, pinSync: PinSyncService) -> RecordSyncState {
+        resolve(
+            isPending: pinSync.isPendingUpsert(pinId) || pinSync.isPendingDelete(pinId),
+            serviceIsSyncing: pinSync.isSyncing,
+            serviceHasFailure: pinSync.hasFailure
+        )
+    }
 }

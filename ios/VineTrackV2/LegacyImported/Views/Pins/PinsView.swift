@@ -811,6 +811,7 @@ struct PinRowView: View {
     let onDelete: () -> Void
     let onHeadingTap: () -> Void
     @Environment(BackendAccessControl.self) private var accessControl
+    @Environment(PinSyncService.self) private var pinSync
     private var canDelete: Bool { accessControl.canDeleteOperationalRecords }
     @State private var showFullPhoto: Bool = false
 
@@ -851,6 +852,10 @@ struct PinRowView: View {
                             .font(.headline)
                             .foregroundStyle(.white)
                         Spacer(minLength: 0)
+                        RecordSyncBadge(
+                            state: RecordSyncState.forPin(pin.id, pinSync: pinSync),
+                            showsLabel: false
+                        )
                         Image(systemName: "chevron.right")
                             .font(.caption.bold())
                             .foregroundStyle(.white.opacity(0.8))
@@ -1182,6 +1187,7 @@ struct PinDetailSheet: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(NewBackendAuthService.self) private var auth
     @Environment(BackendAccessControl.self) private var accessControl
+    @Environment(PinSyncService.self) private var pinSync
     @Environment(\.dismiss) private var dismiss
     private var canDelete: Bool { accessControl.canDeleteOperationalRecords }
     @State private var notesDraft: String = ""
@@ -1235,8 +1241,11 @@ struct PinDetailSheet: View {
                             .fill(Color.fromString(pin.buttonColor).gradient)
                             .frame(width: 44, height: 44)
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(pin.buttonName)
-                                .font(.title3.weight(.semibold))
+                            HStack(spacing: 8) {
+                                Text(pin.buttonName)
+                                    .font(.title3.weight(.semibold))
+                                RecordSyncBadge(state: RecordSyncState.forPin(pin.id, pinSync: pinSync))
+                            }
                             if let attached = PinAttachmentFormatter.attachmentLine(pin) {
                                 Text("On \(attached)")
                                     .font(.subheadline.weight(.semibold))
