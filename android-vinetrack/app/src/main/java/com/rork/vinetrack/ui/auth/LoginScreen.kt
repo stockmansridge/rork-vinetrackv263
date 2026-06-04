@@ -232,6 +232,8 @@ private fun DebugConfigPanel() {
         DebugRow("Config.kt key length", d.rorkConfigAnonKeyLength.toString())
         DebugRow("BuildConfig key present", d.buildConfigAnonKeyPresent.toString())
         DebugRow("BuildConfig key length", d.buildConfigAnonKeyLength.toString())
+        DebugRow("Fallback key present", d.fallbackAnonKeyPresent.toString())
+        DebugRow("Fallback key length", d.fallbackAnonKeyLength.toString())
         DebugRow("Final key present", d.finalAnonKeyPresent.toString())
         DebugRow("Final key length", d.finalAnonKeyLength.toString())
     }

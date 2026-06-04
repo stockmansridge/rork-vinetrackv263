@@ -13,6 +13,18 @@ object AppConfig {
 
     private const val DEFAULT_SUPABASE_URL = "https://tbafuqwruefgkbyxrxyb.supabase.co"
 
+    /**
+     * Guaranteed Android-only fallback for the public Supabase config. Used only
+     * when both the Rork build-injected [Config] and Gradle [BuildConfig] fail to
+     * land in the compiled APK. These are PUBLIC values:
+     *  - The Supabase project URL is public.
+     *  - The anon/public key is safe to ship in a client (it is RLS-gated).
+     * The service-role key is NEVER referenced here.
+     */
+    private const val FALLBACK_SUPABASE_URL = "https://tbafuqwruefgkbyxrxyb.supabase.co"
+    private const val FALLBACK_SUPABASE_ANON_KEY =
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRiYWZ1cXdydWVmZ2tieXhyeHliIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcyOTY0NDcsImV4cCI6MjA5Mjg3MjQ0N30.tvOzn1ketbd0zYJWDujh_DGcWVDeitJaoVWw3aqtuRw"
+
     val supabaseUrl: String
         get() = resolve("SUPABASE_URL", "EXPO_PUBLIC_SUPABASE_URL")
             ?.trimEnd('/')
@@ -62,6 +74,8 @@ object AppConfig {
         val rorkConfigAnonKeyLength: Int,
         val buildConfigAnonKeyPresent: Boolean,
         val buildConfigAnonKeyLength: Int,
+        val fallbackAnonKeyPresent: Boolean,
+        val fallbackAnonKeyLength: Int,
         val finalAnonKeyPresent: Boolean,
         val finalAnonKeyLength: Int,
     )
@@ -71,6 +85,7 @@ object AppConfig {
             ?.trim()
             .orEmpty()
         val buildConfigKey = BuildConfig.SUPABASE_ANON_KEY.trim()
+        val fallbackKey = FALLBACK_SUPABASE_ANON_KEY.trim()
         val finalKey = supabaseAnonKey
         val url = supabaseUrl
         return Diagnostics(
@@ -80,6 +95,8 @@ object AppConfig {
             rorkConfigAnonKeyLength = rorkConfigKey.length,
             buildConfigAnonKeyPresent = buildConfigKey.isNotBlank(),
             buildConfigAnonKeyLength = buildConfigKey.length,
+            fallbackAnonKeyPresent = fallbackKey.isNotBlank(),
+            fallbackAnonKeyLength = fallbackKey.length,
             finalAnonKeyPresent = finalKey.isNotBlank(),
             finalAnonKeyLength = finalKey.length,
         )
@@ -89,8 +106,10 @@ object AppConfig {
      * Resolves a value from, in priority order:
      *   1. The Rork build-injected [Config] map (EXPO_PUBLIC_* values).
      *   2. Gradle [BuildConfig] fields injected from the build environment.
-     * This makes config robust whether the Rork Config.kt injection or the
-     * Gradle BuildConfig injection lands in the compiled APK.
+     *   3. Explicit Android fallback constants (public values only).
+     * Blank/empty strings at any layer are treated as missing so they never
+     * block a later layer. This makes config robust whether or not the Rork
+     * Config.kt or Gradle BuildConfig injection lands in the compiled APK.
      */
     private fun resolve(vararg keys: String): String? {
         for (key in keys) {
@@ -101,7 +120,17 @@ object AppConfig {
             val value = buildConfigValue(key)?.trim()
             if (!value.isNullOrEmpty()) return value
         }
+        for (key in keys) {
+            val value = fallbackValue(key)?.trim()
+            if (!value.isNullOrEmpty()) return value
+        }
         return null
+    }
+
+    private fun fallbackValue(key: String): String? = when (key) {
+        "SUPABASE_URL", "EXPO_PUBLIC_SUPABASE_URL" -> FALLBACK_SUPABASE_URL
+        "SUPABASE_ANON_KEY", "EXPO_PUBLIC_SUPABASE_ANON_KEY" -> FALLBACK_SUPABASE_ANON_KEY
+        else -> null
     }
 
     private fun buildConfigValue(key: String): String? = when (key) {
