@@ -1,8 +1,33 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+}
+
+/**
+ * Resolves a build-time config value from, in priority order:
+ *   1. The build environment (System.getenv) — how the Rork CI passes EXPO_PUBLIC_* values.
+ *   2. Gradle project properties (-P flags / gradle.properties).
+ *   3. local.properties on the build machine.
+ * Returns an empty string when nothing is found so the APK always compiles.
+ */
+val localProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) {
+        file.inputStream().use { load(it) }
+    }
+}
+
+fun resolveBuildConfigValue(vararg keys: String): String {
+    for (key in keys) {
+        System.getenv(key)?.takeIf { it.isNotBlank() }?.let { return it.trim() }
+        (project.findProperty(key) as? String)?.takeIf { it.isNotBlank() }?.let { return it.trim() }
+        localProperties.getProperty(key)?.takeIf { it.isNotBlank() }?.let { return it.trim() }
+    }
+    return ""
 }
 
 android {
@@ -15,6 +40,17 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
+
+        val supabaseUrl = resolveBuildConfigValue(
+            "SUPABASE_URL",
+            "EXPO_PUBLIC_SUPABASE_URL",
+        )
+        val supabaseAnonKey = resolveBuildConfigValue(
+            "SUPABASE_ANON_KEY",
+            "EXPO_PUBLIC_SUPABASE_ANON_KEY",
+        )
+        buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
+        buildConfigField("String", "SUPABASE_ANON_KEY", "\"$supabaseAnonKey\"")
     }
 
     buildTypes {
