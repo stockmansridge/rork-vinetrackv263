@@ -296,6 +296,7 @@ private struct VineyardBlocksMiniMap: View {
     let pins: [VinePin]
     @Binding var selectedPaddock: Paddock?
     @Environment(LocationService.self) private var locationService
+    @Environment(NetworkMonitor.self) private var network
 
     @State private var position: MapCameraPosition = .automatic
     @State private var hasSetInitialPosition: Bool = false
@@ -310,8 +311,34 @@ private struct VineyardBlocksMiniMap: View {
         return map
     }
 
-    var body: some View {
-        ZStack(alignment: .topTrailing) {
+    private var offlineMap: some View {
+        OfflineVineyardMapView(
+            paddocks: paddocks.filter { $0.polygonPoints.count > 2 }.map { paddock in
+                let color = blockColors[paddock.id] ?? .blue
+                return OfflineVineyardMapView.Paddock(
+                    id: paddock.id,
+                    polygon: paddock.polygonPoints.map { $0.coordinate },
+                    rows: paddock.rows.map { [$0.startPoint.coordinate, $0.endPoint.coordinate] },
+                    strokeColor: color,
+                    fillColor: color.opacity(0.25),
+                    name: paddock.name
+                )
+            },
+            pins: pins.map {
+                OfflineVineyardMapView.Pin(
+                    id: $0.id,
+                    coordinate: $0.coordinate,
+                    color: Color.fromString($0.buttonColor),
+                    isCompleted: $0.isCompleted,
+                    name: $0.buttonName
+                )
+            },
+            userCoordinate: locationService.location?.coordinate
+        )
+        .clipShape(.rect(cornerRadius: 12))
+    }
+
+    private var hybridMap: some View {
             Map(position: $position) {
                 ForEach(paddocks) { paddock in
                     if paddock.polygonPoints.count > 2 {
@@ -340,6 +367,17 @@ private struct VineyardBlocksMiniMap: View {
             }
             .mapStyle(.hybrid)
             .clipShape(.rect(cornerRadius: 12))
+    }
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Group {
+                if network.isOnline {
+                    hybridMap
+                } else {
+                    offlineMap
+                }
+            }
 
             if paddocks.contains(where: { $0.polygonPoints.count > 2 }) {
                 Button {
@@ -411,10 +449,26 @@ private struct FullScreenBlocksMap: View {
     let onSelectPaddock: (Paddock) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(NetworkMonitor.self) private var network
     @State private var position: MapCameraPosition = .automatic
 
-    var body: some View {
-        NavigationStack {
+    private var offlineMap: some View {
+        OfflineVineyardMapView(
+            paddocks: paddocks.filter { $0.polygonPoints.count > 2 }.map { paddock in
+                let color = blockColors[paddock.id] ?? .blue
+                return OfflineVineyardMapView.Paddock(
+                    id: paddock.id,
+                    polygon: paddock.polygonPoints.map { $0.coordinate },
+                    rows: paddock.rows.map { [$0.startPoint.coordinate, $0.endPoint.coordinate] },
+                    strokeColor: color,
+                    fillColor: color.opacity(0.25),
+                    name: paddock.name
+                )
+            }
+        )
+    }
+
+    private var hybridMap: some View {
             Map(position: $position) {
                 ForEach(paddocks) { paddock in
                     if paddock.polygonPoints.count > 2 {
@@ -442,6 +496,17 @@ private struct FullScreenBlocksMap: View {
                 UserAnnotation()
             }
             .mapStyle(.hybrid)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if network.isOnline {
+                    hybridMap
+                } else {
+                    offlineMap
+                }
+            }
             .ignoresSafeArea()
             .navigationTitle("Blocks Map")
             .navigationBarTitleDisplayMode(.inline)

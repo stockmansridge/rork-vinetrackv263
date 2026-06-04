@@ -484,6 +484,7 @@ struct PinsMapView: View {
     let pins: [VinePin]
     @Environment(MigratedDataStore.self) private var store
     @Environment(LocationService.self) private var locationService
+    @Environment(NetworkMonitor.self) private var network
     @State private var position: MapCameraPosition = .automatic
     @State private var selectedPin: VinePin?
     @State private var hasSetInitialPosition: Bool = false
@@ -518,7 +519,32 @@ struct PinsMapView: View {
         return MKCoordinateRegion(center: center, span: span)
     }
 
-    var body: some View {
+    private var offlineMap: some View {
+        OfflineVineyardMapView(
+            paddocks: allPaddocks.map { paddock in
+                OfflineVineyardMapView.Paddock(
+                    id: paddock.id,
+                    polygon: paddock.polygonPoints.map { $0.coordinate },
+                    rows: paddock.rows.map { [$0.startPoint.coordinate, $0.endPoint.coordinate] },
+                    strokeColor: .orange,
+                    fillColor: .orange.opacity(0.1),
+                    name: paddock.name
+                )
+            },
+            pins: pins.map {
+                OfflineVineyardMapView.Pin(
+                    id: $0.id,
+                    coordinate: $0.coordinate,
+                    color: Color.fromString($0.buttonColor),
+                    isCompleted: $0.isCompleted,
+                    name: $0.buttonName
+                )
+            },
+            userCoordinate: locationService.location?.coordinate
+        )
+    }
+
+    private var hybridMap: some View {
         Map(position: $position) {
             ForEach(allPaddocks) { paddock in
                 MapPolygon(coordinates: paddock.polygonPoints.map { $0.coordinate })
@@ -566,6 +592,16 @@ struct PinsMapView: View {
             UserAnnotation()
         }
         .mapStyle(.hybrid)
+    }
+
+    var body: some View {
+        Group {
+            if network.isOnline {
+                hybridMap
+            } else {
+                offlineMap
+            }
+        }
         .sheet(item: $selectedPin) { pin in
             PinDetailSheet(pin: pin)
                 .presentationDetents([.medium, .large])

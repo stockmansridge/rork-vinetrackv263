@@ -49,6 +49,7 @@ struct VineTrackV2App: App {
     @State private var vineyardTripFunctionService = VineyardTripFunctionService()
     @State private var appNoticeService = AppNoticeService()
     @State private var systemAdminService = SystemAdminService()
+    @State private var networkMonitor = NetworkMonitor.shared
 
     init() {
         VineyardTheme.applyGlobalAppearance()
@@ -106,6 +107,7 @@ struct VineTrackV2App: App {
                         .environment(vineyardTripFunctionService)
                         .environment(appNoticeService)
                         .environment(systemAdminService)
+                        .environment(networkMonitor)
                 } else {
                     ContentView()
                 }

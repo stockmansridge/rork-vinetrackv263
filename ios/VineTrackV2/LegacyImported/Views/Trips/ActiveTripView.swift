@@ -12,6 +12,7 @@ struct ActiveTripView: View {
     @Environment(TripTrackingService.self) private var tracking
     @Environment(LocationService.self) private var locationService
     @Environment(BackendAccessControl.self) private var accessControl
+    @Environment(NetworkMonitor.self) private var network
 
     @State private var position: MapCameraPosition = .userLocation(fallback: .automatic)
     @State private var isFollowingUser: Bool = true
@@ -1232,7 +1233,41 @@ struct ActiveTripView: View {
         case navigation
     }
 
+    @ViewBuilder
     private var mapView: some View {
+        if network.isOnline {
+            hybridMapView
+        } else {
+            offlineMapView
+        }
+    }
+
+    private var offlineMapView: some View {
+        OfflineVineyardMapView(
+            paddocks: paddocksOnMap.map { paddock in
+                OfflineVineyardMapView.Paddock(
+                    id: paddock.id,
+                    polygon: paddock.polygonPoints.map { $0.coordinate },
+                    rows: paddock.rows.map { [$0.startPoint.coordinate, $0.endPoint.coordinate] },
+                    name: paddock.name
+                )
+            },
+            trails: displayTrailSegments.map {
+                OfflineVineyardMapView.Trail(id: $0.id, coordinates: $0.coordinates, color: $0.color)
+            },
+            pins: visibleMapPins.map {
+                OfflineVineyardMapView.Pin(
+                    id: $0.id,
+                    coordinate: $0.coordinate,
+                    color: Color.fromString($0.buttonColor),
+                    name: $0.buttonName
+                )
+            },
+            userCoordinate: locationService.location?.coordinate
+        )
+    }
+
+    private var hybridMapView: some View {
         Map(position: $position) {
             ForEach(paddocksOnMap) { paddock in
                 if paddock.polygonPoints.count >= 3 {

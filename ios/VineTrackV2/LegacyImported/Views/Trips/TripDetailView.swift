@@ -5,6 +5,7 @@ struct TripDetailView: View {
     let trip: Trip
     @Environment(MigratedDataStore.self) private var store
     @Environment(BackendAccessControl.self) private var accessControl
+    @Environment(NetworkMonitor.self) private var network
     @Environment(\.dismiss) private var dismiss
     @State private var showSummary: Bool = false
     @State private var showDeleteConfirmation: Bool = false
@@ -165,13 +166,24 @@ struct TripDetailView: View {
             if trip.pathPoints.count > 1 {
                 Section {
                     DisclosureGroup(isExpanded: $showPathMap) {
-                        Map(position: $position) {
-                            ForEach(displayTrailSegments) { segment in
-                                MapPolyline(coordinates: segment.coordinates)
-                                    .stroke(segment.color, lineWidth: 4)
+                        Group {
+                            if network.isOnline {
+                                Map(position: $position) {
+                                    ForEach(displayTrailSegments) { segment in
+                                        MapPolyline(coordinates: segment.coordinates)
+                                            .stroke(segment.color, lineWidth: 4)
+                                    }
+                                }
+                                .mapStyle(.hybrid)
+                            } else {
+                                OfflineVineyardMapView(
+                                    trails: displayTrailSegments.map {
+                                        OfflineVineyardMapView.Trail(id: $0.id, coordinates: $0.coordinates, color: $0.color)
+                                    }
+                                )
+                                .clipShape(.rect(cornerRadius: 12))
                             }
                         }
-                        .mapStyle(.hybrid)
                         .frame(height: 240)
                     } label: {
                         Label("Path Map", systemImage: "map")
