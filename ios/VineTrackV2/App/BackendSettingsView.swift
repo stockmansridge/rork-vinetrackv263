@@ -98,6 +98,16 @@ struct BackendSettingsView: View {
                             color: .blue
                         )
                     }
+                    NavigationLink {
+                        OfflineReadinessView()
+                    } label: {
+                        SettingsRow(
+                            title: "Offline Readiness",
+                            subtitle: "Check this device is ready for no-service areas",
+                            symbol: "wifi.slash",
+                            color: .green
+                        )
+                    }
                     if systemAdmin.isEnabled(SystemFeatureFlagKey.showSyncDiagnostics) {
                         NavigationLink {
                             SyncDiagnosticsView()
