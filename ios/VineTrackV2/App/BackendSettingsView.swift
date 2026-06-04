@@ -959,6 +959,15 @@ struct SyncSettingsView: View {
                 .font(.footnote)
             LabeledContent("Pending deletes", value: "\(syncCenter.pendingDeletes)")
                 .font(.footnote)
+            if let retrySummary = syncCenter.retrySummary {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.clockwise.circle.fill")
+                        .foregroundStyle(.orange)
+                    Text(retrySummary)
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(.orange)
+                }
+            }
             LabeledContent("Last full sync", value: syncCenter.lastFullSyncAt?.formatted(date: .abbreviated, time: .shortened) ?? "Not yet")
                 .font(.footnote)
             if syncCenter.lastSuccessfulSyncAt != syncCenter.lastFullSyncAt {

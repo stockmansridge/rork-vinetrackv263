@@ -16,16 +16,23 @@ struct HomeSyncStatusChip: View {
 
     var body: some View {
         let state = sync.displayState(isOnline: network.isOnline)
-        let tint = tint(for: state)
-        NavigationLink {
+        // Per-record failures take visual priority: surface a retry count so an
+        // operator notices specific records need attention, while the normal
+        // wording stays in place when nothing has failed.
+        let failedTotal = sync.failedTotal
+        let showFailures = failedTotal > 0
+        let tint = showFailures ? Color.red : tint(for: state)
+        let symbol = showFailures ? "exclamationmark.triangle.fill" : symbol(for: state)
+        let label = showFailures ? "\(failedTotal) need retry" : label(for: state)
+        return NavigationLink {
             SyncSettingsView()
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: symbol(for: state))
+                Image(systemName: symbol)
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(tint)
-                    .symbolEffect(.pulse, options: .repeating, isActive: state == .syncing)
-                Text(label(for: state))
+                    .symbolEffect(.pulse, options: .repeating, isActive: state == .syncing && !showFailures)
+                Text(label)
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.white)
                     .lineLimit(1)

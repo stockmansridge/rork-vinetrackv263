@@ -162,7 +162,7 @@ struct NewMainTabView: View {
         .onChange(of: network.isOnline) { _, online in
             guard online else {
                 // Going offline: keep the indicator's backlog count fresh.
-                syncStatusCenter.refreshPending(upserts: aggregatePendingUpserts, deletes: aggregatePendingDeletes)
+                syncStatusCenter.refreshPending(upserts: aggregatePendingUpserts, deletes: aggregatePendingDeletes, failedUpserts: aggregateFailedUpserts, failedDeletes: aggregateFailedDeletes)
                 return
             }
             Task { await runFullSweep(alertRefresh: .refresh) }
@@ -210,7 +210,7 @@ struct NewMainTabView: View {
         defer { isSweeping = false }
 
         // Always keep the glanceable backlog count current.
-        syncStatusCenter.refreshPending(upserts: aggregatePendingUpserts, deletes: aggregatePendingDeletes)
+        syncStatusCenter.refreshPending(upserts: aggregatePendingUpserts, deletes: aggregatePendingDeletes, failedUpserts: aggregateFailedUpserts, failedDeletes: aggregateFailedDeletes)
 
         // Offline: everything stays queued locally and retries on reconnect.
         // We skip the network round-trips so we don't generate false errors
@@ -252,6 +252,8 @@ struct NewMainTabView: View {
         syncStatusCenter.syncDidFinish(
             upserts: aggregatePendingUpserts,
             deletes: aggregatePendingDeletes,
+            failedUpserts: aggregateFailedUpserts,
+            failedDeletes: aggregateFailedDeletes,
             error: aggregateSyncError
         )
     }
@@ -310,6 +312,29 @@ struct NewMainTabView: View {
             + yieldSessionSync.pendingDeleteCount
             + damageRecordSync.pendingDeleteCount
             + historicalYieldSync.pendingDeleteCount
+    }
+
+    /// Total individual records whose last upload failed, across every
+    /// per-record sync service. Used to surface "N records need retry" without
+    /// making healthy records look failed.
+    private var aggregateFailedUpserts: Int {
+        pinSync.failedUpsertIds.count
+            + tripSync.failedUpsertIds.count
+            + sprayRecordSync.failedUpsertIds.count
+            + damageRecordSync.failedUpsertIds.count
+            + yieldSessionSync.failedUpsertIds.count
+            + workTaskSync.failedUpsertIds.count
+    }
+
+    /// Total individual records whose last delete failed, across every
+    /// per-record sync service.
+    private var aggregateFailedDeletes: Int {
+        pinSync.failedDeleteIds.count
+            + tripSync.failedDeleteIds.count
+            + sprayRecordSync.failedDeleteIds.count
+            + damageRecordSync.failedDeleteIds.count
+            + yieldSessionSync.failedDeleteIds.count
+            + workTaskSync.failedDeleteIds.count
     }
 
     /// First meaningful sync error reported by any service this sweep, if any.

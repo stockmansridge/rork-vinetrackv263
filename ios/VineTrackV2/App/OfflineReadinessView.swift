@@ -157,6 +157,17 @@ struct OfflineReadinessView: View {
             )
             LabeledContent("Pending upload / delete", value: "\(syncCenter.pendingUpserts) / \(syncCenter.pendingDeletes)")
                 .font(.footnote)
+            if syncCenter.failedTotal > 0 {
+                ReadinessRow(
+                    title: "Records awaiting retry",
+                    detail: syncCenter.retrySummary ?? "\(syncCenter.failedTotal) need retry",
+                    state: .warn
+                )
+                LabeledContent("Failed uploads", value: "\(syncCenter.failedUpserts)")
+                    .font(.footnote)
+                LabeledContent("Failed deletes", value: "\(syncCenter.failedDeletes)")
+                    .font(.footnote)
+            }
             LabeledContent("Last full sync", value: lastFullSyncText)
                 .font(.footnote)
             LabeledContent("Last successful sync", value: lastSyncText)
@@ -169,7 +180,7 @@ struct OfflineReadinessView: View {
         } header: {
             Text("Sync status")
         } footer: {
-            Text("Anything you create offline is saved locally and queued. It uploads automatically the next time the device has signal — nothing is lost if you stay out of range.")
+            Text("Anything you create offline is saved locally and queued. It uploads automatically the next time the device has signal — nothing is lost if you stay out of range. Records awaiting retry stay saved and editable, and retry on reconnect.")
         }
     }
 

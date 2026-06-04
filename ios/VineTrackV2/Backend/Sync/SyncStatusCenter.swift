@@ -41,6 +41,12 @@ final class SyncStatusCenter {
     private(set) var isSyncing: Bool = false
     private(set) var pendingUpserts: Int = 0
     private(set) var pendingDeletes: Int = 0
+    /// Count of individual records whose last upload attempt failed and are
+    /// queued to retry. Aggregated across every per-record sync service so the
+    /// UI can say "3 records need retry" without flagging healthy records.
+    private(set) var failedUpserts: Int = 0
+    /// Count of individual records whose last delete attempt failed.
+    private(set) var failedDeletes: Int = 0
     /// When the last full sweep completed (success or failure).
     private(set) var lastFullSyncAt: Date?
     /// When the last sweep completed with no errors.
@@ -53,6 +59,26 @@ final class SyncStatusCenter {
     private(set) var manualSyncToken: Int = 0
 
     var pendingTotal: Int { pendingUpserts + pendingDeletes }
+    var failedTotal: Int { failedUpserts + failedDeletes }
+
+    /// Operator-facing summary of how many specific records are waiting to
+    /// retry, or `nil` when nothing has failed. Never exposes raw server
+    /// errors — just counts.
+    var retrySummary: String? {
+        guard failedTotal > 0 else { return nil }
+        if failedUpserts > 0 && failedDeletes > 0 {
+            return "\(failedUpserts) upload\(failedUpserts == 1 ? "" : "s") and \(failedDeletes) delete\(failedDeletes == 1 ? "" : "s") need retry"
+        }
+        if failedDeletes > 0 {
+            return failedDeletes == 1
+                ? "1 delete failed, will retry"
+                : "\(failedDeletes) deletes need retry"
+        }
+        if failedUpserts == 1 {
+            return "1 upload failed, will retry"
+        }
+        return "\(failedUpserts) records need retry"
+    }
 
     /// Request a manual full sync from anywhere in the UI.
     func requestManualSync() {
@@ -66,16 +92,20 @@ final class SyncStatusCenter {
 
     /// Refresh the queued-item counts without touching sync timestamps. Used
     /// while offline so the indicator still reflects the local backlog.
-    func refreshPending(upserts: Int, deletes: Int) {
+    func refreshPending(upserts: Int, deletes: Int, failedUpserts: Int = 0, failedDeletes: Int = 0) {
         pendingUpserts = upserts
         pendingDeletes = deletes
+        self.failedUpserts = failedUpserts
+        self.failedDeletes = failedDeletes
     }
 
     /// Record the outcome of a completed full sweep.
-    func syncDidFinish(upserts: Int, deletes: Int, error: String?) {
+    func syncDidFinish(upserts: Int, deletes: Int, failedUpserts: Int = 0, failedDeletes: Int = 0, error: String?) {
         isSyncing = false
         pendingUpserts = upserts
         pendingDeletes = deletes
+        self.failedUpserts = failedUpserts
+        self.failedDeletes = failedDeletes
         let now = Date()
         lastFullSyncAt = now
         if error == nil {
