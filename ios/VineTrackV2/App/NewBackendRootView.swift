@@ -67,6 +67,11 @@ struct NewBackendRootView: View {
                 NewMainTabView()
             } else if !subscription.hasResolvedStatus {
                 subscriptionLoadingView
+            } else if subscription.shouldShowOfflineAccessNotice {
+                // Offline and we can't confirm access locally (grace expired or
+                // no prior verification). Show a clear "connect to verify"
+                // message instead of the paywall, which can't transact offline.
+                OfflineAccessUnavailableView()
             } else {
                 NavigationStack {
                     SubscriptionPaywallView(allowDismiss: false)

@@ -11,6 +11,7 @@ struct OfflineReadinessView: View {
     @Environment(NewBackendAuthService.self) private var auth
     @Environment(MigratedDataStore.self) private var store
     @Environment(LocationService.self) private var location
+    @Environment(SubscriptionService.self) private var subscription
 
     // Field-data sync services the offline operator depends on. Each exposes
     // `pendingUpsertCount` / `pendingDeleteCount` / `lastSyncDate`.
@@ -29,6 +30,7 @@ struct OfflineReadinessView: View {
         Form {
             overallSection
             essentialsSection
+            accessSection
             dataSection
             gpsSection
             syncSection
@@ -79,6 +81,26 @@ struct OfflineReadinessView: View {
             Text("Essentials")
         } footer: {
             Text("Your session and the selected vineyard are stored on this device, so the app opens and runs even when Supabase is unreachable.")
+        }
+    }
+
+    // MARK: - Subscription access
+
+    private var accessSection: some View {
+        Section {
+            ReadinessRow(
+                title: "Access verified",
+                detail: accessVerifiedDetail,
+                state: accessVerifiedState
+            )
+            LabeledContent("Last verified", value: lastVerifiedText)
+                .font(.footnote)
+            LabeledContent("Offline grace remaining", value: graceRemainingText)
+                .font(.footnote)
+        } header: {
+            Text("Subscription access")
+        } footer: {
+            Text("Your last successful subscription check is stored on this device. If you go offline, a verified subscriber keeps full access for \(SubscriptionService.offlineGraceDays) days before a fresh check is needed.")
         }
     }
 
@@ -174,6 +196,37 @@ struct OfflineReadinessView: View {
     }
 
     // MARK: - Derived state
+
+    private var accessVerifiedState: ReadinessRow.State {
+        if subscription.hasAccess { return .good }
+        if subscription.offlineGraceAnchorDate != nil { return .warn }
+        return .bad
+    }
+
+    private var accessVerifiedDetail: String {
+        if subscription.isSubscribed { return "Subscription active" }
+        if subscription.isInInitialFreeAccessPeriod { return "Free access period" }
+        if subscription.isOffline && subscription.isWithinOfflineGracePeriod {
+            return "Offline grace active"
+        }
+        if subscription.offlineGraceAnchorDate != nil { return "Needs an online check" }
+        return "Not verified yet"
+    }
+
+    private var lastVerifiedText: String {
+        guard let date = subscription.lastVerifiedEntitlementAt else { return "Never" }
+        return date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    private var graceRemainingText: String {
+        guard let remaining = subscription.offlineGraceRemaining else {
+            return subscription.offlineGraceAnchorDate == nil ? "—" : "Expired"
+        }
+        let days = Int(remaining / 86_400)
+        if days >= 1 { return "\(days) day\(days == 1 ? "" : "s")" }
+        let hours = max(1, Int(remaining / 3_600))
+        return "\(hours) hour\(hours == 1 ? "" : "s")"
+    }
 
     private var paddockCount: Int {
         guard let vineyardId = store.selectedVineyardId else { return 0 }
