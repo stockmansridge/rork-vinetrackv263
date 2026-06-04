@@ -997,6 +997,32 @@ struct EditPaddockSheet: View {
                         }
                         .buttonStyle(.plain)
                     }
+                    VStack(spacing: 6) {
+                        HStack(spacing: 8) {
+                            Text("Clone")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(width: 72, alignment: .leading)
+                            TextField("Optional", text: cloneBinding(for: allocation.id))
+                                .font(.subheadline)
+                                .autocorrectionDisabled()
+                                .textInputAutocapitalization(.characters)
+                        }
+                        HStack(spacing: 8) {
+                            Text("Rootstock")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(width: 72, alignment: .leading)
+                            TextField("Optional", text: rootstockBinding(for: allocation.id))
+                                .font(.subheadline)
+                                .autocorrectionDisabled()
+                                .textInputAutocapitalization(.characters)
+                        }
+                        Text("Optional reference only")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                     if let paddock {
                         BlockRipenessChip(paddockId: paddock.id, varietyId: allocation.varietyId)
                     }
@@ -1314,6 +1340,33 @@ struct EditPaddockSheet: View {
             set: { newValue in
                 if let index = varietyAllocations.firstIndex(where: { $0.id == allocationId }) {
                     varietyAllocations[index].percent = newValue
+                }
+            }
+        )
+    }
+
+    /// Text binding for the optional, reference-only clone field. Blank
+    /// input stores nil so we never persist empty strings.
+    private func cloneBinding(for allocationId: UUID) -> Binding<String> {
+        Binding(
+            get: { varietyAllocations.first(where: { $0.id == allocationId })?.clone ?? "" },
+            set: { newValue in
+                if let index = varietyAllocations.firstIndex(where: { $0.id == allocationId }) {
+                    let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                    varietyAllocations[index].clone = trimmed.isEmpty ? nil : trimmed
+                }
+            }
+        )
+    }
+
+    /// Text binding for the optional, reference-only rootstock field.
+    private func rootstockBinding(for allocationId: UUID) -> Binding<String> {
+        Binding(
+            get: { varietyAllocations.first(where: { $0.id == allocationId })?.rootstock ?? "" },
+            set: { newValue in
+                if let index = varietyAllocations.firstIndex(where: { $0.id == allocationId }) {
+                    let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                    varietyAllocations[index].rootstock = trimmed.isEmpty ? nil : trimmed
                 }
             }
         )

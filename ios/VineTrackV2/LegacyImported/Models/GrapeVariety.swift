@@ -212,19 +212,30 @@ nonisolated struct PaddockVarietyAllocation: Codable, Sendable, Hashable, Identi
     /// identity across devices, resets, and id drift — the resolver
     /// trusts this before `varietyId` or `name`.
     var varietyKey: String?
+    /// Optional reference-only clone designation for this allocation
+    /// (e.g. `MV6`). Display-only — never used in spray, trip, row,
+    /// yield, irrigation, geometry, or validation logic.
+    var clone: String?
+    /// Optional reference-only rootstock designation for this allocation
+    /// (e.g. `101-14`). Display-only — same constraints as `clone`.
+    var rootstock: String?
 
     init(
         id: UUID = UUID(),
         varietyId: UUID,
         percent: Double,
         name: String? = nil,
-        varietyKey: String? = nil
+        varietyKey: String? = nil,
+        clone: String? = nil,
+        rootstock: String? = nil
     ) {
         self.id = id
         self.varietyId = varietyId
         self.percent = percent
         self.name = name
         self.varietyKey = varietyKey
+        self.clone = clone
+        self.rootstock = rootstock
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
@@ -233,12 +244,15 @@ nonisolated struct PaddockVarietyAllocation: Codable, Sendable, Hashable, Identi
         case percent
         case name
         case varietyKey
+        case clone
+        case rootstock
         // Tolerant aliases for payloads written by other systems.
         case variety_id
         case variety
         case varietyName
         case variety_key
         case key
+        case root_stock
     }
 
     init(from decoder: Decoder) throws {
@@ -295,6 +309,26 @@ nonisolated struct PaddockVarietyAllocation: Codable, Sendable, Hashable, Identi
         } else {
             varietyKey = nil
         }
+
+        // Optional reference-only clone. Empty/whitespace decodes to nil.
+        if let c0 = try? c.decode(String.self, forKey: .clone),
+           !c0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            clone = c0.trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            clone = nil
+        }
+
+        // Optional reference-only rootstock. Accept `rootstock` or
+        // `root_stock`. Empty/whitespace decodes to nil.
+        if let r = try? c.decode(String.self, forKey: .rootstock),
+           !r.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            rootstock = r.trimmingCharacters(in: .whitespacesAndNewlines)
+        } else if let r = try? c.decode(String.self, forKey: .root_stock),
+                  !r.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            rootstock = r.trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            rootstock = nil
+        }
     }
 
     func encode(to encoder: Encoder) throws {
@@ -304,5 +338,7 @@ nonisolated struct PaddockVarietyAllocation: Codable, Sendable, Hashable, Identi
         try c.encode(percent, forKey: .percent)
         try c.encodeIfPresent(name, forKey: .name)
         try c.encodeIfPresent(varietyKey, forKey: .varietyKey)
+        try c.encodeIfPresent(clone, forKey: .clone)
+        try c.encodeIfPresent(rootstock, forKey: .rootstock)
     }
 }

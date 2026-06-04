@@ -544,9 +544,17 @@ private struct FullScreenBlocksMap: View {
 private struct BlockInfoCard: View {
     let paddock: Paddock
     let soilProfile: BackendSoilProfile?
+    @Environment(MigratedDataStore.self) private var store
 
     private var rowNumbers: [Int] {
         paddock.rows.map { $0.number }.sorted()
+    }
+
+    private var varietyLines: [VarietyAllocationFormatter.Line] {
+        VarietyAllocationFormatter.lines(
+            for: paddock.varietyAllocations,
+            varieties: store.grapeVarieties
+        )
     }
 
     private var soilTypeLabel: String? {
@@ -576,6 +584,18 @@ private struct BlockInfoCard: View {
                 Text(String(format: "%.2f ha", paddock.areaHectares))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(VineyardTheme.leafGreen)
+            }
+
+            if !varietyLines.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(varietyLines) { line in
+                        Text(VarietyAllocationFormatter.compactLine(line))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             Divider()
@@ -736,6 +756,13 @@ private struct BlockDetailSheet: View {
         store.trips.filter { !$0.isActive && $0.paddockIds.contains(paddock.id) }
     }
 
+    private var varietyLines: [VarietyAllocationFormatter.Line] {
+        VarietyAllocationFormatter.lines(
+            for: paddock.varietyAllocations,
+            varieties: store.grapeVarieties
+        )
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -787,6 +814,36 @@ private struct BlockDetailSheet: View {
                     LabeledContent("Repair Pins", value: "\(blockPins.filter { $0.mode == .repairs }.count)")
                     LabeledContent("Growth Pins", value: "\(blockPins.filter { $0.mode == .growth }.count)")
                     LabeledContent("Unresolved", value: "\(blockPins.filter { !$0.isCompleted && $0.mode == .repairs }.count)")
+                }
+
+                if !varietyLines.isEmpty {
+                    Section("Varieties") {
+                        ForEach(varietyLines) { line in
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text(line.name ?? "Variety")
+                                        .font(.subheadline.weight(.semibold))
+                                    Spacer()
+                                    if let pct = line.percentText {
+                                        Text(pct)
+                                            .font(.subheadline.weight(.semibold))
+                                            .foregroundStyle(VineyardTheme.leafGreen)
+                                    }
+                                }
+                                if let clone = line.clone {
+                                    Text("Clone: \(clone)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                if let rootstock = line.rootstock {
+                                    Text("Rootstock: \(rootstock)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .padding(.vertical, 2)
+                        }
+                    }
                 }
 
                 Section("Activity") {
