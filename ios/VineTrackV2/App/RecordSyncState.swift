@@ -162,4 +162,19 @@ extension RecordSyncState {
             serviceHasFailure: yieldSync.hasFailure
         )
     }
+
+    /// Convenience resolver for work tasks, reading the live
+    /// `WorkTaskSyncService` state.
+    ///
+    /// Compliance note: a work task resolves purely from its own pending state.
+    /// Related records (labour lines, paddock links) sync independently via
+    /// their own services and never mark the task itself synced or unsynced.
+    @MainActor
+    static func forWorkTask(_ taskId: UUID, taskSync: WorkTaskSyncService) -> RecordSyncState {
+        resolve(
+            isPending: taskSync.isPendingUpsert(taskId) || taskSync.isPendingDelete(taskId),
+            serviceIsSyncing: taskSync.isSyncing,
+            serviceHasFailure: taskSync.hasFailure
+        )
+    }
 }

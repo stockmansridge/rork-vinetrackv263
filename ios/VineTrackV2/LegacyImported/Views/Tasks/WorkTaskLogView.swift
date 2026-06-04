@@ -264,6 +264,7 @@ struct WorkTaskLogView: View {
 private struct WorkTaskLogRow: View {
     let task: WorkTask
     @Environment(\.accessControl) private var accessControl
+    @Environment(WorkTaskSyncService.self) private var workTaskSync
 
     private var currencyCode: String {
         Locale.current.currency?.identifier ?? "USD"
@@ -324,6 +325,10 @@ private struct WorkTaskLogRow: View {
                 Text(task.date, format: .dateTime.day().month(.abbreviated).year())
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+                RecordSyncBadge(
+                    state: .forWorkTask(task.id, taskSync: workTaskSync),
+                    showsLabel: false
+                )
             }
         }
         .padding(14)

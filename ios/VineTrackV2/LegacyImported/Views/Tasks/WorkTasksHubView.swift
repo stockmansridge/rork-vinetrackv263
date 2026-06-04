@@ -205,6 +205,7 @@ struct WorkTasksHubView: View {
 struct WorkTaskRow: View {
     let task: WorkTask
     @Environment(\.accessControl) private var accessControl
+    @Environment(WorkTaskSyncService.self) private var workTaskSync
 
     @State private var showEdit: Bool = false
 
@@ -268,6 +269,10 @@ struct WorkTaskRow: View {
                     Text(task.date, format: .dateTime.year())
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
+                    RecordSyncBadge(
+                        state: .forWorkTask(task.id, taskSync: workTaskSync),
+                        showsLabel: false
+                    )
                 }
             }
             .padding(14)

@@ -223,6 +223,11 @@ struct AddEditWorkTaskView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
+                if let task = existingTask {
+                    ToolbarItem(placement: .principal) {
+                        RecordSyncBadge(state: .forWorkTask(task.id, taskSync: workTaskSync))
+                    }
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { saveTask() }
                         .fontWeight(.semibold)
