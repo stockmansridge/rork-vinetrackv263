@@ -277,9 +277,11 @@ private struct GrantUnlimitedSheet: View {
     let onSubmit: (UUID, UUID?, String?, Date?) async -> String?
 
     @State private var users: [AdminUserRow] = []
-    @State private var vineyards: [AdminVineyardRow] = []
+    @State private var userVineyards: [AdminUserVineyardRow] = []
     @State private var isLoadingLists: Bool = false
+    @State private var isLoadingVineyards: Bool = false
     @State private var listError: String?
+    @State private var vineyardError: String?
 
     @State private var selectedUserId: UUID?
     @State private var selectedVineyardId: UUID?
@@ -304,6 +306,18 @@ private struct GrantUnlimitedSheet: View {
 
     private var selectedUser: AdminUserRow? {
         users.first { $0.id == selectedUserId }
+    }
+
+    /// Active vineyards the selected owner belongs to (any role).
+    private var ownerVineyards: [AdminUserVineyardRow] {
+        userVineyards
+            .filter { $0.deletedAt == nil }
+            .sorted { $0.name.lowercased() < $1.name.lowercased() }
+    }
+
+    /// A vineyard must be chosen to grant — this is a vineyard-scoped flow.
+    private var canSubmit: Bool {
+        selectedUserId != nil && selectedVineyardId != nil && !isSubmitting
     }
 
     var body: some View {
@@ -353,15 +367,30 @@ private struct GrantUnlimitedSheet: View {
                     Text("The account that receives unlimited access. They must already have a VineTrack account.")
                 }
 
-                Section {
-                    Picker("Vineyard", selection: $selectedVineyardId) {
-                        Text("None").tag(UUID?.none)
-                        ForEach(vineyards) { v in
-                            Text(v.name).tag(UUID?.some(v.id))
+                if selectedUser != nil {
+                    Section {
+                        if isLoadingVineyards {
+                            HStack { ProgressView(); Text("Loading vineyards…").foregroundStyle(.secondary) }
+                        } else if let vineyardError {
+                            Label(vineyardError, systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange).font(.footnote)
+                        } else if ownerVineyards.isEmpty {
+                            Label("This user is not linked to any vineyard yet.", systemImage: "leaf.circle")
+                                .foregroundStyle(.secondary).font(.footnote)
+                        } else {
+                            Picker("Vineyard", selection: $selectedVineyardId) {
+                                Text("Select a vineyard").tag(UUID?.none)
+                                ForEach(ownerVineyards) { v in
+                                    Text(v.isOwner ? "\(v.name) (owner)" : v.name)
+                                        .tag(UUID?.some(v.id))
+                                }
+                            }
                         }
+                    } header: {
+                        Text("Primary Vineyard")
+                    } footer: {
+                        Text("Only vineyards this user belongs to are shown.")
                     }
-                } header: {
-                    Text("Primary Vineyard (optional)")
                 }
 
                 Section {
@@ -407,25 +436,49 @@ private struct GrantUnlimitedSheet: View {
                     } label: {
                         if isSubmitting { ProgressView() } else { Text("Grant").fontWeight(.semibold) }
                     }
-                    .disabled(isSubmitting || selectedUserId == nil)
+                    .disabled(!canSubmit)
                 }
             }
-            .task { await loadLists() }
+            .task { await loadUsers() }
+            .onChange(of: selectedUserId) { _, newValue in
+                selectedVineyardId = nil
+                userVineyards = []
+                vineyardError = nil
+                guard let newValue else { return }
+                Task { await loadVineyards(for: newValue) }
+            }
         }
     }
 
-    private func loadLists() async {
+    private func loadUsers() async {
         isLoadingLists = true
         listError = nil
         defer { isLoadingLists = false }
         do {
-            async let usersTask = adminRepository.fetchAllUsers()
-            async let vineyardsTask = adminRepository.fetchAllVineyards()
-            let (u, v) = try await (usersTask, vineyardsTask)
-            users = u
-            vineyards = v.filter { $0.deletedAt == nil }
+            users = try await adminRepository.fetchAllUsers()
         } catch {
             listError = error.localizedDescription
+        }
+    }
+
+    /// Loads only the vineyards the selected owner belongs to, then
+    /// auto-selects when there is exactly one.
+    private func loadVineyards(for userId: UUID) async {
+        isLoadingVineyards = true
+        vineyardError = nil
+        defer { isLoadingVineyards = false }
+        do {
+            let rows = try await adminRepository.fetchUserVineyards(userId: userId)
+            // Ignore a stale response if the owner selection changed mid-flight.
+            guard selectedUserId == userId else { return }
+            userVineyards = rows
+            let active = rows.filter { $0.deletedAt == nil }
+            if active.count == 1 {
+                selectedVineyardId = active.first?.id
+            }
+        } catch {
+            guard selectedUserId == userId else { return }
+            vineyardError = error.localizedDescription
         }
     }
 
