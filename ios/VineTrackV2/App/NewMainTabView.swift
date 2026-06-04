@@ -70,14 +70,8 @@ struct NewMainTabView: View {
         }
         .environment(\.accessControl, accessControl.legacyAccessControl)
         .safeAreaInset(edge: .top, spacing: 0) {
-            VStack(spacing: 0) {
-                OfflineGraceBanner()
-                    .animation(.easeInOut(duration: 0.25), value: subscription.isRelyingOnOfflineGrace)
-                GlobalSyncStatusBar()
-                    .animation(.easeInOut(duration: 0.25), value: network.isOnline)
-                    .animation(.easeInOut(duration: 0.25), value: syncStatusCenter.isSyncing)
-                    .animation(.easeInOut(duration: 0.25), value: syncStatusCenter.pendingTotal)
-            }
+            OfflineGraceBanner()
+                .animation(.easeInOut(duration: 0.25), value: subscription.isRelyingOnOfflineGrace)
         }
         .onAppear {
             if locationService.authorizationStatus == .notDetermined {
