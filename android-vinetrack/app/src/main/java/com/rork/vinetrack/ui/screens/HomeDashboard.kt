@@ -144,7 +144,8 @@ private fun HeaderRow(vineyard: Vineyard?, onRefresh: () -> Unit) {
 
 @Composable
 private fun OverviewSection(state: AppUiState) {
-    val totalHectares = 0.0 // area is polygon-derived; shown as block count for now
+    val totalHectares = state.totalHectares
+    val haLabel = if (totalHectares > 0) "${"%.1f".format(totalHectares)} ha under management" else "View map & summary"
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -165,7 +166,7 @@ private fun OverviewSection(state: AppUiState) {
                         fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
                         color = LocalVineColors.current.textPrimary,
                     )
-                    Text("View map & summary", fontSize = 12.sp, color = LocalVineColors.current.textSecondary)
+                    Text(haLabel, fontSize = 12.sp, color = LocalVineColors.current.textSecondary)
                 }
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = LocalVineColors.current.textSecondary)
             }
@@ -173,7 +174,7 @@ private fun OverviewSection(state: AppUiState) {
             Row(modifier = Modifier.fillMaxWidth()) {
                 OverviewStat("${state.paddocks.size}", "Blocks", Icons.Filled.Map, VineColors.LeafGreen, Modifier.weight(1f))
                 OverviewStat("${state.pins.size}", "Pins", Icons.Filled.LocationOn, VineColors.Orange, Modifier.weight(1f))
-                OverviewStat("${state.pins.count { !it.isCompleted }}", "Open", Icons.Filled.Spa, VineColors.DarkGreen, Modifier.weight(1f))
+                OverviewStat("${state.openPins}", "Open", Icons.Filled.Spa, VineColors.DarkGreen, Modifier.weight(1f))
             }
         }
     }
@@ -209,11 +210,11 @@ private fun RecentSection(state: AppUiState, onSwitchTab: (Int) -> Unit) {
     ) {
         SectionHeader("Recent")
         VineyardCard {
-            SummaryRow("Pins", state.pins.size, VineColors.Destructive) { onSwitchTab(1) }
+            SummaryRow("Blocks", state.paddocks.size, VineColors.LeafGreen) { onSwitchTab(1) }
             Divider(vine.cardBorder)
-            SummaryRow("Paddocks", state.paddocks.size, VineColors.LeafGreen) {}
+            SummaryRow("Pins", state.pins.size, VineColors.Destructive) { onSwitchTab(2) }
             Divider(vine.cardBorder)
-            SummaryRow("Spray program", 0, VineColors.Purple) { onSwitchTab(3) }
+            SummaryRow("Open pins", state.openPins, VineColors.Orange) { onSwitchTab(2) }
         }
     }
 }

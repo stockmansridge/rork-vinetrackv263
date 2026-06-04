@@ -31,8 +31,12 @@ data class AppUiState(
     val paddocks: List<Paddock> = emptyList(),
     val pins: List<Pin> = emptyList(),
     val isLoadingVineyardData: Boolean = false,
+    val paddockError: String? = null,
+    val pinError: String? = null,
 ) {
     val selectedVineyard: Vineyard? get() = vineyards.firstOrNull { it.id == selectedVineyardId }
+    val openPins: Int get() = pins.count { !it.isCompleted }
+    val totalHectares: Double get() = paddocks.sumOf { it.areaHectares }
 }
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
@@ -156,7 +160,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun selectVineyard(id: String) {
         session.selectedVineyardId = id
-        _ui.update { it.copy(selectedVineyardId = id) }
+        // Clear the previous vineyard's data so the UI doesn't briefly show
+        // stale blocks/pins while the new vineyard loads.
+        _ui.update { it.copy(selectedVineyardId = id, paddocks = emptyList(), pins = emptyList()) }
         viewModelScope.launch { loadVineyardData(id) }
     }
 
@@ -167,8 +173,34 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun loadVineyardData(vineyardId: String) {
         _ui.update { it.copy(isLoadingVineyardData = true) }
-        val paddocks = try { repo.listPaddocks(vineyardId) } catch (e: Exception) { _ui.value.paddocks }
-        val pins = try { repo.listPins(vineyardId) } catch (e: Exception) { _ui.value.pins }
-        _ui.update { it.copy(paddocks = paddocks, pins = pins, isLoadingVineyardData = false) }
+        var paddockError: String? = null
+        var pinError: String? = null
+        val paddocks = try {
+            repo.listPaddocks(vineyardId)
+        } catch (e: BackendError) {
+            paddockError = e.message
+            _ui.value.paddocks
+        } catch (e: Exception) {
+            paddockError = "Couldn't load blocks. Check your connection."
+            _ui.value.paddocks
+        }
+        val pins = try {
+            repo.listPins(vineyardId)
+        } catch (e: BackendError) {
+            pinError = e.message
+            _ui.value.pins
+        } catch (e: Exception) {
+            pinError = "Couldn't load pins. Check your connection."
+            _ui.value.pins
+        }
+        _ui.update {
+            it.copy(
+                paddocks = paddocks,
+                pins = pins,
+                isLoadingVineyardData = false,
+                paddockError = paddockError,
+                pinError = pinError,
+            )
+        }
     }
 }
