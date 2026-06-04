@@ -400,6 +400,11 @@ struct YieldReportsListView: View {
 
                     Spacer()
 
+                    RecordSyncBadge(
+                        state: .forYieldSession(session.id, yieldSync: yieldSessionSync),
+                        showsLabel: false
+                    )
+
                     Image(systemName: "chevron.right")
                         .font(.caption)
                         .foregroundStyle(.tertiary)

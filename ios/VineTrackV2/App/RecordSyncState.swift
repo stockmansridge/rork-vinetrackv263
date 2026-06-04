@@ -127,4 +127,39 @@ extension RecordSyncState {
             serviceHasFailure: spraySync.hasFailure
         )
     }
+
+    /// Convenience resolver for damage records, reading the live
+    /// `DamageRecordSyncService` state.
+    ///
+    /// A damage record is treated as a single sync unit — its polygon points and
+    /// geometry vertices are never badged individually. It resolves purely from
+    /// its own pending state: `.queued` when created/edited offline, `.syncing`
+    /// during an active sweep, `.error` if the last sweep failed while still
+    /// pending, otherwise `.synced`.
+    @MainActor
+    static func forDamageRecord(_ recordId: UUID, damageSync: DamageRecordSyncService) -> RecordSyncState {
+        resolve(
+            isPending: damageSync.isPendingUpsert(recordId) || damageSync.isPendingDelete(recordId),
+            serviceIsSyncing: damageSync.isSyncing,
+            serviceHasFailure: damageSync.hasFailure
+        )
+    }
+
+    /// Convenience resolver for yield sessions, reading the live
+    /// `YieldEstimationSessionSyncService` state.
+    ///
+    /// A yield session is treated as a single sync unit — its embedded sample
+    /// points are covered by the session badge and are never badged
+    /// individually. It resolves purely from its own pending state: `.queued`
+    /// when created/continued offline, `.syncing` during an active sweep,
+    /// `.error` if the last sweep failed while still pending, otherwise
+    /// `.synced`.
+    @MainActor
+    static func forYieldSession(_ sessionId: UUID, yieldSync: YieldEstimationSessionSyncService) -> RecordSyncState {
+        resolve(
+            isPending: yieldSync.isPendingUpsert(sessionId) || yieldSync.isPendingDelete(sessionId),
+            serviceIsSyncing: yieldSync.isSyncing,
+            serviceHasFailure: yieldSync.hasFailure
+        )
+    }
 }

@@ -79,6 +79,12 @@ struct RecordDamageView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
+                if let record = editingRecord {
+                    HStack {
+                        Spacer()
+                        RecordSyncBadge(state: RecordSyncState.forDamageRecord(record.id, damageSync: damageRecordSync))
+                    }
+                }
                 mapSection
                 drawingControls
                 damageAreaInfo

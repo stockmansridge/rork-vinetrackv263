@@ -806,6 +806,19 @@ final class YieldEstimationSessionSyncService {
     private weak var auth: NewBackendAuthService?
     var pendingUpsertCount: Int { metadata.pendingUpserts.count }
     var pendingDeleteCount: Int { metadata.pendingDeletes.count }
+
+    /// Whether a specific yield session has local changes queued for upload.
+    func isPendingUpsert(_ id: UUID) -> Bool { metadata.pendingUpserts[id] != nil }
+
+    /// Whether a specific yield session is queued for a remote delete.
+    func isPendingDelete(_ id: UUID) -> Bool { metadata.pendingDeletes[id] != nil }
+
+    /// True while a full sweep is actively pushing/pulling yield sessions.
+    var isSyncing: Bool { syncStatus == .syncing }
+
+    /// True if the last sweep failed.
+    var hasFailure: Bool { if case .failure = syncStatus { return true }; return false }
+
     private let repository: any YieldEstimationSessionSyncRepositoryProtocol
     private let metadata: OperationsSyncMetadata
     private var isConfigured: Bool = false
@@ -937,6 +950,19 @@ final class DamageRecordSyncService {
     private weak var auth: NewBackendAuthService?
     var pendingUpsertCount: Int { metadata.pendingUpserts.count }
     var pendingDeleteCount: Int { metadata.pendingDeletes.count }
+
+    /// Whether a specific damage record has local changes queued for upload.
+    func isPendingUpsert(_ id: UUID) -> Bool { metadata.pendingUpserts[id] != nil }
+
+    /// Whether a specific damage record is queued for a remote delete.
+    func isPendingDelete(_ id: UUID) -> Bool { metadata.pendingDeletes[id] != nil }
+
+    /// True while a full sweep is actively pushing/pulling damage records.
+    var isSyncing: Bool { syncStatus == .syncing }
+
+    /// True if the last sweep failed.
+    var hasFailure: Bool { if case .failure = syncStatus { return true }; return false }
+
     private let repository: any DamageRecordSyncRepositoryProtocol
     private let metadata: OperationsSyncMetadata
     private var isConfigured: Bool = false

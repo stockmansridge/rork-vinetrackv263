@@ -2,6 +2,7 @@ import SwiftUI
 
 struct YieldReportView: View {
     @Environment(MigratedDataStore.self) private var store
+    @Environment(YieldEstimationSessionSyncService.self) private var yieldSessionSync
     let viewModel: YieldEstimationViewModel
 
     private var paddocks: [Paddock] {
@@ -37,6 +38,15 @@ struct YieldReportView: View {
         }
         .navigationTitle("Yield Report")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if let sessionId = viewModel.sessionId {
+                ToolbarItem(placement: .topBarTrailing) {
+                    RecordSyncBadge(
+                        state: .forYieldSession(sessionId, yieldSync: yieldSessionSync)
+                    )
+                }
+            }
+        }
     }
 
     // MARK: - Overview

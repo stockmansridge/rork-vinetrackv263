@@ -10,6 +10,7 @@ struct YieldSamplingNavigationView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(LocationService.self) private var locationService
     @Environment(NetworkMonitor.self) private var network
+    @Environment(YieldEstimationSessionSyncService.self) private var yieldSessionSync
     @Environment(\.dismiss) private var dismiss
 
     let viewModel: YieldEstimationViewModel
@@ -88,6 +89,14 @@ struct YieldSamplingNavigationView: View {
         .navigationTitle("Guided Sampling")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            if let sessionId = viewModel.sessionId {
+                ToolbarItem(placement: .topBarLeading) {
+                    RecordSyncBadge(
+                        state: .forYieldSession(sessionId, yieldSync: yieldSessionSync),
+                        showsLabel: false
+                    )
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     showSiteList = true

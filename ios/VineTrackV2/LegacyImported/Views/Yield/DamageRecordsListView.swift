@@ -268,6 +268,11 @@ struct DamageRecordsListView: View {
 
                 Spacer()
 
+                RecordSyncBadge(
+                    state: RecordSyncState.forDamageRecord(record.id, damageSync: damageRecordSync),
+                    showsLabel: false
+                )
+
                 Text(String(format: "%.0f%%", record.damagePercent))
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(.red)
