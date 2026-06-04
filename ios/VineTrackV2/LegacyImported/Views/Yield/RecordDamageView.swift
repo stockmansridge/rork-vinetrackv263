@@ -5,6 +5,7 @@ struct RecordDamageView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(DamageRecordSyncService.self) private var damageRecordSync
     @Environment(\.accessControl) private var accessControl
+    @Environment(NetworkMonitor.self) private var network
     @Environment(\.dismiss) private var dismiss
     let paddock: Paddock
     let editingRecord: DamageRecord?
@@ -205,6 +206,13 @@ struct RecordDamageView: View {
             .mapStyle(.hybrid)
             .frame(height: 350)
             .clipShape(.rect(cornerRadius: 14))
+            .overlay(alignment: .top) {
+                if !network.isOnline {
+                    offlineMapBanner
+                        .padding(.top, 8)
+                        .allowsHitTesting(false)
+                }
+            }
             .overlay(alignment: .topLeading) {
                 Button {
                     isFullScreenMap = true
@@ -308,6 +316,13 @@ struct RecordDamageView: View {
                 }
                 .mapStyle(.hybrid)
                 .ignoresSafeArea()
+                .overlay(alignment: .top) {
+                    if !network.isOnline {
+                        offlineMapBanner
+                            .padding(.top, 56)
+                            .allowsHitTesting(false)
+                    }
+                }
                 .onMapCameraChange { context in
                     visibleRegion = context.region
                 }
@@ -387,6 +402,27 @@ struct RecordDamageView: View {
                 .padding(.bottom, 24)
             }
         }
+    }
+
+    // MARK: - Offline Banner
+
+    private var offlineMapBanner: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "wifi.slash")
+                .font(.caption2.weight(.bold))
+            Text("Offline map mode — vineyard rows and GPS still available.")
+                .font(.caption2.weight(.semibold))
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().stroke(.white.opacity(0.18), lineWidth: 1))
+        .shadow(color: .black.opacity(0.3), radius: 4, y: 2)
+        .frame(maxWidth: 320)
+        .padding(.horizontal, 12)
     }
 
     // MARK: - Drawing Controls

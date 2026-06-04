@@ -9,6 +9,7 @@ import CoreLocation
 struct YieldSamplingNavigationView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(LocationService.self) private var locationService
+    @Environment(NetworkMonitor.self) private var network
     @Environment(\.dismiss) private var dismiss
 
     let viewModel: YieldEstimationViewModel
@@ -156,6 +157,16 @@ struct YieldSamplingNavigationView: View {
     // MARK: - Map
 
     private var mapLayer: some View {
+        Group {
+            if network.isOnline {
+                hybridMapLayer
+            } else {
+                offlineMapLayer
+            }
+        }
+    }
+
+    private var hybridMapLayer: some View {
         Map(position: $mapPosition) {
             UserAnnotation()
 
@@ -190,6 +201,55 @@ struct YieldSamplingNavigationView: View {
             }
         }
         .mapStyle(.hybrid)
+    }
+
+    private var offlineSamplingTrails: [OfflineVineyardMapView.Trail] {
+        var trails: [OfflineVineyardMapView.Trail] = []
+        if viewModel.pathWaypoints.count >= 2 {
+            trails.append(OfflineVineyardMapView.Trail(
+                id: 0,
+                coordinates: viewModel.pathWaypoints.map(\.coordinate),
+                color: .orange.opacity(0.6),
+                lineWidth: 2
+            ))
+        }
+        if let site = currentSite, let loc = locationService.location {
+            trails.append(OfflineVineyardMapView.Trail(
+                id: 1,
+                coordinates: [loc.coordinate, site.coordinate],
+                color: .blue.opacity(0.7),
+                lineWidth: 2.5
+            ))
+        }
+        return trails
+    }
+
+    private var offlineMapLayer: some View {
+        OfflineVineyardMapView(
+            paddocks: paddocks
+                .filter { viewModel.selectedPaddockIds.contains($0.id) }
+                .map { paddock in
+                    OfflineVineyardMapView.Paddock(
+                        id: paddock.id,
+                        polygon: paddock.polygonPoints.map(\.coordinate),
+                        rows: paddock.rows.map { [$0.startPoint.coordinate, $0.endPoint.coordinate] },
+                        strokeColor: .green.opacity(0.6),
+                        fillColor: .green.opacity(0.12),
+                        name: paddock.name
+                    )
+                },
+            trails: offlineSamplingTrails,
+            pins: orderedSites.map { site in
+                OfflineVineyardMapView.Pin(
+                    id: site.id,
+                    coordinate: site.coordinate,
+                    color: site.id == currentSite?.id ? .blue : (site.isRecorded ? .green : .orange),
+                    isCompleted: site.isRecorded,
+                    name: "\(site.siteIndex)"
+                )
+            },
+            userCoordinate: locationService.location?.coordinate
+        )
     }
 
     private func siteMarker(site: SampleSite, isCurrent: Bool, isRecorded: Bool) -> some View {

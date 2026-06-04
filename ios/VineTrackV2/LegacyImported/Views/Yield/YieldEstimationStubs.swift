@@ -76,11 +76,62 @@ struct FullScreenPathMapView: View {
     let onSiteSelected: (SampleSite) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(NetworkMonitor.self) private var network
     @State private var cameraPosition: MapCameraPosition = .automatic
 
     var body: some View {
         NavigationStack {
-            Map(position: $cameraPosition) {
+            Group {
+                if network.isOnline {
+                    hybridMap
+                } else {
+                    offlineMap
+                }
+            }
+            .navigationTitle("Sampling Map")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private var offlineMap: some View {
+        OfflineVineyardMapView(
+            paddocks: paddocks.map { paddock in
+                OfflineVineyardMapView.Paddock(
+                    id: paddock.id,
+                    polygon: paddock.polygonPoints.map { $0.coordinate },
+                    rows: paddock.rows.map { [$0.startPoint.coordinate, $0.endPoint.coordinate] },
+                    strokeColor: colorForPaddock(paddock),
+                    fillColor: colorForPaddock(paddock).opacity(0.25),
+                    name: paddock.name
+                )
+            },
+            trails: pathWaypoints.count >= 2
+                ? [OfflineVineyardMapView.Trail(
+                    id: 0,
+                    coordinates: pathWaypoints.map { $0.coordinate },
+                    color: VineyardTheme.info,
+                    lineWidth: 3
+                  )]
+                : [],
+            pins: sampleSites.map { site in
+                OfflineVineyardMapView.Pin(
+                    id: site.id,
+                    coordinate: site.coordinate,
+                    color: site.isRecorded ? .green : .red,
+                    isCompleted: site.isRecorded,
+                    name: "\(site.siteIndex)"
+                )
+            }
+        )
+    }
+
+    private var hybridMap: some View {
+        Map(position: $cameraPosition) {
                 ForEach(paddocks) { paddock in
                     let coords = paddock.polygonPoints.map { $0.coordinate }
                     if coords.count >= 3 {
@@ -114,13 +165,5 @@ struct FullScreenPathMapView: View {
                 }
             }
             .mapStyle(.hybrid)
-            .navigationTitle("Sampling Map")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
-        }
     }
 }

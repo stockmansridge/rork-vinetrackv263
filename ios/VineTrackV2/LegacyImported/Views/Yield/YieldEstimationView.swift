@@ -4,6 +4,7 @@ import MapKit
 struct YieldEstimationView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(\.accessControl) private var accessControl
+    @Environment(NetworkMonitor.self) private var network
     @State private var viewModel = YieldEstimationViewModel()
     @State private var mapPosition: MapCameraPosition = .automatic
     @State private var showBunchCountSheet: Bool = false
@@ -146,6 +147,54 @@ struct YieldEstimationView: View {
     // MARK: - Map
 
     private var mapSection: some View {
+        Group {
+            if network.isOnline {
+                hybridMapSection
+            } else {
+                offlineMapSection
+            }
+        }
+        .frame(height: 320)
+        .clipShape(.rect(cornerRadius: 14))
+    }
+
+    private var offlineMapSection: some View {
+        OfflineVineyardMapView(
+            paddocks: paddocks.map { paddock in
+                let isSelected = viewModel.selectedPaddockIds.contains(paddock.id)
+                let color = colorFor(paddock)
+                return OfflineVineyardMapView.Paddock(
+                    id: paddock.id,
+                    polygon: paddock.polygonPoints.map(\.coordinate),
+                    rows: isSelected ? paddock.rows.map { [$0.startPoint.coordinate, $0.endPoint.coordinate] } : [],
+                    strokeColor: color.opacity(isSelected ? 1.0 : 0.3),
+                    fillColor: color.opacity(isSelected ? 0.3 : 0.08),
+                    name: paddock.name
+                )
+            },
+            trails: viewModel.isPathGenerated && viewModel.pathWaypoints.count >= 2
+                ? [OfflineVineyardMapView.Trail(
+                    id: 0,
+                    coordinates: viewModel.pathWaypoints.map(\.coordinate),
+                    color: .orange,
+                    lineWidth: 2.5
+                  )]
+                : [],
+            pins: viewModel.sampleSites.map { site in
+                let paddock = paddocks.first { $0.id == site.paddockId }
+                let color = paddock.map { colorFor($0) } ?? .red
+                return OfflineVineyardMapView.Pin(
+                    id: site.id,
+                    coordinate: site.coordinate,
+                    color: site.isRecorded ? .green : color,
+                    isCompleted: site.isRecorded,
+                    name: "\(site.siteIndex)"
+                )
+            }
+        )
+    }
+
+    private var hybridMapSection: some View {
         Map(position: $mapPosition) {
             ForEach(paddocks) { paddock in
                 let color = colorFor(paddock)
@@ -234,8 +283,6 @@ struct YieldEstimationView: View {
             }
         }
         .mapStyle(.hybrid)
-        .frame(height: 320)
-        .clipShape(.rect(cornerRadius: 14))
     }
 
     // MARK: - Path Map
@@ -275,83 +322,13 @@ struct YieldEstimationView: View {
                 }
             }
 
-            Map(initialPosition: pathMapPosition) {
-                ForEach(paddocks.filter { viewModel.selectedPaddockIds.contains($0.id) }) { paddock in
-                    let color = colorFor(paddock)
-
-                    MapPolygon(coordinates: paddock.polygonPoints.map(\.coordinate))
-                        .foregroundStyle(color.opacity(0.15))
-                        .stroke(color.opacity(0.5), lineWidth: 1.5)
-
-                    ForEach(paddock.rows) { row in
-                        MapPolyline(coordinates: [row.startPoint.coordinate, row.endPoint.coordinate])
-                            .stroke(color.opacity(0.15), lineWidth: 0.5)
-                    }
-                }
-
-                MapPolyline(coordinates: viewModel.pathWaypoints.map(\.coordinate))
-                    .stroke(
-                        .linearGradient(
-                            colors: [.orange, .red],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        ),
-                        lineWidth: 3
-                    )
-
-                ForEach(viewModel.sampleSites) { site in
-                    let paddock = paddocks.first { $0.id == site.paddockId }
-                    let color = paddock.map { colorFor($0) } ?? .red
-                    let isRecorded = site.isRecorded
-
-                    Annotation("", coordinate: site.coordinate) {
-                        ZStack {
-                            Circle()
-                                .fill(isRecorded ? .green : color)
-                                .frame(width: 20, height: 20)
-                            Circle()
-                                .fill(.white)
-                                .frame(width: 13, height: 13)
-                            Text("\(site.siteIndex)")
-                                .font(.system(size: 6, weight: .heavy))
-                                .foregroundStyle(isRecorded ? .green : color)
-                        }
-                        .allowsHitTesting(false)
-                    }
-                }
-
-                if viewModel.pathWaypoints.count >= 2 {
-                    Annotation("Start", coordinate: viewModel.pathWaypoints[0].coordinate) {
-                        Image(systemName: "flag.fill")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(.green)
-                            .padding(3)
-                            .background(.white, in: Circle())
-                            .shadow(color: .black.opacity(0.2), radius: 2)
-                    }
-                    Annotation("End", coordinate: viewModel.pathWaypoints[viewModel.pathWaypoints.count - 1].coordinate) {
-                        Image(systemName: "flag.checkered")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(.red)
-                            .padding(3)
-                            .background(.white, in: Circle())
-                            .shadow(color: .black.opacity(0.2), radius: 2)
-                    }
-                }
-
-                ForEach(pathArrowAnnotations, id: \.id) { arrow in
-                    Annotation("", coordinate: arrow.coordinate) {
-                        Image(systemName: "arrowtriangle.forward.fill")
-                            .font(.system(size: 8))
-                            .foregroundStyle(.orange)
-                            .rotationEffect(.degrees(arrow.bearing))
-                            .allowsHitTesting(false)
-                    }
+            Group {
+                if network.isOnline {
+                    hybridPathMap
+                } else {
+                    offlinePathMap
                 }
             }
-            .mapStyle(.hybrid)
-            .frame(height: 300)
-            .clipShape(.rect(cornerRadius: 14))
 
             HStack(spacing: 16) {
                 HStack(spacing: 4) {
@@ -372,6 +349,121 @@ struct YieldEstimationView: View {
                 }
             }
         }
+    }
+
+    private var offlinePathMap: some View {
+        OfflineVineyardMapView(
+            paddocks: paddocks
+                .filter { viewModel.selectedPaddockIds.contains($0.id) }
+                .map { paddock in
+                    let color = colorFor(paddock)
+                    return OfflineVineyardMapView.Paddock(
+                        id: paddock.id,
+                        polygon: paddock.polygonPoints.map(\.coordinate),
+                        rows: paddock.rows.map { [$0.startPoint.coordinate, $0.endPoint.coordinate] },
+                        strokeColor: color.opacity(0.5),
+                        fillColor: color.opacity(0.15),
+                        name: paddock.name
+                    )
+                },
+            trails: viewModel.pathWaypoints.count >= 2
+                ? [OfflineVineyardMapView.Trail(
+                    id: 0,
+                    coordinates: viewModel.pathWaypoints.map(\.coordinate),
+                    color: .orange,
+                    lineWidth: 3
+                  )]
+                : [],
+            pins: viewModel.sampleSites.map { site in
+                let paddock = paddocks.first { $0.id == site.paddockId }
+                let color = paddock.map { colorFor($0) } ?? .red
+                return OfflineVineyardMapView.Pin(
+                    id: site.id,
+                    coordinate: site.coordinate,
+                    color: site.isRecorded ? .green : color,
+                    isCompleted: site.isRecorded,
+                    name: "\(site.siteIndex)"
+                )
+            }
+        )
+    }
+
+    private var hybridPathMap: some View {
+        Map(initialPosition: pathMapPosition) {
+            ForEach(paddocks.filter { viewModel.selectedPaddockIds.contains($0.id) }) { paddock in
+                let color = colorFor(paddock)
+
+                MapPolygon(coordinates: paddock.polygonPoints.map(\.coordinate))
+                    .foregroundStyle(color.opacity(0.15))
+                    .stroke(color.opacity(0.5), lineWidth: 1.5)
+
+                ForEach(paddock.rows) { row in
+                    MapPolyline(coordinates: [row.startPoint.coordinate, row.endPoint.coordinate])
+                        .stroke(color.opacity(0.15), lineWidth: 0.5)
+                }
+            }
+
+            MapPolyline(coordinates: viewModel.pathWaypoints.map(\.coordinate))
+                .stroke(
+                    .linearGradient(
+                        colors: [.orange, .red],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    ),
+                    lineWidth: 3
+                )
+
+            ForEach(viewModel.sampleSites) { site in
+                let paddock = paddocks.first { $0.id == site.paddockId }
+                let color = paddock.map { colorFor($0) } ?? .red
+                let isRecorded = site.isRecorded
+
+                Annotation("", coordinate: site.coordinate) {
+                    ZStack {
+                        Circle()
+                            .fill(isRecorded ? .green : color)
+                            .frame(width: 20, height: 20)
+                        Circle()
+                            .fill(.white)
+                            .frame(width: 13, height: 13)
+                        Text("\(site.siteIndex)")
+                            .font(.system(size: 6, weight: .heavy))
+                            .foregroundStyle(isRecorded ? .green : color)
+                    }
+                    .allowsHitTesting(false)
+                }
+            }
+
+            if viewModel.pathWaypoints.count >= 2 {
+                Annotation("Start", coordinate: viewModel.pathWaypoints[0].coordinate) {
+                    Image(systemName: "flag.fill")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(.green)
+                        .padding(3)
+                        .background(.white, in: Circle())
+                        .shadow(color: .black.opacity(0.2), radius: 2)
+                }
+                Annotation("End", coordinate: viewModel.pathWaypoints[viewModel.pathWaypoints.count - 1].coordinate) {
+                    Image(systemName: "flag.checkered")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(.red)
+                        .padding(3)
+                        .background(.white, in: Circle())
+                        .shadow(color: .black.opacity(0.2), radius: 2)
+                }
+            }
+
+            ForEach(pathArrowAnnotations, id: \.id) { arrow in
+                Annotation("", coordinate: arrow.coordinate) {
+                    Image(systemName: "arrowtriangle.forward.fill")
+                        .font(.system(size: 8))
+                        .foregroundStyle(.orange)
+                        .rotationEffect(.degrees(arrow.bearing))
+                        .allowsHitTesting(false)
+                }
+            }
+        }
+        .mapStyle(.hybrid)
     }
 
     private var pathMapPosition: MapCameraPosition {
