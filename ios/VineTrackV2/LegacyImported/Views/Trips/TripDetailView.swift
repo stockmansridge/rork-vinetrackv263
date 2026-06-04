@@ -6,6 +6,7 @@ struct TripDetailView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(BackendAccessControl.self) private var accessControl
     @Environment(NetworkMonitor.self) private var network
+    @Environment(TripSyncService.self) private var tripSync
     @Environment(\.dismiss) private var dismiss
     @State private var showSummary: Bool = false
     @State private var showDeleteConfirmation: Bool = false
@@ -54,9 +55,13 @@ struct TripDetailView: View {
         List {
             Section {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(displayName)
-                        .font(.title2.weight(.semibold))
-                        .foregroundStyle(VineyardTheme.olive)
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(displayName)
+                            .font(.title2.weight(.semibold))
+                            .foregroundStyle(VineyardTheme.olive)
+                        Spacer(minLength: 8)
+                        RecordSyncBadge(state: RecordSyncState.forTrip(trip.id, tripSync: tripSync))
+                    }
                     Label(trip.startTime.formattedTZ(date: .abbreviated, time: .shortened, in: tz), systemImage: "calendar")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)

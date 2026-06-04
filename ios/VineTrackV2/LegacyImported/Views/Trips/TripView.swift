@@ -434,6 +434,7 @@ struct TripView: View {
 // MARK: - Trip History Row
 
 struct TripHistoryRow: View {
+    @Environment(TripSyncService.self) private var tripSync
     let trip: Trip
     let pinCount: Int
     var hasSprayRecord: Bool = false
@@ -508,6 +509,7 @@ struct TripHistoryRow: View {
             Spacer()
 
             VStack(alignment: .trailing, spacing: 4) {
+                RecordSyncBadge(state: RecordSyncState.forTrip(trip.id, tripSync: tripSync), showsLabel: false)
                 Label(formatDuration(trip.activeDuration), systemImage: "clock")
                     .font(.caption2)
                     .foregroundStyle(.secondary)

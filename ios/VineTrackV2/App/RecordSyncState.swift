@@ -1,0 +1,100 @@
+//
+//  RecordSyncState.swift
+//  VineTrackV2
+//
+//  Shared foundation for per-record sync badges. A single record (a trip, pin,
+//  spray record, etc.) can be in one of four coarse states, derived from the
+//  relevant sync service's per-record pending sets plus the global
+//  `SyncStatusCenter`. This is read-only — badges never block opening, editing,
+//  exporting, or reviewing records.
+//
+//  This intentionally mirrors the language used by the global sync system
+//  (`SyncStatusCenter` / `GlobalSyncStatusBar`): Synced, Queued, Syncing,
+//  Error / Will retry. It does NOT introduce a second sync state system; it is a
+//  thin presentation layer over the existing per-service pending/error state.
+//
+
+import SwiftUI
+
+/// Coarse, per-record sync state surfaced via `RecordSyncBadge`.
+enum RecordSyncState: Equatable, Sendable {
+    /// Uploaded and confirmed — no local changes pending.
+    case synced
+    /// Has local changes queued for upload (offline or waiting for a sweep).
+    case queued
+    /// Currently being pushed/pulled by an in-flight sweep.
+    case syncing
+    /// The last sweep failed while this record was still pending. Will retry.
+    case error
+
+    /// Short label matching the global sync vocabulary.
+    var label: String {
+        switch self {
+        case .synced: return "Synced"
+        case .queued: return "Queued"
+        case .syncing: return "Syncing"
+        case .error: return "Will retry"
+        }
+    }
+
+    /// Slightly longer accessibility phrasing.
+    var accessibilityLabel: String {
+        switch self {
+        case .synced: return "Synced"
+        case .queued: return "Queued for upload"
+        case .syncing: return "Syncing"
+        case .error: return "Sync error, will retry"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .synced: return "checkmark.circle.fill"
+        case .queued: return "clock.arrow.circlepath"
+        case .syncing: return "arrow.triangle.2.circlepath"
+        case .error: return "exclamationmark.triangle.fill"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .synced: return .green
+        case .queued: return .orange
+        case .syncing: return .blue
+        case .error: return .red
+        }
+    }
+}
+
+extension RecordSyncState {
+    /// Resolve a record's sync state from generic per-record + service inputs.
+    ///
+    /// - Parameters:
+    ///   - isPending: Whether the record has local changes queued (upsert or delete).
+    ///   - serviceIsSyncing: Whether the owning sync service has a sweep in flight.
+    ///   - serviceHasFailure: Whether the owning sync service's last sweep failed.
+    ///
+    /// Records with no pending changes are always `.synced`. A pending record is
+    /// `.syncing` during an active sweep, `.error` if the last sweep failed,
+    /// otherwise `.queued`.
+    static func resolve(
+        isPending: Bool,
+        serviceIsSyncing: Bool,
+        serviceHasFailure: Bool
+    ) -> RecordSyncState {
+        guard isPending else { return .synced }
+        if serviceIsSyncing { return .syncing }
+        if serviceHasFailure { return .error }
+        return .queued
+    }
+
+    /// Convenience resolver for trips, reading the live `TripSyncService` state.
+    @MainActor
+    static func forTrip(_ tripId: UUID, tripSync: TripSyncService) -> RecordSyncState {
+        resolve(
+            isPending: tripSync.isPendingUpsert(tripId) || tripSync.isPendingDelete(tripId),
+            serviceIsSyncing: tripSync.isSyncing,
+            serviceHasFailure: tripSync.hasFailure
+        )
+    }
+}
