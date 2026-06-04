@@ -5,6 +5,11 @@
       "name": "Vine Track V 2",
       "path": "ios",
       "framework": "swift"
+    },
+    {
+      "name": "VineTrack",
+      "path": "android-vinetrack",
+      "framework": "kotlin"
     }
   ]
 }
