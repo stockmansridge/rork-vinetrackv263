@@ -72,19 +72,21 @@ extension RecordSyncState {
     /// - Parameters:
     ///   - isPending: Whether the record has local changes queued (upsert or delete).
     ///   - serviceIsSyncing: Whether the owning sync service has a sweep in flight.
-    ///   - serviceHasFailure: Whether the owning sync service's last sweep failed.
+    ///   - recordHasFailure: Whether *this specific record's* last push failed
+    ///     while still pending. This is per-record, not service-wide, so one
+    ///     failed record never makes unrelated records look failed.
     ///
     /// Records with no pending changes are always `.synced`. A pending record is
-    /// `.syncing` during an active sweep, `.error` if the last sweep failed,
-    /// otherwise `.queued`.
+    /// `.syncing` during an active sweep, `.error` if this record's last push
+    /// failed, otherwise `.queued`.
     static func resolve(
         isPending: Bool,
         serviceIsSyncing: Bool,
-        serviceHasFailure: Bool
+        recordHasFailure: Bool
     ) -> RecordSyncState {
         guard isPending else { return .synced }
         if serviceIsSyncing { return .syncing }
-        if serviceHasFailure { return .error }
+        if recordHasFailure { return .error }
         return .queued
     }
 
@@ -94,7 +96,7 @@ extension RecordSyncState {
         resolve(
             isPending: tripSync.isPendingUpsert(tripId) || tripSync.isPendingDelete(tripId),
             serviceIsSyncing: tripSync.isSyncing,
-            serviceHasFailure: tripSync.hasFailure
+            recordHasFailure: tripSync.hasFailure(tripId)
         )
     }
 
@@ -109,7 +111,7 @@ extension RecordSyncState {
         resolve(
             isPending: pinSync.isPendingUpsert(pinId) || pinSync.isPendingDelete(pinId),
             serviceIsSyncing: pinSync.isSyncing,
-            serviceHasFailure: pinSync.hasFailure
+            recordHasFailure: pinSync.hasFailure(pinId)
         )
     }
 
@@ -124,7 +126,7 @@ extension RecordSyncState {
         resolve(
             isPending: spraySync.isPendingUpsert(recordId) || spraySync.isPendingDelete(recordId),
             serviceIsSyncing: spraySync.isSyncing,
-            serviceHasFailure: spraySync.hasFailure
+            recordHasFailure: spraySync.hasFailure(recordId)
         )
     }
 
@@ -141,7 +143,7 @@ extension RecordSyncState {
         resolve(
             isPending: damageSync.isPendingUpsert(recordId) || damageSync.isPendingDelete(recordId),
             serviceIsSyncing: damageSync.isSyncing,
-            serviceHasFailure: damageSync.hasFailure
+            recordHasFailure: damageSync.hasFailure(recordId)
         )
     }
 
@@ -159,7 +161,7 @@ extension RecordSyncState {
         resolve(
             isPending: yieldSync.isPendingUpsert(sessionId) || yieldSync.isPendingDelete(sessionId),
             serviceIsSyncing: yieldSync.isSyncing,
-            serviceHasFailure: yieldSync.hasFailure
+            recordHasFailure: yieldSync.hasFailure(sessionId)
         )
     }
 
@@ -174,7 +176,7 @@ extension RecordSyncState {
         resolve(
             isPending: taskSync.isPendingUpsert(taskId) || taskSync.isPendingDelete(taskId),
             serviceIsSyncing: taskSync.isSyncing,
-            serviceHasFailure: taskSync.hasFailure
+            recordHasFailure: taskSync.hasFailure(taskId)
         )
     }
 }

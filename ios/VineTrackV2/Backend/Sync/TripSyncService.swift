@@ -35,6 +35,16 @@ final class TripSyncService {
     /// True if the last sweep failed.
     var hasFailure: Bool { if case .failure = syncStatus { return true }; return false }
 
+    /// Whether a specific trip's last push failed while still pending. Used for
+    /// per-record error isolation so one failed trip never makes others look
+    /// failed.
+    func hasFailure(_ id: UUID) -> Bool { metadata.isUpsertFailed(id) || metadata.isDeleteFailed(id) }
+
+    /// Trips whose last upsert push failed while still pending.
+    var failedUpsertIds: Set<UUID> { metadata.failedUpsertIds }
+    /// Trips whose last remote delete failed while still pending.
+    var failedDeleteIds: Set<UUID> { metadata.failedDeleteIds }
+
     private weak var store: MigratedDataStore?
     private weak var auth: NewBackendAuthService?
     private let repository: any TripSyncRepositoryProtocol
@@ -488,8 +498,14 @@ final class TripSyncService {
                 pushedIds.append(tripId)
             }
             if !payloads.isEmpty {
-                try await repository.upsertTrips(payloads)
-                metadata.clearDirty(pushedIds)
+                do {
+                    try await repository.upsertTrips(payloads)
+                    metadata.clearDirty(pushedIds)
+                } catch {
+                    // Isolate the failure to exactly the trips in this batch.
+                    metadata.markUpsertsFailed(pushedIds)
+                    throw error
+                }
             }
             #if DEBUG
             if !skipped.isEmpty {
@@ -516,6 +532,7 @@ final class TripSyncService {
                     #if DEBUG
                     print("[TripSync] soft delete failed for \(tripId): \(error.localizedDescription)")
                     #endif
+                    metadata.markDeletesFailed([tripId])
                     deleteFailures.append(error.localizedDescription)
                     continue
                 }
@@ -618,6 +635,9 @@ final class TripSyncMetadata {
         var lastSyncByVineyard: [UUID: Date] = [:]
         var pendingUpserts: [UUID: Date] = [:]
         var pendingDeletes: [UUID: Date] = [:]
+        /// Records whose last upsert/delete push failed while still pending.
+        var failedUpserts: Set<UUID> = []
+        var failedDeletes: Set<UUID> = []
     }
 
     init(persistence: PersistenceStore = .shared) {
@@ -627,6 +647,34 @@ final class TripSyncMetadata {
 
     var pendingUpserts: [UUID: Date] { state.pendingUpserts }
     var pendingDeletes: [UUID: Date] { state.pendingDeletes }
+
+    var failedUpsertIds: Set<UUID> { state.failedUpserts }
+    var failedDeleteIds: Set<UUID> { state.failedDeletes }
+    func isUpsertFailed(_ id: UUID) -> Bool { state.failedUpserts.contains(id) }
+    func isDeleteFailed(_ id: UUID) -> Bool { state.failedDeletes.contains(id) }
+
+    func markUpsertsFailed(_ ids: [UUID]) {
+        guard !ids.isEmpty else { return }
+        for id in ids { state.failedUpserts.insert(id) }
+        save()
+    }
+    func markDeletesFailed(_ ids: [UUID]) {
+        guard !ids.isEmpty else { return }
+        for id in ids { state.failedDeletes.insert(id) }
+        save()
+    }
+    func clearUpsertFailures(_ ids: [UUID]) {
+        guard !ids.isEmpty else { return }
+        let before = state.failedUpserts.count
+        for id in ids { state.failedUpserts.remove(id) }
+        if state.failedUpserts.count != before { save() }
+    }
+    func clearDeleteFailures(_ ids: [UUID]) {
+        guard !ids.isEmpty else { return }
+        let before = state.failedDeletes.count
+        for id in ids { state.failedDeletes.remove(id) }
+        if state.failedDeletes.count != before { save() }
+    }
 
     func lastSync(for vineyardId: UUID) -> Date? {
         state.lastSyncByVineyard[vineyardId]
@@ -639,24 +687,27 @@ final class TripSyncMetadata {
 
     func markDirty(_ id: UUID, at date: Date) {
         state.pendingUpserts[id] = date
+        // A fresh local edit supersedes any stale failure for this record.
+        state.failedUpserts.remove(id)
         save()
     }
 
     func markDeleted(_ id: UUID, at date: Date) {
         state.pendingUpserts.removeValue(forKey: id)
+        state.failedUpserts.remove(id)
         state.pendingDeletes[id] = date
         save()
     }
 
     func clearDirty(_ ids: [UUID]) {
         guard !ids.isEmpty else { return }
-        for id in ids { state.pendingUpserts.removeValue(forKey: id) }
+        for id in ids { state.pendingUpserts.removeValue(forKey: id); state.failedUpserts.remove(id) }
         save()
     }
 
     func clearDeleted(_ ids: [UUID]) {
         guard !ids.isEmpty else { return }
-        for id in ids { state.pendingDeletes.removeValue(forKey: id) }
+        for id in ids { state.pendingDeletes.removeValue(forKey: id); state.failedDeletes.remove(id) }
         save()
     }
 

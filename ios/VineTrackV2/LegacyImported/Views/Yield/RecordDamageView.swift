@@ -80,9 +80,12 @@ struct RecordDamageView: View {
         ScrollView {
             VStack(spacing: 20) {
                 if let record = editingRecord {
-                    HStack {
-                        Spacer()
-                        RecordSyncBadge(state: RecordSyncState.forDamageRecord(record.id, damageSync: damageRecordSync))
+                    VStack(alignment: .trailing, spacing: 4) {
+                        HStack {
+                            Spacer()
+                            RecordSyncBadge(state: RecordSyncState.forDamageRecord(record.id, damageSync: damageRecordSync))
+                        }
+                        RecordSyncFailureHint(state: RecordSyncState.forDamageRecord(record.id, damageSync: damageRecordSync))
                     }
                 }
                 mapSection

@@ -62,6 +62,7 @@ struct TripDetailView: View {
                         Spacer(minLength: 8)
                         RecordSyncBadge(state: RecordSyncState.forTrip(trip.id, tripSync: tripSync))
                     }
+                    RecordSyncFailureHint(state: RecordSyncState.forTrip(trip.id, tripSync: tripSync))
                     Label(trip.startTime.formattedTZ(date: .abbreviated, time: .shortened, in: tz), systemImage: "calendar")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)

@@ -36,6 +36,22 @@ struct RecordSyncBadge: View {
     }
 }
 
+/// Small, read-only explanatory hint for use in detail headers. Renders only
+/// when the record's last push failed (`state == .error`); otherwise it draws
+/// nothing. It never shows raw server errors — just a reassuring retry note.
+struct RecordSyncFailureHint: View {
+    let state: RecordSyncState
+
+    var body: some View {
+        if state == .error {
+            Label("Last sync failed — will retry.", systemImage: "exclamationmark.arrow.triangle.2.circlepath")
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Last sync failed, will retry automatically")
+        }
+    }
+}
+
 #Preview {
     VStack(alignment: .leading, spacing: 12) {
         RecordSyncBadge(state: .synced)

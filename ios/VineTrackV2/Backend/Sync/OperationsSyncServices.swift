@@ -13,6 +13,12 @@ final class OperationsSyncMetadata {
         var lastSyncByVineyard: [UUID: Date] = [:]
         var pendingUpserts: [UUID: Date] = [:]
         var pendingDeletes: [UUID: Date] = [:]
+        /// Records whose last upsert push failed while still pending. Used for
+        /// per-record error isolation so one failure never makes unrelated
+        /// records look failed.
+        var failedUpserts: Set<UUID> = []
+        /// Records whose last remote delete failed while still pending.
+        var failedDeletes: Set<UUID> = []
     }
 
     init(key: String, persistence: PersistenceStore = .shared) {
@@ -24,21 +30,56 @@ final class OperationsSyncMetadata {
     var pendingUpserts: [UUID: Date] { state.pendingUpserts }
     var pendingDeletes: [UUID: Date] { state.pendingDeletes }
 
+    // MARK: - Per-record failure tracking
+
+    var failedUpsertIds: Set<UUID> { state.failedUpserts }
+    var failedDeleteIds: Set<UUID> { state.failedDeletes }
+    func isUpsertFailed(_ id: UUID) -> Bool { state.failedUpserts.contains(id) }
+    func isDeleteFailed(_ id: UUID) -> Bool { state.failedDeletes.contains(id) }
+
+    func markUpsertsFailed(_ ids: [UUID]) {
+        guard !ids.isEmpty else { return }
+        for id in ids { state.failedUpserts.insert(id) }; save()
+    }
+    func markDeletesFailed(_ ids: [UUID]) {
+        guard !ids.isEmpty else { return }
+        for id in ids { state.failedDeletes.insert(id) }; save()
+    }
+    func clearUpsertFailures(_ ids: [UUID]) {
+        guard !ids.isEmpty else { return }
+        let before = state.failedUpserts.count
+        for id in ids { state.failedUpserts.remove(id) }
+        if state.failedUpserts.count != before { save() }
+    }
+    func clearDeleteFailures(_ ids: [UUID]) {
+        guard !ids.isEmpty else { return }
+        let before = state.failedDeletes.count
+        for id in ids { state.failedDeletes.remove(id) }
+        if state.failedDeletes.count != before { save() }
+    }
+
     func lastSync(for vineyardId: UUID) -> Date? { state.lastSyncByVineyard[vineyardId] }
     func setLastSync(_ date: Date, for vineyardId: UUID) {
         state.lastSyncByVineyard[vineyardId] = date; save()
     }
-    func markDirty(_ id: UUID, at date: Date) { state.pendingUpserts[id] = date; save() }
+    func markDirty(_ id: UUID, at date: Date) {
+        state.pendingUpserts[id] = date
+        // A fresh local edit supersedes any stale failure for this record.
+        state.failedUpserts.remove(id)
+        save()
+    }
     func markDeleted(_ id: UUID, at date: Date) {
-        state.pendingUpserts.removeValue(forKey: id); state.pendingDeletes[id] = date; save()
+        state.pendingUpserts.removeValue(forKey: id)
+        state.failedUpserts.remove(id)
+        state.pendingDeletes[id] = date; save()
     }
     func clearDirty(_ ids: [UUID]) {
         guard !ids.isEmpty else { return }
-        for id in ids { state.pendingUpserts.removeValue(forKey: id) }; save()
+        for id in ids { state.pendingUpserts.removeValue(forKey: id); state.failedUpserts.remove(id) }; save()
     }
     func clearDeleted(_ ids: [UUID]) {
         guard !ids.isEmpty else { return }
-        for id in ids { state.pendingDeletes.removeValue(forKey: id) }; save()
+        for id in ids { state.pendingDeletes.removeValue(forKey: id); state.failedDeletes.remove(id) }; save()
     }
 
     /// Reset all per-vineyard last-sync timestamps so the next sync is treated
@@ -90,6 +131,14 @@ final class WorkTaskSyncService {
 
     /// True if the last sweep failed.
     var hasFailure: Bool { if case .failure = syncStatus { return true }; return false }
+
+    /// Whether a specific work task's last push failed while still pending.
+    /// Resolves purely from this task's own state — related records (labour
+    /// lines, paddock links) sync independently and never affect this.
+    func hasFailure(_ id: UUID) -> Bool { metadata.isUpsertFailed(id) || metadata.isDeleteFailed(id) }
+
+    var failedUpsertIds: Set<UUID> { metadata.failedUpsertIds }
+    var failedDeleteIds: Set<UUID> { metadata.failedDeleteIds }
 
     private weak var store: MigratedDataStore?
     private weak var auth: NewBackendAuthService?
@@ -178,8 +227,13 @@ final class WorkTaskSyncService {
                 #endif
             }
             if !payloads.isEmpty {
-                try await repository.upsertMany(payloads)
-                metadata.clearDirty(pushed)
+                do {
+                    try await repository.upsertMany(payloads)
+                    metadata.clearDirty(pushed)
+                } catch {
+                    metadata.markUpsertsFailed(pushed)
+                    throw error
+                }
             }
         }
         let pendingDeletes = metadata.pendingDeletes
@@ -206,6 +260,7 @@ final class WorkTaskSyncService {
                     #if DEBUG
                     print("[WorkTaskSync] push: soft-delete FAILED id=\(id) error=\(error.localizedDescription) raw=\(String(describing: error))")
                     #endif
+                    metadata.markDeletesFailed([id])
                     if firstDeleteError == nil { firstDeleteError = error }
                 }
             }
@@ -831,6 +886,13 @@ final class YieldEstimationSessionSyncService {
     /// True if the last sweep failed.
     var hasFailure: Bool { if case .failure = syncStatus { return true }; return false }
 
+    /// Whether a specific yield session's last push failed while still pending.
+    /// The session is one sync unit — embedded sample points are covered here.
+    func hasFailure(_ id: UUID) -> Bool { metadata.isUpsertFailed(id) || metadata.isDeleteFailed(id) }
+
+    var failedUpsertIds: Set<UUID> { metadata.failedUpsertIds }
+    var failedDeleteIds: Set<UUID> { metadata.failedDeleteIds }
+
     private let repository: any YieldEstimationSessionSyncRepositoryProtocol
     private let metadata: OperationsSyncMetadata
     private var isConfigured: Bool = false
@@ -892,8 +954,13 @@ final class YieldEstimationSessionSyncService {
                 pushed.append(id)
             }
             if !payloads.isEmpty {
-                try await repository.upsertMany(payloads)
-                metadata.clearDirty(pushed)
+                do {
+                    try await repository.upsertMany(payloads)
+                    metadata.clearDirty(pushed)
+                } catch {
+                    metadata.markUpsertsFailed(pushed)
+                    throw error
+                }
             }
         }
         for (id, _) in metadata.pendingDeletes {
@@ -901,7 +968,11 @@ final class YieldEstimationSessionSyncService {
                 try await repository.softDelete(id: id)
                 metadata.clearDeleted([id])
             } catch {
-                if isOperationsMissingRowError(error) { metadata.clearDeleted([id]) }
+                if isOperationsMissingRowError(error) {
+                    metadata.clearDeleted([id])
+                } else {
+                    metadata.markDeletesFailed([id])
+                }
             }
         }
     }
@@ -974,6 +1045,14 @@ final class DamageRecordSyncService {
 
     /// True if the last sweep failed.
     var hasFailure: Bool { if case .failure = syncStatus { return true }; return false }
+
+    /// Whether a specific damage record's last push failed while still pending.
+    /// The record is one sync unit — polygon points/vertices are not tracked
+    /// individually.
+    func hasFailure(_ id: UUID) -> Bool { metadata.isUpsertFailed(id) || metadata.isDeleteFailed(id) }
+
+    var failedUpsertIds: Set<UUID> { metadata.failedUpsertIds }
+    var failedDeleteIds: Set<UUID> { metadata.failedDeleteIds }
 
     private let repository: any DamageRecordSyncRepositoryProtocol
     private let metadata: OperationsSyncMetadata
@@ -1050,8 +1129,13 @@ final class DamageRecordSyncService {
                 pushed.append(id)
             }
             if !payloads.isEmpty {
-                try await repository.upsertMany(payloads)
-                metadata.clearDirty(pushed)
+                do {
+                    try await repository.upsertMany(payloads)
+                    metadata.clearDirty(pushed)
+                } catch {
+                    metadata.markUpsertsFailed(pushed)
+                    throw error
+                }
             }
         }
         let pendingDeletes = metadata.pendingDeletes
@@ -1078,6 +1162,7 @@ final class DamageRecordSyncService {
                     #if DEBUG
                     print("[DamageRecordSync] push: soft-delete FAILED id=\(id) error=\(error.localizedDescription) raw=\(String(describing: error))")
                     #endif
+                    metadata.markDeletesFailed([id])
                     if firstDeleteError == nil { firstDeleteError = error }
                 }
             }

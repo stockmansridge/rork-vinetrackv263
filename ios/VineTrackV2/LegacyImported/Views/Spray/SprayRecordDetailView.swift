@@ -125,23 +125,26 @@ struct SprayRecordDetailView: View {
     // MARK: - Header
 
     private var headerCard: some View {
-        HStack {
-            if !record.sprayReference.isEmpty {
-                Text(record.sprayReference)
-                    .font(.title2.bold())
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                if !record.sprayReference.isEmpty {
+                    Text(record.sprayReference)
+                        .font(.title2.bold())
+                }
+                RecordSyncBadge(state: RecordSyncState.forSprayRecord(record.id, spraySync: sprayRecordSync))
+                Spacer()
+                Button {
+                    showEditSheet = true
+                } label: {
+                    Image(systemName: "pencil")
+                        .font(.headline)
+                        .foregroundStyle(VineyardTheme.leafGreen)
+                        .padding(10)
+                        .background(VineyardTheme.leafGreen.opacity(0.12))
+                        .clipShape(Circle())
+                }
             }
-            RecordSyncBadge(state: RecordSyncState.forSprayRecord(record.id, spraySync: sprayRecordSync))
-            Spacer()
-            Button {
-                showEditSheet = true
-            } label: {
-                Image(systemName: "pencil")
-                    .font(.headline)
-                    .foregroundStyle(VineyardTheme.leafGreen)
-                    .padding(10)
-                    .background(VineyardTheme.leafGreen.opacity(0.12))
-                    .clipShape(Circle())
-            }
+            RecordSyncFailureHint(state: RecordSyncState.forSprayRecord(record.id, spraySync: sprayRecordSync))
         }
         .padding(.horizontal, 4)
     }
