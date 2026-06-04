@@ -13,6 +13,16 @@ nonisolated struct AdminEngagementSummary: Sendable {
     let pendingInvitations: Int
 }
 
+/// Platform-wide scale metrics for the Admin dashboard. Reporting/marketing
+/// only — derived from active vineyards/blocks, never affects calculations.
+nonisolated struct AdminPlatformScale: Sendable {
+    let totalHectaresUnderManagement: Double
+    let totalVineyards: Int
+    let totalActivePaddocks: Int
+    let totalPaddocksWithArea: Int
+    let averageHectaresPerVineyard: Double
+}
+
 nonisolated struct AdminUserRow: Identifiable, Sendable, Hashable {
     let id: UUID
     let email: String
@@ -144,6 +154,22 @@ nonisolated private struct EngagementDTO: Decodable, Sendable {
         case signedInLast30Days = "signed_in_last_30_days"
         case newUsersLast30Days = "new_users_last_30_days"
         case pendingInvitations = "pending_invitations"
+    }
+}
+
+nonisolated private struct PlatformScaleDTO: Decodable, Sendable {
+    let totalHectaresUnderManagement: Double
+    let totalVineyards: Int
+    let totalActivePaddocks: Int
+    let totalPaddocksWithArea: Int
+    let averageHectaresPerVineyard: Double
+
+    enum CodingKeys: String, CodingKey {
+        case totalHectaresUnderManagement = "total_hectares_under_management"
+        case totalVineyards = "total_vineyards"
+        case totalActivePaddocks = "total_active_paddocks"
+        case totalPaddocksWithArea = "total_paddocks_with_area"
+        case averageHectaresPerVineyard = "average_hectares_per_vineyard"
     }
 }
 
@@ -489,6 +515,26 @@ final class SupabaseAdminRepository {
             .execute()
             .value
         return value
+    }
+
+    /// Platform scale summary (total hectares under management + counts) backed
+    /// by `admin_platform_scale()`. Reporting/marketing metric, admin-gated.
+    func fetchPlatformScale() async throws -> AdminPlatformScale {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let rows: [PlatformScaleDTO] = try await provider.client
+            .rpc("admin_platform_scale")
+            .execute()
+            .value
+        guard let r = rows.first else {
+            return AdminPlatformScale(totalHectaresUnderManagement: 0, totalVineyards: 0, totalActivePaddocks: 0, totalPaddocksWithArea: 0, averageHectaresPerVineyard: 0)
+        }
+        return AdminPlatformScale(
+            totalHectaresUnderManagement: r.totalHectaresUnderManagement,
+            totalVineyards: r.totalVineyards,
+            totalActivePaddocks: r.totalActivePaddocks,
+            totalPaddocksWithArea: r.totalPaddocksWithArea,
+            averageHectaresPerVineyard: r.averageHectaresPerVineyard
+        )
     }
 
     func fetchAllUsers() async throws -> [AdminUserRow] {

@@ -41,6 +41,7 @@ struct AdminDashboardView: View {
     @State private var summary: AdminEngagementSummary?
     @State private var users: [AdminUserRow] = []
     @State private var totalBlocks: Int?
+    @State private var platformScale: AdminPlatformScale?
     @State private var isLoading: Bool = false
     @State private var errorMessage: String?
     @State private var searchText: String = ""
@@ -57,6 +58,7 @@ struct AdminDashboardView: View {
                 }
             }
 
+            platformScaleSection
             engagementSection
             usersSection
         }
@@ -115,6 +117,74 @@ struct AdminDashboardView: View {
         case .paddockDetail(let paddock):
             AdminPaddockDetailView(paddock: paddock)
         }
+    }
+
+    /// Formats a hectare value: 1 decimal under 1,000 ha, comma-grouped above.
+    private func formatHectares(_ value: Double) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.usesGroupingSeparator = true
+        formatter.groupingSeparator = ","
+        formatter.minimumFractionDigits = 1
+        formatter.maximumFractionDigits = 1
+        return (formatter.string(from: NSNumber(value: value)) ?? "0.0") + " ha"
+    }
+
+    private var platformScaleSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 10) {
+                    Image(systemName: "globe.asia.australia.fill")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 36, height: 36)
+                        .background(VineyardTheme.leafGreen.gradient, in: RoundedRectangle(cornerRadius: 9))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Total hectares under management")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                        Text(platformScale.map { formatHectares($0.totalHectaresUnderManagement) } ?? "—")
+                            .font(.title.weight(.bold))
+                            .foregroundStyle(.primary)
+                            .contentTransition(.numericText())
+                    }
+                    Spacer()
+                }
+                Text("Across active vineyards and blocks")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                if let scale = platformScale {
+                    Divider().padding(.vertical, 2)
+                    HStack(spacing: 0) {
+                        scaleStat("\(scale.totalVineyards)", "Vineyards")
+                        Divider().frame(height: 28)
+                        scaleStat("\(scale.totalActivePaddocks)", "Active blocks")
+                        Divider().frame(height: 28)
+                        scaleStat(formatHectares(scale.averageHectaresPerVineyard), "Avg / vineyard")
+                    }
+                }
+            }
+            .padding(.vertical, 4)
+        } header: {
+            Text("Platform Scale")
+        } footer: {
+            Text("Internal reporting metric. Area is derived from active block map geometry.")
+        }
+    }
+
+    @ViewBuilder
+    private func scaleStat(_ value: String, _ label: String) -> some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private var engagementSection: some View {
@@ -229,6 +299,16 @@ struct AdminDashboardView: View {
         // Block count is loaded separately because it requires a per-vineyard
         // fan-out and shouldn't block the main dashboard from appearing.
         Task { await loadBlockCount() }
+        Task { await loadPlatformScale() }
+    }
+
+    @MainActor
+    private func loadPlatformScale() async {
+        do {
+            platformScale = try await repository.fetchPlatformScale()
+        } catch {
+            // Non-fatal; the hero card shows "—" if the RPC is unavailable.
+        }
     }
 
     @MainActor
