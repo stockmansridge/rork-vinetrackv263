@@ -112,4 +112,19 @@ extension RecordSyncState {
             serviceHasFailure: pinSync.hasFailure
         )
     }
+
+    /// Convenience resolver for spray records, reading the live
+    /// `SprayRecordSyncService` state.
+    ///
+    /// Compliance note: a spray record resolves purely from its own pending
+    /// state. It is never marked synced because a linked trip is synced — the
+    /// two records track independently.
+    @MainActor
+    static func forSprayRecord(_ recordId: UUID, spraySync: SprayRecordSyncService) -> RecordSyncState {
+        resolve(
+            isPending: spraySync.isPendingUpsert(recordId) || spraySync.isPendingDelete(recordId),
+            serviceIsSyncing: spraySync.isSyncing,
+            serviceHasFailure: spraySync.hasFailure
+        )
+    }
 }

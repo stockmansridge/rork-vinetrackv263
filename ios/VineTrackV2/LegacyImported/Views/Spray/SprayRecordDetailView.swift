@@ -4,6 +4,7 @@ import MapKit
 struct SprayRecordDetailView: View {
     let record: SprayRecord
     @Environment(MigratedDataStore.self) private var store
+    @Environment(SprayRecordSyncService.self) private var sprayRecordSync
     @Environment(\.accessControl) private var accessControl
     @Environment(\.dismiss) private var dismiss
     @State private var showEditSheet: Bool = false
@@ -26,9 +27,7 @@ struct SprayRecordDetailView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
-                if !record.sprayReference.isEmpty {
-                    headerCard
-                }
+                headerCard
 
                 templateCard
 
@@ -127,8 +126,11 @@ struct SprayRecordDetailView: View {
 
     private var headerCard: some View {
         HStack {
-            Text(record.sprayReference)
-                .font(.title2.bold())
+            if !record.sprayReference.isEmpty {
+                Text(record.sprayReference)
+                    .font(.title2.bold())
+            }
+            RecordSyncBadge(state: RecordSyncState.forSprayRecord(record.id, spraySync: sprayRecordSync))
             Spacer()
             Button {
                 showEditSheet = true

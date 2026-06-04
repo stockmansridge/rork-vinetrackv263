@@ -15,6 +15,7 @@ nonisolated enum SprayStatusFilter: String, CaseIterable, Sendable {
 
 struct SprayProgramView: View {
     @Environment(MigratedDataStore.self) private var store
+    @Environment(SprayRecordSyncService.self) private var sprayRecordSync
     @Environment(\.accessControl) private var accessControl
 
     @State private var selectedRecord: SprayRecord?
@@ -319,9 +320,15 @@ struct SprayProgramView: View {
 
                 Spacer()
 
-                Text("\(record.tanks.count) tank\(record.tanks.count == 1 ? "" : "s")")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .trailing, spacing: 5) {
+                    Text("\(record.tanks.count) tank\(record.tanks.count == 1 ? "" : "s")")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    RecordSyncBadge(
+                        state: RecordSyncState.forSprayRecord(record.id, spraySync: sprayRecordSync),
+                        showsLabel: false
+                    )
+                }
 
                 Image(systemName: "chevron.right")
                     .font(.caption)

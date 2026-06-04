@@ -23,6 +23,18 @@ final class SprayRecordSyncService {
     var pendingUpsertCount: Int { metadata.pendingUpserts.count }
     var pendingDeleteCount: Int { metadata.pendingDeletes.count }
 
+    /// Whether a specific spray record has local changes queued for upload.
+    func isPendingUpsert(_ id: UUID) -> Bool { metadata.pendingUpserts[id] != nil }
+
+    /// Whether a specific spray record is queued for a remote delete.
+    func isPendingDelete(_ id: UUID) -> Bool { metadata.pendingDeletes[id] != nil }
+
+    /// True while a full sweep is actively pushing/pulling spray records.
+    var isSyncing: Bool { syncStatus == .syncing }
+
+    /// True if the last sweep failed.
+    var hasFailure: Bool { if case .failure = syncStatus { return true }; return false }
+
     private weak var store: MigratedDataStore?
     private weak var auth: NewBackendAuthService?
     private let repository: any SprayRecordSyncRepositoryProtocol
