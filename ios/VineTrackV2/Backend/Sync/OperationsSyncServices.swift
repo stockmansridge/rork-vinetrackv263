@@ -582,6 +582,8 @@ final class MaintenanceLogSyncService {
 
     private weak var store: MigratedDataStore?
     private weak var auth: NewBackendAuthService?
+    var pendingUpsertCount: Int { metadata.pendingUpserts.count }
+    var pendingDeleteCount: Int { metadata.pendingDeletes.count }
     private let repository: any MaintenanceLogSyncRepositoryProtocol
     private let metadata: OperationsSyncMetadata
     private let photoStorage: MaintenancePhotoStorageService
@@ -802,6 +804,8 @@ final class YieldEstimationSessionSyncService {
 
     private weak var store: MigratedDataStore?
     private weak var auth: NewBackendAuthService?
+    var pendingUpsertCount: Int { metadata.pendingUpserts.count }
+    var pendingDeleteCount: Int { metadata.pendingDeletes.count }
     private let repository: any YieldEstimationSessionSyncRepositoryProtocol
     private let metadata: OperationsSyncMetadata
     private var isConfigured: Bool = false
@@ -931,6 +935,8 @@ final class DamageRecordSyncService {
 
     private weak var store: MigratedDataStore?
     private weak var auth: NewBackendAuthService?
+    var pendingUpsertCount: Int { metadata.pendingUpserts.count }
+    var pendingDeleteCount: Int { metadata.pendingDeletes.count }
     private let repository: any DamageRecordSyncRepositoryProtocol
     private let metadata: OperationsSyncMetadata
     private var isConfigured: Bool = false
@@ -1111,6 +1117,8 @@ final class HistoricalYieldRecordSyncService {
 
     private weak var store: MigratedDataStore?
     private weak var auth: NewBackendAuthService?
+    var pendingUpsertCount: Int { metadata.pendingUpserts.count }
+    var pendingDeleteCount: Int { metadata.pendingDeletes.count }
     private let repository: any HistoricalYieldRecordSyncRepositoryProtocol
     private let metadata: OperationsSyncMetadata
     private var isConfigured: Bool = false

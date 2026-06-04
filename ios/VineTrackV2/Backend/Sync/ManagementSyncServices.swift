@@ -371,6 +371,8 @@ final class SprayEquipmentSyncService {
 
     private weak var store: MigratedDataStore?
     private weak var auth: NewBackendAuthService?
+    var pendingUpsertCount: Int { metadata.pendingUpserts.count }
+    var pendingDeleteCount: Int { metadata.pendingDeletes.count }
     private let repository: any SprayEquipmentSyncRepositoryProtocol
     private let metadata: ManagementSyncMetadata
     private var isConfigured: Bool = false
@@ -670,6 +672,8 @@ final class FuelPurchaseSyncService {
 
     private weak var store: MigratedDataStore?
     private weak var auth: NewBackendAuthService?
+    var pendingUpsertCount: Int { metadata.pendingUpserts.count }
+    var pendingDeleteCount: Int { metadata.pendingDeletes.count }
     private let repository: any FuelPurchaseSyncRepositoryProtocol
     private let metadata: ManagementSyncMetadata
     private var isConfigured: Bool = false
@@ -803,6 +807,8 @@ final class TractorFuelLogSyncService {
 
     private weak var store: MigratedDataStore?
     private weak var auth: NewBackendAuthService?
+    var pendingUpsertCount: Int { metadata.pendingUpserts.count }
+    var pendingDeleteCount: Int { metadata.pendingDeletes.count }
     private let repository: any TractorFuelLogSyncRepositoryProtocol
     private let metadata: ManagementSyncMetadata
     private var isConfigured: Bool = false

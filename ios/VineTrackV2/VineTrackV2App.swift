@@ -50,6 +50,7 @@ struct VineTrackV2App: App {
     @State private var appNoticeService = AppNoticeService()
     @State private var systemAdminService = SystemAdminService()
     @State private var networkMonitor = NetworkMonitor.shared
+    @State private var syncStatusCenter = SyncStatusCenter()
 
     init() {
         VineyardTheme.applyGlobalAppearance()
@@ -108,6 +109,7 @@ struct VineTrackV2App: App {
                         .environment(appNoticeService)
                         .environment(systemAdminService)
                         .environment(networkMonitor)
+                        .environment(syncStatusCenter)
                 } else {
                     ContentView()
                 }

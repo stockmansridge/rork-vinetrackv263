@@ -663,6 +663,8 @@ struct BackendSettingsView: View {
 
 struct SyncSettingsView: View {
     @Environment(MigratedDataStore.self) private var store
+    @Environment(SyncStatusCenter.self) private var syncCenter
+    @Environment(NetworkMonitor.self) private var network
     @Environment(PinSyncService.self) private var pinSync
     @Environment(PaddockSyncService.self) private var paddockSync
     @Environment(TripSyncService.self) private var tripSync
@@ -690,6 +692,7 @@ struct SyncSettingsView: View {
 
     var body: some View {
         Form {
+            statusSection
             Section {
                 Button {
                     Task { await pinSync.syncPinsForSelectedVineyard() }
@@ -929,6 +932,82 @@ struct SyncSettingsView: View {
         }
         .navigationTitle("Sync")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    // MARK: - Overall status header
+
+    private var statusSection: some View {
+        let state = syncCenter.displayState(isOnline: network.isOnline)
+        return Section {
+            HStack(spacing: 12) {
+                Image(systemName: statusSymbol(state))
+                    .font(.title3)
+                    .foregroundStyle(statusTint(state))
+                    .symbolEffect(.pulse, options: .repeating, isActive: state == .syncing)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(syncCenter.label(isOnline: network.isOnline))
+                        .font(.subheadline.weight(.semibold))
+                    Text(network.isOnline ? "Connected" : "No network — changes are saved on this device")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .padding(.vertical, 2)
+
+            LabeledContent("Pending uploads", value: "\(syncCenter.pendingUpserts)")
+                .font(.footnote)
+            LabeledContent("Pending deletes", value: "\(syncCenter.pendingDeletes)")
+                .font(.footnote)
+            LabeledContent("Last full sync", value: syncCenter.lastFullSyncAt?.formatted(date: .abbreviated, time: .shortened) ?? "Not yet")
+                .font(.footnote)
+            if syncCenter.lastSuccessfulSyncAt != syncCenter.lastFullSyncAt {
+                LabeledContent("Last successful sync", value: syncCenter.lastSuccessfulSyncAt?.formatted(date: .abbreviated, time: .shortened) ?? "Not yet")
+                    .font(.footnote)
+            }
+            if let error = syncCenter.lastError {
+                LabeledContent("Last sync error", value: error)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            }
+
+            Button {
+                syncCenter.requestManualSync()
+            } label: {
+                HStack {
+                    Label(syncCenter.isSyncing ? "Syncing…" : "Refresh & sync now", systemImage: "arrow.triangle.2.circlepath")
+                    Spacer()
+                    if syncCenter.isSyncing { ProgressView() }
+                }
+            }
+            .disabled(syncCenter.isSyncing || !network.isOnline)
+        } header: {
+            Text("Status")
+        } footer: {
+            Text(network.isOnline
+                 ? "Everything you record is queued and uploaded automatically. Tap Refresh & sync now to push immediately."
+                 : "You're offline. Records keep saving locally and will sync as soon as you reconnect.")
+        }
+    }
+
+    private func statusSymbol(_ state: SyncStatusCenter.DisplayState) -> String {
+        switch state {
+        case .offline: return "wifi.slash"
+        case .syncing: return "arrow.triangle.2.circlepath"
+        case .error: return "exclamationmark.triangle.fill"
+        case .pending: return "clock.arrow.circlepath"
+        case .synced: return "checkmark.icloud.fill"
+        }
+    }
+
+    private func statusTint(_ state: SyncStatusCenter.DisplayState) -> Color {
+        switch state {
+        case .offline: return .secondary
+        case .syncing: return .blue
+        case .error: return .red
+        case .pending: return .orange
+        case .synced: return .green
+        }
     }
 
     private func syncButtonLabel(title: String, icon: String, isSyncing: Bool) -> some View {

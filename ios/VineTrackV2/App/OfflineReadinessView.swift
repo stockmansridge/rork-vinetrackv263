@@ -12,19 +12,10 @@ struct OfflineReadinessView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(LocationService.self) private var location
     @Environment(SubscriptionService.self) private var subscription
-
-    // Field-data sync services the offline operator depends on. Each exposes
-    // `pendingUpsertCount` / `pendingDeleteCount` / `lastSyncDate`.
-    @Environment(PinSyncService.self) private var pinSync
-    @Environment(PaddockSyncService.self) private var paddockSync
-    @Environment(TripSyncService.self) private var tripSync
-    @Environment(SprayRecordSyncService.self) private var sprayRecordSync
-    @Environment(WorkTaskSyncService.self) private var workTaskSync
-    @Environment(MaintenanceLogSyncService.self) private var maintenanceLogSync
-    @Environment(SavedChemicalSyncService.self) private var savedChemicalSync
-    @Environment(EquipmentItemSyncService.self) private var equipmentItemSync
-
-    @State private var isRefreshing: Bool = false
+    // Single source of truth for the aggregated sync backlog and timings,
+    // kept current by the main shell's full sweep across every service.
+    @Environment(SyncStatusCenter.self) private var syncCenter
+    @Environment(NetworkMonitor.self) private var network
 
     var body: some View {
         Form {
@@ -155,12 +146,26 @@ struct OfflineReadinessView: View {
     private var syncSection: some View {
         Section {
             ReadinessRow(
+                title: network.isOnline ? "Online" : "Offline",
+                detail: syncCenter.label(isOnline: network.isOnline),
+                state: network.isOnline ? .good : .warn
+            )
+            ReadinessRow(
                 title: "Pending uploads",
                 detail: pendingCount == 0 ? "All changes uploaded" : "\(pendingCount) waiting to sync",
                 state: pendingCount == 0 ? .good : .warn
             )
+            LabeledContent("Pending upload / delete", value: "\(syncCenter.pendingUpserts) / \(syncCenter.pendingDeletes)")
+                .font(.footnote)
+            LabeledContent("Last full sync", value: lastFullSyncText)
+                .font(.footnote)
             LabeledContent("Last successful sync", value: lastSyncText)
                 .font(.footnote)
+            if let error = syncCenter.lastError {
+                LabeledContent("Last sync error", value: error)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            }
         } header: {
             Text("Sync status")
         } footer: {
@@ -173,15 +178,15 @@ struct OfflineReadinessView: View {
     private var refreshSection: some View {
         Section {
             Button {
-                Task { await refresh() }
+                syncCenter.requestManualSync()
             } label: {
                 HStack {
-                    Label(isRefreshing ? "Refreshing…" : "Refresh & sync now", systemImage: "arrow.triangle.2.circlepath")
+                    Label(syncCenter.isSyncing ? "Syncing…" : "Refresh & sync now", systemImage: "arrow.triangle.2.circlepath")
                     Spacer()
-                    if isRefreshing { ProgressView() }
+                    if syncCenter.isSyncing { ProgressView() }
                 }
             }
-            .disabled(isRefreshing || !auth.isSignedIn || store.selectedVineyardId == nil)
+            .disabled(syncCenter.isSyncing || !network.isOnline || !auth.isSignedIn || store.selectedVineyardId == nil)
         } footer: {
             Text("Run this while you still have signal to push pending changes and pull the latest paddocks, chemicals and equipment before heading out.")
         }
@@ -239,29 +244,16 @@ struct OfflineReadinessView: View {
     }
 
     private var pendingCount: Int {
-        pinSync.pendingUpsertCount + pinSync.pendingDeleteCount
-            + tripSync.pendingUpsertCount + tripSync.pendingDeleteCount
-            + sprayRecordSync.pendingUpsertCount + sprayRecordSync.pendingDeleteCount
-            + workTaskSync.pendingUpsertCount + workTaskSync.pendingDeleteCount
-            + savedChemicalSync.pendingUpsertCount + savedChemicalSync.pendingDeleteCount
-            + equipmentItemSync.pendingUpsertCount + equipmentItemSync.pendingDeleteCount
-    }
-
-    private var lastSyncDate: Date? {
-        [
-            pinSync.lastSyncDate,
-            paddockSync.lastSyncDate,
-            tripSync.lastSyncDate,
-            sprayRecordSync.lastSyncDate,
-            workTaskSync.lastSyncDate,
-            maintenanceLogSync.lastSyncDate,
-            savedChemicalSync.lastSyncDate,
-            equipmentItemSync.lastSyncDate,
-        ].compactMap { $0 }.max()
+        syncCenter.pendingTotal
     }
 
     private var lastSyncText: String {
-        guard let date = lastSyncDate else { return "Never this session" }
+        guard let date = syncCenter.lastSuccessfulSyncAt else { return "Never this session" }
+        return date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    private var lastFullSyncText: String {
+        guard let date = syncCenter.lastFullSyncAt else { return "Not yet" }
         return date.formatted(date: .abbreviated, time: .shortened)
     }
 
@@ -294,21 +286,6 @@ struct OfflineReadinessView: View {
             && (gpsState == .good)
     }
 
-    // MARK: - Actions
-
-    private func refresh() async {
-        guard !isRefreshing else { return }
-        isRefreshing = true
-        defer { isRefreshing = false }
-        await pinSync.syncPinsForSelectedVineyard()
-        await paddockSync.syncPaddocksForSelectedVineyard()
-        await tripSync.syncTripsForSelectedVineyard()
-        await sprayRecordSync.syncSprayRecordsForSelectedVineyard()
-        await workTaskSync.syncForSelectedVineyard()
-        await maintenanceLogSync.syncForSelectedVineyard()
-        await savedChemicalSync.syncForSelectedVineyard()
-        await equipmentItemSync.syncForSelectedVineyard()
-    }
 }
 
 /// A single readiness line with a coloured status indicator.

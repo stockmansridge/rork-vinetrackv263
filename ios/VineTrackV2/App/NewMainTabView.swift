@@ -35,6 +35,8 @@ struct NewMainTabView: View {
     @Environment(HistoricalYieldRecordSyncService.self) private var historicalYieldSync
     @Environment(AlertService.self) private var alertService
     @Environment(AppNoticeService.self) private var appNoticeService
+    @Environment(SyncStatusCenter.self) private var syncStatusCenter
+    @Environment(NetworkMonitor.self) private var network
     @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab: Int = 0
     @State private var isSweeping: Bool = false
@@ -68,8 +70,14 @@ struct NewMainTabView: View {
         }
         .environment(\.accessControl, accessControl.legacyAccessControl)
         .safeAreaInset(edge: .top, spacing: 0) {
-            OfflineGraceBanner()
-                .animation(.easeInOut(duration: 0.25), value: subscription.isRelyingOnOfflineGrace)
+            VStack(spacing: 0) {
+                OfflineGraceBanner()
+                    .animation(.easeInOut(duration: 0.25), value: subscription.isRelyingOnOfflineGrace)
+                GlobalSyncStatusBar()
+                    .animation(.easeInOut(duration: 0.25), value: network.isOnline)
+                    .animation(.easeInOut(duration: 0.25), value: syncStatusCenter.isSyncing)
+                    .animation(.easeInOut(duration: 0.25), value: syncStatusCenter.pendingTotal)
+            }
         }
         .onAppear {
             if locationService.authorizationStatus == .notDetermined {
@@ -150,6 +158,19 @@ struct NewMainTabView: View {
                 Task { await appNoticeService.refresh() }
             }
         }
+        // Retry queued pushes the moment the network comes back.
+        .onChange(of: network.isOnline) { _, online in
+            guard online else {
+                // Going offline: keep the indicator's backlog count fresh.
+                syncStatusCenter.refreshPending(upserts: aggregatePendingUpserts, deletes: aggregatePendingDeletes)
+                return
+            }
+            Task { await runFullSweep(alertRefresh: .refresh) }
+        }
+        // Manual "Sync now" requested from Sync settings or the status bar.
+        .onChange(of: syncStatusCenter.manualSyncToken) { _, _ in
+            Task { await runFullSweep(alertRefresh: .refresh) }
+        }
         .sheet(item: $portalPromptTrigger) { trigger in
             VineTrackPortalPromptSheet(trigger: trigger, role: accessControl.currentRole)
         }
@@ -187,6 +208,16 @@ struct NewMainTabView: View {
         guard !isSweeping else { return }
         isSweeping = true
         defer { isSweeping = false }
+
+        // Always keep the glanceable backlog count current.
+        syncStatusCenter.refreshPending(upserts: aggregatePendingUpserts, deletes: aggregatePendingDeletes)
+
+        // Offline: everything stays queued locally and retries on reconnect.
+        // We skip the network round-trips so we don't generate false errors
+        // or drain the battery while out of range.
+        guard network.isOnline else { return }
+
+        syncStatusCenter.syncDidStart()
         await pinSync.syncPinsForSelectedVineyard()
         await paddockSync.syncPaddocksForSelectedVineyard()
         await tripSync.syncTripsForSelectedVineyard()
@@ -218,6 +249,88 @@ struct NewMainTabView: View {
         case .none:     break
         }
         await appNoticeService.refresh()
+        syncStatusCenter.syncDidFinish(
+            upserts: aggregatePendingUpserts,
+            deletes: aggregatePendingDeletes,
+            error: aggregateSyncError
+        )
+    }
+
+    // MARK: - Aggregate sync state
+
+    /// Total queued upserts across every field-data sync service.
+    private var aggregatePendingUpserts: Int {
+        pinSync.pendingUpsertCount
+            + paddockSync.pendingUpsertCount
+            + tripSync.pendingUpsertCount
+            + sprayRecordSync.pendingUpsertCount
+            + savedChemicalSync.pendingUpsertCount
+            + savedSprayPresetSync.pendingUpsertCount
+            + sprayEquipmentSync.pendingUpsertCount
+            + tractorSync.pendingUpsertCount
+            + fuelPurchaseSync.pendingUpsertCount
+            + tractorFuelLogSync.pendingUpsertCount
+            + operatorCategorySync.pendingUpsertCount
+            + workTaskTypeSync.pendingUpsertCount
+            + equipmentItemSync.pendingUpsertCount
+            + savedInputSync.pendingUpsertCount
+            + tripCostAllocationSync.pendingUpsertCount
+            + growthStageRecordSync.pendingUpsertCount
+            + workTaskSync.pendingUpsertCount
+            + workTaskLabourLineSync.pendingUpsertCount
+            + workTaskPaddockSync.pendingUpsertCount
+            + maintenanceLogSync.pendingUpsertCount
+            + yieldSessionSync.pendingUpsertCount
+            + damageRecordSync.pendingUpsertCount
+            + historicalYieldSync.pendingUpsertCount
+    }
+
+    /// Total queued deletes across every field-data sync service.
+    private var aggregatePendingDeletes: Int {
+        pinSync.pendingDeleteCount
+            + paddockSync.pendingDeleteCount
+            + tripSync.pendingDeleteCount
+            + sprayRecordSync.pendingDeleteCount
+            + savedChemicalSync.pendingDeleteCount
+            + savedSprayPresetSync.pendingDeleteCount
+            + sprayEquipmentSync.pendingDeleteCount
+            + tractorSync.pendingDeleteCount
+            + fuelPurchaseSync.pendingDeleteCount
+            + tractorFuelLogSync.pendingDeleteCount
+            + operatorCategorySync.pendingDeleteCount
+            + workTaskTypeSync.pendingDeleteCount
+            + equipmentItemSync.pendingDeleteCount
+            + savedInputSync.pendingDeleteCount
+            + tripCostAllocationSync.pendingDeleteCount
+            + growthStageRecordSync.pendingDeleteCount
+            + workTaskSync.pendingDeleteCount
+            + workTaskLabourLineSync.pendingDeleteCount
+            + workTaskPaddockSync.pendingDeleteCount
+            + maintenanceLogSync.pendingDeleteCount
+            + yieldSessionSync.pendingDeleteCount
+            + damageRecordSync.pendingDeleteCount
+            + historicalYieldSync.pendingDeleteCount
+    }
+
+    /// First meaningful sync error reported by any service this sweep, if any.
+    /// Plain "not configured" notices are ignored — they aren't actionable
+    /// field errors.
+    private var aggregateSyncError: String? {
+        let messages = [
+            pinSync.errorMessage,
+            paddockSync.errorMessage,
+            tripSync.errorMessage,
+            sprayRecordSync.errorMessage,
+            savedChemicalSync.errorMessage,
+            workTaskSync.errorMessage,
+            maintenanceLogSync.errorMessage,
+            damageRecordSync.errorMessage,
+            yieldSessionSync.errorMessage,
+            historicalYieldSync.errorMessage,
+        ]
+        return messages
+            .compactMap { $0 }
+            .first { !$0.lowercased().contains("not configured") }
     }
 }
 
