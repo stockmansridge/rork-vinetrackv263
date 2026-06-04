@@ -521,6 +521,8 @@ private struct NewHomeTabView: View {
                 .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
+            Spacer(minLength: 8)
+            HomeSyncStatusChip()
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal)
