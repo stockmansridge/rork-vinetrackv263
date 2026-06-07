@@ -23,6 +23,16 @@ struct EquipmentManagementView: View {
         return "\(count) item\(count == 1 ? "" : "s")"
     }
 
+    private var machineCount: Int {
+        store.machines().filter { $0.legacyTractorId == nil }.count
+    }
+
+    private var machineSubtitle: String {
+        let count = machineCount
+        if count == 0 { return "Add ATVs, side-by-sides, harvesters…" }
+        return "\(count) machine\(count == 1 ? "" : "s")"
+    }
+
     private var fuelLogCount: Int {
         guard let vid = store.selectedVineyardId else { return 0 }
         return store.tractorFuelLogs.filter { $0.vineyardId == vid }.count
@@ -140,6 +150,32 @@ struct EquipmentManagementView: View {
                 if canManageSetup {
                     Text("Fuel usage (L/hr) can typically be found in your tractor's user manual under engine specifications.")
                 }
+            }
+
+            Section {
+                NavigationLink {
+                    VineyardMachineManagementView()
+                } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Manage Vineyard Machines")
+                                .font(.body.weight(.medium))
+                            Text(machineSubtitle)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                }
+            } header: {
+                HStack {
+                    Label("Vineyard Machines", systemImage: "gearshape.2.fill")
+                        .font(.caption.weight(.semibold))
+                        .textCase(.uppercase)
+                    Spacer()
+                }
+            } footer: {
+                Text("ATVs, side-by-sides, harvesters, utility vehicles and other machines. Add them here to track fuel and have them appear in the Fuel Log.")
             }
 
             Section {
