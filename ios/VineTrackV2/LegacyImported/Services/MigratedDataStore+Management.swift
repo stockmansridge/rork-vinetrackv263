@@ -273,6 +273,44 @@ extension MigratedDataStore {
             .max { $0.fillDateTime < $1.fillDateTime }
     }
 
+    /// Resolves the vineyard machine a fuel log belongs to, preferring
+    /// `machineId` and falling back to the legacy tractor link so that legacy
+    /// rows (tractor-only) and new rows for the same machine group together.
+    func machine(forFuelLog log: TractorFuelLog) -> VineyardMachine? {
+        if let mid = log.machineId {
+            return vineyardMachines.first { $0.id == mid && $0.vineyardId == log.vineyardId }
+        }
+        if let tid = log.tractorId {
+            return vineyardMachines.first { $0.legacyTractorId == tid && $0.vineyardId == log.vineyardId }
+        }
+        return nil
+    }
+
+    /// Stable grouping key for a fuel log. Prefers the resolved machine, then a
+    /// raw `machineId`, then the legacy `tractorId`, so display and L/hr
+    /// calculation group by machine while still supporting legacy records.
+    func fuelLogGroupKey(_ log: TractorFuelLog) -> String {
+        if let m = machine(forFuelLog: log) { return "m:\(m.id.uuidString)" }
+        if let mid = log.machineId { return "m:\(mid.uuidString)" }
+        if let tid = log.tractorId { return "t:\(tid.uuidString)" }
+        return "unassigned"
+    }
+
+    /// The most recent earlier fill belonging to the same machine group as
+    /// `log`, used to derive a litres/hour rate for a new fill. Grouping
+    /// prefers `machineId` and falls back to `tractorId` for legacy records.
+    func previousFuelLog(forMachineGroupOf log: TractorFuelLog, before date: Date, excluding id: UUID?) -> TractorFuelLog? {
+        let key = fuelLogGroupKey(log)
+        return tractorFuelLogs
+            .filter {
+                $0.vineyardId == selectedVineyardId &&
+                $0.id != id &&
+                $0.fillDateTime < date &&
+                fuelLogGroupKey($0) == key
+            }
+            .max { $0.fillDateTime < $1.fillDateTime }
+    }
+
     func addTractorFuelLog(_ log: TractorFuelLog) {
         guard let vineyardId = selectedVineyardId else { return }
         var entry = log

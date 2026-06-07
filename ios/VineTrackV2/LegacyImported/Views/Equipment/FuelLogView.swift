@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// Lists tractor fuel fills grouped per tractor (newest first) and lets any
+/// Lists fuel fills grouped per vineyard machine (newest first) and lets any
 /// vineyard member record a new fill. Litres/hour is derived for display only
-/// from the previous fill for the same tractor.
+/// from the previous fill for the same machine.
 struct FuelLogView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(\.accessControl) private var accessControl
@@ -23,37 +23,47 @@ struct FuelLogView: View {
             .sorted { $0.fillDateTime > $1.fillDateTime }
     }
 
-    /// Tractor id (nil = "Unassigned") in display order, only those with logs.
-    private var groupedTractorKeys: [UUID?] {
-        var seen: [UUID?] = []
-        for log in logs where !seen.contains(log.tractorId) {
-            seen.append(log.tractorId)
+    /// Logs grouped by machine (preferring machineId, falling back to the
+    /// legacy tractor link) in display order, each with a header label.
+    private var groupedLogs: [(key: String, header: String, logs: [TractorFuelLog])] {
+        var order: [String] = []
+        var map: [String: [TractorFuelLog]] = [:]
+        for log in logs {
+            let k = store.fuelLogGroupKey(log)
+            if map[k] == nil { order.append(k); map[k] = [] }
+            map[k]?.append(log)
         }
-        return seen
+        return order.map { key in
+            let groupLogs = map[key] ?? []
+            let header = groupLogs.first.map { groupHeader(for: $0) } ?? "Machine"
+            return (key, header, groupLogs)
+        }
     }
 
-    private func tractorName(_ id: UUID?) -> String {
-        guard let id, let t = vineyardTractors.first(where: { $0.id == id }) else {
-            return "Unassigned tractor"
+    private func groupHeader(for log: TractorFuelLog) -> String {
+        if let m = store.machine(forFuelLog: log) {
+            return "\(m.displayName) · \(m.machineType.displayName)"
         }
-        return t.displayName
+        if let tid = log.tractorId, let t = vineyardTractors.first(where: { $0.id == tid }) {
+            return t.displayName
+        }
+        return "Unassigned machine"
     }
 
     var body: some View {
         List {
             if logs.isEmpty {
                 Section {
-                    Text("No fuel fills recorded yet. Tap + to record litres added and engine hours when you fill a tractor.")
+                    Text("No fuel fills recorded yet. Tap + to record litres added and engine hours when you fill a vineyard machine.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
             }
 
-            ForEach(groupedTractorKeys, id: \.self) { key in
-                let tractorLogs = logs.filter { $0.tractorId == key }
+            ForEach(groupedLogs, id: \.key) { group in
                 Section {
-                    ForEach(tractorLogs) { log in
-                        let previous = store.previousFuelLog(forTractor: log.tractorId, before: log.fillDateTime, excluding: log.id)
+                    ForEach(group.logs) { log in
+                        let previous = store.previousFuelLog(forMachineGroupOf: log, before: log.fillDateTime, excluding: log.id)
                         let rate = TractorFuelRateCalculator.rate(current: log, previous: previous)
                         let canEdit = canManageSetup || (log.operatorUserId != nil && log.operatorUserId == store.currentUserIdProvider?())
                         Group {
@@ -74,7 +84,7 @@ struct FuelLogView: View {
                         }
                     }
                 } header: {
-                    Text(tractorName(key))
+                    Text(group.header)
                         .font(.caption.weight(.semibold))
                         .textCase(.uppercase)
                 }
@@ -168,10 +178,11 @@ struct FuelFillFormSheet: View {
     @Environment(NewBackendAuthService.self) private var auth
     @Environment(TractorFuelLogSyncService.self) private var fuelLogSync
     @Environment(TractorSyncService.self) private var tractorSync
+    @Environment(VineyardMachineSyncService.self) private var machineSync
 
     let log: TractorFuelLog?
 
-    @State private var tractorId: UUID?
+    @State private var machineId: UUID?
     @State private var litresText: String = ""
     @State private var engineHoursText: String = ""
     @State private var fillDate: Date = Date()
@@ -182,15 +193,15 @@ struct FuelFillFormSheet: View {
     @State private var notes: String = ""
 
     /// After a successful save, holds the derived rate so we can show the
-    /// summary + optional "use as tractor default" action before dismissing.
+    /// summary + optional "use as machine default" action before dismissing.
     @State private var savedResult: TractorFuelRateResult?
-    @State private var savedTractorId: UUID?
+    @State private var savedMachineId: UUID?
     @State private var didApplyDefault: Bool = false
 
     init(log: TractorFuelLog?) {
         self.log = log
         if let l = log {
-            _tractorId = State(initialValue: l.tractorId)
+            _machineId = State(initialValue: l.machineId)
             _litresText = State(initialValue: l.litresAdded > 0 ? String(format: "%.1f", l.litresAdded) : "")
             _engineHoursText = State(initialValue: l.engineHours.map { String(format: "%.1f", $0) } ?? "")
             _fillDate = State(initialValue: l.fillDateTime)
@@ -202,9 +213,15 @@ struct FuelFillFormSheet: View {
         }
     }
 
-    private var vineyardTractors: [Tractor] {
-        guard let vid = store.selectedVineyardId else { return [] }
-        return store.tractors.filter { $0.vineyardId == vid }
+    /// Machines available for fuel logging: not deleted (deleted rows are
+    /// removed from the store) and with fuel tracking enabled.
+    private var fuelTrackingMachines: [VineyardMachine] {
+        store.machines().filter { $0.fuelTrackingEnabled }
+    }
+
+    private var selectedMachine: VineyardMachine? {
+        guard let mid = machineId else { return nil }
+        return store.vineyardMachines.first { $0.id == mid }
     }
 
     private var litres: Double { Double(litresText) ?? 0 }
@@ -241,6 +258,10 @@ struct FuelFillFormSheet: View {
                 if log == nil, operatorName.isEmpty {
                     operatorName = auth.userName ?? ""
                 }
+                // Resolve a machine for legacy logs that only carry a tractorId.
+                if let l = log, machineId == nil, let tid = l.tractorId {
+                    machineId = store.vineyardMachines.first { $0.legacyTractorId == tid }?.id
+                }
             }
         }
     }
@@ -252,11 +273,17 @@ struct FuelFillFormSheet: View {
 
     @ViewBuilder
     private var formSections: some View {
-        Section("Tractor") {
-            Picker("Tractor", selection: $tractorId) {
-                Text("Select tractor").tag(UUID?.none)
-                ForEach(vineyardTractors) { t in
-                    Text(t.displayName).tag(UUID?.some(t.id))
+        Section("Machine") {
+            if fuelTrackingMachines.isEmpty {
+                Text("No vineyard machines with fuel tracking enabled yet. Add a vineyard machine to record fuel fills against it.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                Picker("Machine", selection: $machineId) {
+                    Text("Select machine").tag(UUID?.none)
+                    ForEach(fuelTrackingMachines) { m in
+                        Text("\(m.displayName) · \(m.machineType.displayName)").tag(UUID?.some(m.id))
+                    }
                 }
             }
         }
@@ -280,7 +307,7 @@ struct FuelFillFormSheet: View {
         } header: {
             Text("Engine Hours at Fill")
         } footer: {
-            Text("Used to calculate litres per hour against the previous fill for this tractor.")
+            Text("Fuel usage is calculated between full fills with valid meter readings.")
         }
 
         Section("When") {
@@ -355,21 +382,21 @@ struct FuelFillFormSheet: View {
         }
 
         if let lph = result.litresPerHour,
-           let tid = savedTractorId,
-           let tractor = vineyardTractors.first(where: { $0.id == tid }) {
+           let mid = savedMachineId,
+           let machine = store.vineyardMachines.first(where: { $0.id == mid }) {
             Section {
                 if didApplyDefault {
-                    Label("Updated \(tractor.displayName) default to \(String(format: "%.1f", lph)) L/hr", systemImage: "checkmark.circle.fill")
+                    Label("Updated \(machine.displayName) default to \(String(format: "%.1f", lph)) L/hr", systemImage: "checkmark.circle.fill")
                         .foregroundStyle(VineyardTheme.olive)
                 } else {
                     Button {
-                        applyAsTractorDefault(lph: lph, tractor: tractor)
+                        applyAsMachineDefault(lph: lph, machine: machine)
                     } label: {
-                        Label("Use \(String(format: "%.1f", lph)) L/hr as \(tractor.displayName) default", systemImage: "arrow.up.circle")
+                        Label("Use \(String(format: "%.1f", lph)) L/hr as machine default", systemImage: "arrow.up.circle")
                     }
                 }
             } footer: {
-                Text("The tractor's default fuel rate is only changed if you choose to update it here.")
+                Text("The machine's default fuel rate is only changed if you choose to update it here.")
             }
         }
     }
@@ -402,10 +429,18 @@ struct FuelFillFormSheet: View {
     private func save() {
         let cpl = Double(costPerLitreText)
         let total = Double(totalCostText)
+        let machine = selectedMachine
+        // Prefer machine_id as the link. Populate legacy tractor_id only when
+        // the machine is backed by a legacy tractor, so existing trip costing
+        // (which still reads trips.tractor_id) keeps working. Non-tractor
+        // machines leave tractor_id nil.
+        let legacyTractorId = machine?.legacyTractorId
+
         var entry: TractorFuelLog
         if let existing = log {
             entry = existing
-            entry.tractorId = tractorId
+            entry.machineId = machineId
+            entry.tractorId = legacyTractorId
             entry.litresAdded = litres
             entry.engineHours = engineHours
             entry.fillDateTime = fillDate
@@ -417,7 +452,8 @@ struct FuelFillFormSheet: View {
             store.updateTractorFuelLog(entry)
         } else {
             entry = TractorFuelLog(
-                tractorId: tractorId,
+                tractorId: legacyTractorId,
+                machineId: machineId,
                 fillDateTime: fillDate,
                 litresAdded: litres,
                 engineHours: engineHours,
@@ -431,19 +467,30 @@ struct FuelFillFormSheet: View {
             store.addTractorFuelLog(entry)
         }
 
-        let previous = store.previousFuelLog(forTractor: entry.tractorId, before: entry.fillDateTime, excluding: entry.id)
+        let previous = store.previousFuelLog(forMachineGroupOf: entry, before: entry.fillDateTime, excluding: entry.id)
         savedResult = TractorFuelRateCalculator.rate(current: entry, previous: previous)
-        savedTractorId = entry.tractorId
+        savedMachineId = entry.machineId
 
         // Push immediately so other devices and the Portal see it promptly.
         Task { await fuelLogSync.syncForSelectedVineyard() }
     }
 
-    private func applyAsTractorDefault(lph: Double, tractor: Tractor) {
-        var updated = tractor
-        updated.fuelUsageLPerHour = lph
-        store.updateTractor(updated)
+    /// Applies the calculated L/hr as the machine's default, only on explicit
+    /// user action. For legacy tractor-backed machines, also updates the
+    /// underlying tractor so current trip costing behaviour is preserved.
+    private func applyAsMachineDefault(lph: Double, machine: VineyardMachine) {
+        var updatedMachine = machine
+        updatedMachine.fuelUsageLPerHour = lph
+        store.updateVineyardMachine(updatedMachine)
+        Task { await machineSync.syncForSelectedVineyard() }
+
+        if machine.machineType == .tractor,
+           let tid = machine.legacyTractorId,
+           var tractor = store.tractors.first(where: { $0.id == tid }) {
+            tractor.fuelUsageLPerHour = lph
+            store.updateTractor(tractor)
+            Task { await tractorSync.syncForSelectedVineyard() }
+        }
         didApplyDefault = true
-        Task { await tractorSync.syncForSelectedVineyard() }
     }
 }
