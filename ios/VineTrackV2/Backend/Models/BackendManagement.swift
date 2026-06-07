@@ -398,6 +398,100 @@ extension BackendTractor {
     }
 }
 
+// MARK: - Vineyard Machines
+
+nonisolated struct BackendVineyardMachine: Codable, Sendable, Identifiable {
+    let id: UUID
+    let vineyardId: UUID
+    let name: String?
+    let machineType: String?
+    let fuelTrackingEnabled: Bool?
+    let availableForJobCosting: Bool?
+    let fuelUsageLPerHour: Double?
+    let notes: String?
+    let legacyTractorId: UUID?
+    let createdAt: Date?
+    let updatedAt: Date?
+    let deletedAt: Date?
+    let clientUpdatedAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case vineyardId = "vineyard_id"
+        case name
+        case machineType = "machine_type"
+        case fuelTrackingEnabled = "fuel_tracking_enabled"
+        case availableForJobCosting = "available_for_job_costing"
+        case fuelUsageLPerHour = "fuel_usage_l_per_hour"
+        case notes
+        case legacyTractorId = "legacy_tractor_id"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+        case deletedAt = "deleted_at"
+        case clientUpdatedAt = "client_updated_at"
+    }
+}
+
+nonisolated struct BackendVineyardMachineUpsert: Encodable, Sendable {
+    let id: UUID
+    let vineyardId: UUID
+    let name: String
+    let machineType: String
+    let fuelTrackingEnabled: Bool
+    let availableForJobCosting: Bool
+    let fuelUsageLPerHour: Double
+    let notes: String?
+    let legacyTractorId: UUID?
+    let createdBy: UUID?
+    let clientUpdatedAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case vineyardId = "vineyard_id"
+        case name
+        case machineType = "machine_type"
+        case fuelTrackingEnabled = "fuel_tracking_enabled"
+        case availableForJobCosting = "available_for_job_costing"
+        case fuelUsageLPerHour = "fuel_usage_l_per_hour"
+        case notes
+        case legacyTractorId = "legacy_tractor_id"
+        case createdBy = "created_by"
+        case clientUpdatedAt = "client_updated_at"
+    }
+}
+
+extension BackendVineyardMachine {
+    static func upsert(from m: VineyardMachine, createdBy: UUID?, clientUpdatedAt: Date) -> BackendVineyardMachineUpsert {
+        BackendVineyardMachineUpsert(
+            id: m.id,
+            vineyardId: m.vineyardId,
+            name: m.name,
+            machineType: m.machineType.rawValue,
+            fuelTrackingEnabled: m.fuelTrackingEnabled,
+            availableForJobCosting: m.availableForJobCosting,
+            fuelUsageLPerHour: m.fuelUsageLPerHour,
+            notes: m.notes,
+            legacyTractorId: m.legacyTractorId,
+            createdBy: createdBy,
+            clientUpdatedAt: clientUpdatedAt
+        )
+    }
+
+    func toVineyardMachine() -> VineyardMachine {
+        VineyardMachine(
+            id: id,
+            vineyardId: vineyardId,
+            name: name ?? "",
+            machineType: machineType.flatMap(VineyardMachineType.init(rawValue:)) ?? .tractor,
+            fuelTrackingEnabled: fuelTrackingEnabled ?? true,
+            availableForJobCosting: availableForJobCosting ?? false,
+            fuelUsageLPerHour: fuelUsageLPerHour ?? 0,
+            notes: notes,
+            legacyTractorId: legacyTractorId
+        )
+    }
+}
+
 // MARK: - Fuel Purchases
 
 nonisolated struct BackendFuelPurchase: Codable, Sendable, Identifiable {
@@ -474,6 +568,7 @@ nonisolated struct BackendTractorFuelLog: Codable, Sendable, Identifiable {
     let id: UUID
     let vineyardId: UUID
     let tractorId: UUID?
+    let machineId: UUID?
     let fillDatetime: Date?
     let litresAdded: Double?
     let engineHours: Double?
@@ -492,6 +587,7 @@ nonisolated struct BackendTractorFuelLog: Codable, Sendable, Identifiable {
         case id
         case vineyardId = "vineyard_id"
         case tractorId = "tractor_id"
+        case machineId = "machine_id"
         case fillDatetime = "fill_datetime"
         case litresAdded = "litres_added"
         case engineHours = "engine_hours"
@@ -512,6 +608,7 @@ nonisolated struct BackendTractorFuelLogUpsert: Encodable, Sendable {
     let id: UUID
     let vineyardId: UUID
     let tractorId: UUID?
+    let machineId: UUID?
     let fillDatetime: Date
     let litresAdded: Double
     let engineHours: Double?
@@ -528,6 +625,7 @@ nonisolated struct BackendTractorFuelLogUpsert: Encodable, Sendable {
         case id
         case vineyardId = "vineyard_id"
         case tractorId = "tractor_id"
+        case machineId = "machine_id"
         case fillDatetime = "fill_datetime"
         case litresAdded = "litres_added"
         case engineHours = "engine_hours"
@@ -548,6 +646,7 @@ extension BackendTractorFuelLog {
             id: f.id,
             vineyardId: f.vineyardId,
             tractorId: f.tractorId,
+            machineId: f.machineId,
             fillDatetime: f.fillDateTime,
             litresAdded: f.litresAdded,
             engineHours: f.engineHours,
@@ -567,6 +666,7 @@ extension BackendTractorFuelLog {
             id: id,
             vineyardId: vineyardId,
             tractorId: tractorId,
+            machineId: machineId,
             fillDateTime: fillDatetime ?? Date(),
             litresAdded: litresAdded ?? 0,
             engineHours: engineHours,

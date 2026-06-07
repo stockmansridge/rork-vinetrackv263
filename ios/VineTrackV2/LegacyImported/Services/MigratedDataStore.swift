@@ -33,6 +33,7 @@ final class MigratedDataStore {
     var savedInputs: [SavedInput] = []
 
     var tractors: [Tractor] = []
+    var vineyardMachines: [VineyardMachine] = []
     var fuelPurchases: [FuelPurchase] = []
     var tractorFuelLogs: [TractorFuelLog] = []
     var operatorCategories: [OperatorCategory] = []
@@ -126,6 +127,8 @@ final class MigratedDataStore {
     var onSprayEquipmentDeleted: ((UUID) -> Void)?
     var onTractorChanged: ((UUID) -> Void)?
     var onTractorDeleted: ((UUID) -> Void)?
+    var onVineyardMachineChanged: ((UUID) -> Void)?
+    var onVineyardMachineDeleted: ((UUID) -> Void)?
     var onFuelPurchaseChanged: ((UUID) -> Void)?
     var onFuelPurchaseDeleted: ((UUID) -> Void)?
     var onTractorFuelLogChanged: ((UUID) -> Void)?
@@ -192,6 +195,7 @@ final class MigratedDataStore {
         static let growthButtons = "vinetrack_growth_buttons"
         static let savedCustomPatterns = "vinetrack_saved_custom_patterns"
         static let tractors = "vinetrack_tractors"
+        static let vineyardMachines = "vinetrack_vineyard_machines"
         static let fuelPurchases = "vinetrack_fuel_purchases"
         static let tractorFuelLogs = "vinetrack_tractor_fuel_logs"
         static let operatorCategories = "vinetrack_operator_categories"
@@ -236,6 +240,7 @@ final class MigratedDataStore {
 
         savedCustomPatterns = persistence.load(key: Keys.savedCustomPatterns) ?? []
         tractors = persistence.load(key: Keys.tractors) ?? []
+        vineyardMachines = persistence.load(key: Keys.vineyardMachines) ?? []
         fuelPurchases = persistence.load(key: Keys.fuelPurchases) ?? []
         tractorFuelLogs = persistence.load(key: Keys.tractorFuelLogs) ?? []
         operatorCategories = persistence.load(key: Keys.operatorCategories) ?? []
@@ -254,6 +259,7 @@ final class MigratedDataStore {
         let originalOps = operatorCategories.count
         let originalTemplates = buttonTemplates.count
         let originalTractors = tractors.count
+        let originalMachines = vineyardMachines.count
         let originalFuel = fuelPurchases.count
         let originalFuelLogs = tractorFuelLogs.count
 
@@ -264,6 +270,7 @@ final class MigratedDataStore {
         buttonTemplates = Self.dedupTemplatesByNameModeVineyard(buttonTemplates)
         buttonTemplates = Self.collapseDefaultTemplates(buttonTemplates)
         tractors = Self.dedupById(tractors) { $0.id }
+        vineyardMachines = Self.dedupById(vineyardMachines) { $0.id }
         fuelPurchases = Self.dedupById(fuelPurchases) { $0.id }
         tractorFuelLogs = Self.dedupById(tractorFuelLogs) { $0.id }
 
@@ -278,6 +285,9 @@ final class MigratedDataStore {
         }
         if tractors.count != originalTractors {
             persistence.save(tractors, key: Keys.tractors)
+        }
+        if vineyardMachines.count != originalMachines {
+            persistence.save(vineyardMachines, key: Keys.vineyardMachines)
         }
         if fuelPurchases.count != originalFuel {
             persistence.save(fuelPurchases, key: Keys.fuelPurchases)
@@ -443,6 +453,7 @@ final class MigratedDataStore {
         savedInputs = []
         tripCostAllocations = []
         tractors = []
+        vineyardMachines = []
         fuelPurchases = []
         tractorFuelLogs = []
         operatorCategories = []

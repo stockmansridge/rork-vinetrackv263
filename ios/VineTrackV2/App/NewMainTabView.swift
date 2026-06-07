@@ -17,6 +17,7 @@ struct NewMainTabView: View {
     @Environment(SavedSprayPresetSyncService.self) private var savedSprayPresetSync
     @Environment(SprayEquipmentSyncService.self) private var sprayEquipmentSync
     @Environment(TractorSyncService.self) private var tractorSync
+    @Environment(VineyardMachineSyncService.self) private var vineyardMachineSync
     @Environment(FuelPurchaseSyncService.self) private var fuelPurchaseSync
     @Environment(TractorFuelLogSyncService.self) private var tractorFuelLogSync
     @Environment(OperatorCategorySyncService.self) private var operatorCategorySync
@@ -97,6 +98,7 @@ struct NewMainTabView: View {
             savedSprayPresetSync.configure(store: store, auth: auth)
             sprayEquipmentSync.configure(store: store, auth: auth)
             tractorSync.configure(store: store, auth: auth)
+            vineyardMachineSync.configure(store: store, auth: auth)
             fuelPurchaseSync.configure(store: store, auth: auth)
             tractorFuelLogSync.configure(store: store, auth: auth)
             operatorCategorySync.configure(store: store, auth: auth)
@@ -221,6 +223,7 @@ struct NewMainTabView: View {
         await savedSprayPresetSync.syncForSelectedVineyard()
         await sprayEquipmentSync.syncForSelectedVineyard()
         await tractorSync.syncForSelectedVineyard()
+        await vineyardMachineSync.syncForSelectedVineyard()
         await fuelPurchaseSync.syncForSelectedVineyard()
         await tractorFuelLogSync.syncForSelectedVineyard()
         await operatorCategorySync.syncForSelectedVineyard()
@@ -264,6 +267,7 @@ struct NewMainTabView: View {
             + savedSprayPresetSync.pendingUpsertCount
             + sprayEquipmentSync.pendingUpsertCount
             + tractorSync.pendingUpsertCount
+            + vineyardMachineSync.pendingUpsertCount
             + fuelPurchaseSync.pendingUpsertCount
             + tractorFuelLogSync.pendingUpsertCount
             + operatorCategorySync.pendingUpsertCount
@@ -291,6 +295,7 @@ struct NewMainTabView: View {
             + savedSprayPresetSync.pendingDeleteCount
             + sprayEquipmentSync.pendingDeleteCount
             + tractorSync.pendingDeleteCount
+            + vineyardMachineSync.pendingDeleteCount
             + fuelPurchaseSync.pendingDeleteCount
             + tractorFuelLogSync.pendingDeleteCount
             + operatorCategorySync.pendingDeleteCount

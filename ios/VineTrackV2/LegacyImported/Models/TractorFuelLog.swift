@@ -8,6 +8,10 @@ nonisolated struct TractorFuelLog: Codable, Identifiable, Sendable, Hashable {
     let id: UUID
     var vineyardId: UUID
     var tractorId: UUID?
+    /// Preferred link to a `VineyardMachine`. Nullable; `tractorId` is kept
+    /// as the legacy fallback link for rows created before the Vineyard
+    /// Machines model. New fuel logs should set this.
+    var machineId: UUID?
     var fillDateTime: Date
     var litresAdded: Double
     var engineHours: Double?
@@ -22,6 +26,7 @@ nonisolated struct TractorFuelLog: Codable, Identifiable, Sendable, Hashable {
         id: UUID = UUID(),
         vineyardId: UUID = UUID(),
         tractorId: UUID? = nil,
+        machineId: UUID? = nil,
         fillDateTime: Date = Date(),
         litresAdded: Double = 0,
         engineHours: Double? = nil,
@@ -35,6 +40,7 @@ nonisolated struct TractorFuelLog: Codable, Identifiable, Sendable, Hashable {
         self.id = id
         self.vineyardId = vineyardId
         self.tractorId = tractorId
+        self.machineId = machineId
         self.fillDateTime = fillDateTime
         self.litresAdded = litresAdded
         self.engineHours = engineHours
@@ -47,7 +53,7 @@ nonisolated struct TractorFuelLog: Codable, Identifiable, Sendable, Hashable {
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
-        case id, vineyardId, tractorId, fillDateTime, litresAdded, engineHours
+        case id, vineyardId, tractorId, machineId, fillDateTime, litresAdded, engineHours
         case operatorUserId, operatorName, costPerLitre, totalCost, filledToFull, notes
     }
 
@@ -56,6 +62,7 @@ nonisolated struct TractorFuelLog: Codable, Identifiable, Sendable, Hashable {
         id = try container.decode(UUID.self, forKey: .id)
         vineyardId = try container.decode(UUID.self, forKey: .vineyardId)
         tractorId = try container.decodeIfPresent(UUID.self, forKey: .tractorId)
+        machineId = try container.decodeIfPresent(UUID.self, forKey: .machineId)
         fillDateTime = try container.decodeIfPresent(Date.self, forKey: .fillDateTime) ?? Date()
         litresAdded = try container.decodeIfPresent(Double.self, forKey: .litresAdded) ?? 0
         engineHours = try container.decodeIfPresent(Double.self, forKey: .engineHours)

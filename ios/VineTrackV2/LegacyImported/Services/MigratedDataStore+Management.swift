@@ -7,6 +7,7 @@ extension MigratedDataStore {
     private enum MgmtKeys {
         static let paddocks = "vinetrack_paddocks"
         static let tractors = "vinetrack_tractors"
+        static let vineyardMachines = "vinetrack_vineyard_machines"
         static let fuelPurchases = "vinetrack_fuel_purchases"
         static let tractorFuelLogs = "vinetrack_tractor_fuel_logs"
         static let operatorCategories = "vinetrack_operator_categories"
@@ -125,6 +126,67 @@ extension MigratedDataStore {
         var all: [Tractor] = persistenceStore.load(key: MgmtKeys.tractors) ?? []
         all.removeAll { $0.id == id }
         persistenceStore.save(all, key: MgmtKeys.tractors)
+    }
+
+    // MARK: - Vineyard Machines
+
+    private func saveVineyardMachinesToDisk() {
+        guard let vineyardId = selectedVineyardId else { return }
+        var all: [VineyardMachine] = persistenceStore.load(key: MgmtKeys.vineyardMachines) ?? []
+        all.removeAll { $0.vineyardId == vineyardId }
+        all.append(contentsOf: vineyardMachines.filter { $0.vineyardId == vineyardId })
+        persistenceStore.save(all, key: MgmtKeys.vineyardMachines)
+    }
+
+    /// Active machines for the current vineyard, sorted by display name.
+    func machines(ofType type: VineyardMachineType? = nil) -> [VineyardMachine] {
+        vineyardMachines
+            .filter { $0.vineyardId == selectedVineyardId && (type == nil || $0.machineType == type) }
+            .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+    }
+
+    func addVineyardMachine(_ machine: VineyardMachine) {
+        guard let vineyardId = selectedVineyardId else { return }
+        var entry = machine
+        entry.vineyardId = vineyardId
+        vineyardMachines.append(entry)
+        saveVineyardMachinesToDisk()
+        onVineyardMachineChanged?(entry.id)
+    }
+
+    func updateVineyardMachine(_ machine: VineyardMachine) {
+        guard let idx = vineyardMachines.firstIndex(where: { $0.id == machine.id }) else { return }
+        vineyardMachines[idx] = machine
+        saveVineyardMachinesToDisk()
+        onVineyardMachineChanged?(machine.id)
+    }
+
+    func deleteVineyardMachine(_ machine: VineyardMachine) {
+        vineyardMachines.removeAll { $0.id == machine.id }
+        saveVineyardMachinesToDisk()
+        onVineyardMachineDeleted?(machine.id)
+    }
+
+    func applyRemoteVineyardMachineUpsert(_ machine: VineyardMachine) {
+        if let idx = vineyardMachines.firstIndex(where: { $0.id == machine.id }) {
+            vineyardMachines[idx] = machine
+        } else {
+            vineyardMachines.append(machine)
+        }
+        var all: [VineyardMachine] = persistenceStore.load(key: MgmtKeys.vineyardMachines) ?? []
+        if let idx = all.firstIndex(where: { $0.id == machine.id }) {
+            all[idx] = machine
+        } else {
+            all.append(machine)
+        }
+        persistenceStore.save(all, key: MgmtKeys.vineyardMachines)
+    }
+
+    func applyRemoteVineyardMachineDelete(_ id: UUID) {
+        vineyardMachines.removeAll { $0.id == id }
+        var all: [VineyardMachine] = persistenceStore.load(key: MgmtKeys.vineyardMachines) ?? []
+        all.removeAll { $0.id == id }
+        persistenceStore.save(all, key: MgmtKeys.vineyardMachines)
     }
 
     // MARK: - Fuel Purchases
