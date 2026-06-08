@@ -24,9 +24,7 @@ struct WorkTaskLogView: View {
     @State private var selectedTask: WorkTask?
     @State private var showAdd: Bool = false
 
-    private var currencyCode: String {
-        Locale.current.currency?.identifier ?? "USD"
-    }
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
 
     private var allTaskTypes: [String] {
         Array(Set(store.workTasks.map { $0.taskType }).union(WorkTaskTypeCatalog.defaults)).sorted()
@@ -122,7 +120,7 @@ struct WorkTaskLogView: View {
                         Text("Cost")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text(totalCost, format: .currency(code: currencyCode))
+                        Text(fmt.formatCurrency(totalCost))
                             .font(.title2.weight(.bold).monospacedDigit())
                             .foregroundStyle(VineyardTheme.leafGreen)
                     }
@@ -289,9 +287,7 @@ private struct WorkTaskLogRow: View {
     @Environment(\.accessControl) private var accessControl
     @Environment(WorkTaskSyncService.self) private var workTaskSync
 
-    private var currencyCode: String {
-        Locale.current.currency?.identifier ?? "USD"
-    }
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
 
     private var blockDisplay: String { task.blockDisplay(in: store) }
 
@@ -330,7 +326,7 @@ private struct WorkTaskLogRow: View {
                         Text("•")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
-                        Text("\(task.costPerPerson, format: .currency(code: currencyCode))/pp")
+                        Text("\(fmt.formatCurrency(task.costPerPerson))/pp")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -341,11 +337,11 @@ private struct WorkTaskLogRow: View {
 
             VStack(alignment: .trailing, spacing: 4) {
                 if accessControl?.canViewFinancials ?? false {
-                    Text(task.totalCost, format: .currency(code: currencyCode))
+                    Text(fmt.formatCurrency(task.totalCost))
                         .font(.subheadline.weight(.bold).monospacedDigit())
                         .foregroundStyle(VineyardTheme.leafGreen)
                 }
-                Text(task.date, format: .dateTime.day().month(.abbreviated).year())
+                Text(fmt.formatDate(task.date))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                 RecordSyncBadge(

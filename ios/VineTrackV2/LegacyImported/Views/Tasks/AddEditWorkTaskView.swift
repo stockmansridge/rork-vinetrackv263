@@ -31,9 +31,7 @@ struct AddEditWorkTaskView: View {
     private var isEditing: Bool { existingTask != nil }
     private var canDelete: Bool { accessControl?.canDelete ?? false }
 
-    private var currencyCode: String {
-        Locale.current.currency?.identifier ?? "USD"
-    }
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
 
     private var durationHours: Double {
         Double(durationText.replacingOccurrences(of: ",", with: ".")) ?? 0
@@ -227,14 +225,14 @@ struct AddEditWorkTaskView: View {
                                 .foregroundStyle(.secondary)
                         }
                         LabeledContent("Cost / Person") {
-                            Text(costPerPerson, format: .currency(code: currencyCode))
+                            Text(fmt.formatCurrency(costPerPerson))
                                 .foregroundStyle(.secondary)
                         }
                         HStack {
                             Text("Block Total")
                                 .font(.headline)
                             Spacer()
-                            Text(totalCost, format: .currency(code: currencyCode))
+                            Text(fmt.formatCurrency(totalCost))
                                 .font(.title3.weight(.bold))
                                 .foregroundStyle(VineyardTheme.leafGreen)
                         }
@@ -260,12 +258,12 @@ struct AddEditWorkTaskView: View {
                             blockAllocationRow(alloc)
                         }
                         LabeledContent("Total Area") {
-                            Text(totalSelectedArea > 0 ? String(format: "%.2f ha", totalSelectedArea) : "—")
+                            Text(totalSelectedArea > 0 ? fmt.formatArea(hectares: totalSelectedArea) : "—")
                                 .foregroundStyle(.secondary)
                         }
                         if (accessControl?.canViewFinancials ?? false) && totalSelectedArea > 0 {
-                            LabeledContent("Cost / ha") {
-                                Text(totalCost / totalSelectedArea, format: .currency(code: currencyCode))
+                            LabeledContent("Cost / \(fmt.areaUnitAbbreviation)") {
+                                Text("\(fmt.formatCurrency((totalCost / totalSelectedArea) / fmt.areaValue(hectares: 1)))/\(fmt.areaUnitAbbreviation)")
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -342,7 +340,7 @@ struct AddEditWorkTaskView: View {
                 Text(alloc.name)
                     .font(.subheadline.weight(.semibold))
                 Spacer()
-                Text(alloc.areaHa.map { String(format: "%.2f ha", $0) } ?? "— ha")
+                Text(alloc.areaHa.map { fmt.formatArea(hectares: $0) } ?? "— \(fmt.areaUnitAbbreviation)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -350,9 +348,9 @@ struct AddEditWorkTaskView: View {
                 Text("\(Int((alloc.pctOfTotal * 100).rounded()))%")
                 Text(String(format: "%.1fh", alloc.allocatedHours))
                 if accessControl?.canViewFinancials ?? false {
-                    Text(alloc.allocatedCost, format: .currency(code: currencyCode))
+                    Text(fmt.formatCurrency(alloc.allocatedCost))
                     if let cph = alloc.costPerHa {
-                        Text(cph, format: .currency(code: currencyCode)) + Text("/ha")
+                        Text("\(fmt.formatCurrency(cph / fmt.areaValue(hectares: 1)))/\(fmt.areaUnitAbbreviation)")
                     }
                 }
             }
@@ -378,7 +376,7 @@ struct AddEditWorkTaskView: View {
                         .foregroundStyle(res.wrappedValue.workerTypeName.isEmpty ? .secondary : .primary)
                     Spacer()
                     if accessControl?.canViewFinancials ?? false {
-                        Text(res.wrappedValue.hourlyRate, format: .currency(code: currencyCode))
+                        Text(fmt.formatCurrency(res.wrappedValue.hourlyRate))
                             .foregroundStyle(.secondary)
                             .font(.caption)
                     }

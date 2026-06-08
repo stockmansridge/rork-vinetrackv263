@@ -11,9 +11,7 @@ struct WorkTasksHubView: View {
     @State private var showCalculator: Bool = false
     @State private var showAddTask: Bool = false
 
-    private var currencyCode: String {
-        Locale.current.currency?.identifier ?? "USD"
-    }
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
 
     private var visibleTasks: [WorkTask] { store.workTasks.filter { !$0.isArchived } }
     private var totalTasks: Int { visibleTasks.count }
@@ -73,7 +71,7 @@ struct WorkTasksHubView: View {
                         Text("Total")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text(totalCost, format: .currency(code: currencyCode))
+                        Text(fmt.formatCurrency(totalCost))
                             .font(.title2.weight(.bold).monospacedDigit())
                             .foregroundStyle(VineyardTheme.leafGreen)
                     }
@@ -210,9 +208,7 @@ struct WorkTaskRow: View {
 
     @State private var showEdit: Bool = false
 
-    private var currencyCode: String {
-        Locale.current.currency?.identifier ?? "USD"
-    }
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
 
     var body: some View {
         Button {
@@ -252,7 +248,7 @@ struct WorkTaskRow: View {
                             Text("•")
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
-                            Text(task.totalCost, format: .currency(code: currencyCode))
+                            Text(fmt.formatCurrency(task.totalCost))
                                 .font(.caption2.weight(.medium))
                                 .foregroundStyle(VineyardTheme.leafGreen)
                         }

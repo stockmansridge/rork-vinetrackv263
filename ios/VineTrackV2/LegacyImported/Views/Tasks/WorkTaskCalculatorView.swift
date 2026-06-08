@@ -15,9 +15,7 @@ struct WorkTaskCalculatorView: View {
         case hours, people
     }
 
-    private var currencyCode: String {
-        Locale.current.currency?.identifier ?? "USD"
-    }
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
 
     private var hours: Double { Double(hoursText.replacingOccurrences(of: ",", with: ".")) ?? 0 }
     private var people: Int { max(Int(peopleText) ?? 0, 0) }
@@ -74,7 +72,7 @@ struct WorkTaskCalculatorView: View {
 
                     if let cat = selectedCategory {
                         LabeledContent("Hourly Rate") {
-                            Text(cat.costPerHour, format: .currency(code: currencyCode))
+                            Text(fmt.formatCurrency(cat.costPerHour))
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -118,7 +116,7 @@ struct WorkTaskCalculatorView: View {
 
             Section("Estimated Cost") {
                 LabeledContent("Per Person") {
-                    Text(perPersonCost, format: .currency(code: currencyCode))
+                    Text(fmt.formatCurrency(perPersonCost))
                         .foregroundStyle(.secondary)
                 }
                 LabeledContent("People") {
@@ -129,7 +127,7 @@ struct WorkTaskCalculatorView: View {
                     Text("Total")
                         .font(.headline)
                     Spacer()
-                    Text(totalCost, format: .currency(code: currencyCode))
+                    Text(fmt.formatCurrency(totalCost))
                         .font(.title3.weight(.bold))
                         .foregroundStyle(VineyardTheme.leafGreen)
                 }
