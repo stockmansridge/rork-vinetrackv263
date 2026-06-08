@@ -17,6 +17,7 @@ struct BackendSettingsView: View {
     @State private var showVineyardDetail: Bool = false
     @State private var isRefreshing: Bool = false
     @State private var refreshMessage: String?
+    @State private var searchText: String = ""
 
     #if DEBUG
     @State private var showBackendDiagnostic: Bool = false
@@ -40,6 +41,9 @@ struct BackendSettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                if isSearchActive {
+                    searchResultsSection
+                } else {
                 accountSection
                 vineyardSection
                 operationsSection
@@ -147,8 +151,10 @@ struct BackendSettingsView: View {
                 #endif
 
                 signOutSection
+                }
             }
             .navigationTitle("Settings")
+            .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search settings")
             .refreshable { await refreshVineyards() }
             .sheet(isPresented: $showVineyardSwitcher) {
                 BackendVineyardListView()
@@ -166,6 +172,197 @@ struct BackendSettingsView: View {
                 MigratedDataStoreDiagnosticView()
             }
             #endif
+        }
+    }
+
+    // MARK: - Settings search (UI-only)
+
+    /// A single searchable destination row. Search matches against the
+    /// title, subtitle and keyword list — display/navigation only, no
+    /// changes to data, sync, exports or settings logic.
+    private struct SettingsSearchItem: Identifiable {
+        let id = UUID()
+        let title: String
+        let subtitle: String
+        let keywords: [String]
+        let symbol: String
+        let color: Color
+        let destination: AnyView
+    }
+
+    private var isSearchActive: Bool {
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var searchableItems: [SettingsSearchItem] {
+        var items: [SettingsSearchItem] = [
+            SettingsSearchItem(
+                title: "Vineyard Setup",
+                subtitle: "Blocks, Region & Growth Stages",
+                keywords: ["blocks", "paddocks", "buttons", "growth stages", "region", "regional", "country", "currency", "units", "hectares", "acres", "litres", "gallons", "date", "reports", "exports", "international"],
+                symbol: "square.grid.2x2.fill",
+                color: VineyardTheme.leafGreen,
+                destination: AnyView(VineyardSetupHubView())
+            ),
+            SettingsSearchItem(
+                title: "Spray & Equipment",
+                subtitle: "Spray Management, Equipment & Tractors, Chemicals",
+                keywords: ["spray", "chemicals", "equipment", "tractors", "tank", "presets"],
+                symbol: "drop.fill",
+                color: .teal,
+                destination: AnyView(SprayEquipmentHubView())
+            ),
+            SettingsSearchItem(
+                title: "Team Operations",
+                subtitle: "Operator Categories",
+                keywords: ["operators", "categories", "team", "operations"],
+                symbol: "person.2.fill",
+                color: .blue,
+                destination: AnyView(TeamOperationsHubView())
+            ),
+            SettingsSearchItem(
+                title: "Trip Functions",
+                subtitle: "Built-ins and custom vineyard trip functions",
+                keywords: ["trips", "functions", "jobs"],
+                symbol: "wrench.and.screwdriver.fill",
+                color: VineyardTheme.earthBrown,
+                destination: AnyView(TripFunctionsSettingsView())
+            ),
+            SettingsSearchItem(
+                title: "Operation Preferences",
+                subtitle: "Season E-L, spray/tank, yield",
+                keywords: ["season", "spray", "tank", "yield", "el stage"],
+                symbol: "slider.horizontal.3",
+                color: .orange,
+                destination: AnyView(OperationPreferencesView())
+            ),
+            SettingsSearchItem(
+                title: "Subscription",
+                subtitle: subscriptionSubtitle,
+                keywords: ["subscription", "billing", "plan", "pro", "payment", "upgrade"],
+                symbol: "creditcard.fill",
+                color: .pink,
+                destination: AnyView(SubscriptionSettingsView())
+            ),
+            SettingsSearchItem(
+                title: "Preferences",
+                subtitle: "Appearance, season, tracking & photos",
+                keywords: ["appearance", "theme", "dark mode", "season", "tracking", "photos"],
+                symbol: "slider.horizontal.3",
+                color: .indigo,
+                destination: AnyView(PreferencesHubView())
+            ),
+            SettingsSearchItem(
+                title: "Alerts & Notifications",
+                subtitle: "Irrigation, pins, weather & spray reminders",
+                keywords: ["alerts", "notifications", "reminders", "irrigation", "weather", "spray"],
+                symbol: "bell.badge.fill",
+                color: .red,
+                destination: AnyView(AlertSettingsView())
+            ),
+            SettingsSearchItem(
+                title: "Weather Data & Forecasting",
+                subtitle: "Forecast source, station & sensors",
+                keywords: ["weather", "forecast", "station", "sensors", "rainfall"],
+                symbol: "cloud.sun.fill",
+                color: .orange,
+                destination: AnyView(WeatherDataSettingsView())
+            ),
+            SettingsSearchItem(
+                title: "Sync",
+                subtitle: "Cloud sync for pins, paddocks & trips",
+                keywords: ["sync", "cloud", "backup", "upload"],
+                symbol: "icloud.and.arrow.up",
+                color: .blue,
+                destination: AnyView(SyncSettingsView())
+            ),
+            SettingsSearchItem(
+                title: "Offline Readiness",
+                subtitle: "Check this device is ready for no-service areas",
+                keywords: ["offline", "no service", "readiness"],
+                symbol: "wifi.slash",
+                color: .green,
+                destination: AnyView(OfflineReadinessView())
+            ),
+            SettingsSearchItem(
+                title: "Contact Support",
+                subtitle: "Send feedback, feature requests or report an issue",
+                keywords: ["support", "help", "feedback", "contact", "bug"],
+                symbol: "envelope.fill",
+                color: .green,
+                destination: AnyView(SupportRequestView())
+            ),
+            SettingsSearchItem(
+                title: "Disclaimer",
+                subtitle: "Important usage notes",
+                keywords: ["disclaimer", "legal", "usage"],
+                symbol: "exclamationmark.shield.fill",
+                color: .orange,
+                destination: AnyView(DisclaimerInfoView())
+            ),
+            SettingsSearchItem(
+                title: "Request Account Deletion",
+                subtitle: "Permanently remove your account",
+                keywords: ["delete account", "remove account", "privacy"],
+                symbol: "person.crop.circle.badge.xmark",
+                color: .red,
+                destination: AnyView(AccountDeletionRequestView())
+            )
+        ]
+        if let vineyard = store.selectedVineyard {
+            items.append(SettingsSearchItem(
+                title: "Team & Access",
+                subtitle: "Manage members and invitations",
+                keywords: ["team", "members", "invitations", "access"],
+                symbol: "person.2.fill",
+                color: .teal,
+                destination: AnyView(BackendTeamAccessView(vineyardId: vineyard.id, vineyardName: vineyard.name))
+            ))
+            items.append(SettingsSearchItem(
+                title: "Roles & Permissions",
+                subtitle: "How access works for your team",
+                keywords: ["roles", "permissions", "access"],
+                symbol: "person.badge.shield.checkmark.fill",
+                color: .purple,
+                destination: AnyView(RolesPermissionsInfoView())
+            ))
+        }
+        return items
+    }
+
+    private var searchResults: [SettingsSearchItem] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return [] }
+        return searchableItems.filter { item in
+            item.title.lowercased().contains(query)
+                || item.subtitle.lowercased().contains(query)
+                || item.keywords.contains { $0.lowercased().contains(query) }
+        }
+    }
+
+    @ViewBuilder
+    private var searchResultsSection: some View {
+        if searchResults.isEmpty {
+            Section {
+                Text("No settings found.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            Section {
+                ForEach(searchResults) { item in
+                    NavigationLink {
+                        item.destination
+                    } label: {
+                        SettingsRow(
+                            title: item.title,
+                            subtitle: item.subtitle,
+                            symbol: item.symbol,
+                            color: item.color
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -336,7 +533,7 @@ struct BackendSettingsView: View {
             } label: {
                 SettingsRow(
                     title: "Vineyard Setup",
-                    subtitle: "Blocks, Buttons & Growth Stages",
+                    subtitle: "Blocks, Region & Growth Stages",
                     symbol: "square.grid.2x2.fill",
                     color: VineyardTheme.leafGreen
                 )
