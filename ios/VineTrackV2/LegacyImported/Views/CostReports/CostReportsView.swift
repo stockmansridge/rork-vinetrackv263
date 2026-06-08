@@ -22,6 +22,8 @@ struct CostReportsView: View {
 
     private var canViewCosting: Bool { accessControl.canViewCosting }
 
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
+
     private var vineyardId: UUID? { store.selectedVineyardId }
 
     private var allRows: [TripCostAllocation] {
@@ -110,8 +112,8 @@ struct CostReportsView: View {
                     Text(String(y)).tag(Int?.some(y))
                 }
             }
-            Picker("Block", selection: $selectedPaddockId) {
-                Text("All blocks").tag(UUID?.none)
+            Picker(fmt.blockTermCapitalised, selection: $selectedPaddockId) {
+                Text("All \(fmt.blockTermPlural)").tag(UUID?.none)
                 ForEach(paddocks, id: \.id) { p in
                     Text(p.name).tag(UUID?.some(p.id))
                 }
@@ -143,7 +145,7 @@ struct CostReportsView: View {
         let costPerTonne: Double? = totalYield > 0 && totalCost > 0 ? totalCost / totalYield : nil
 
         Section {
-            summaryRow("Total estimated cost", value: formatCurrency(totalCost))
+            summaryRow("Total estimated cost", value: fmt.formatCurrency(totalCost))
             HStack {
                 Text("Treated area")
                 Button {
@@ -155,13 +157,13 @@ struct CostReportsView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("About treated area")
                 Spacer()
-                Text(String(format: "%.2f ha", totalArea))
+                Text(fmt.formatArea(hectares: totalArea))
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
-            summaryRow("Cost / ha", value: costPerHa.map { String(format: "$%.2f/ha", $0) } ?? "—")
+            summaryRow("Cost / \(fmt.areaUnitAbbreviation)", value: costPerHa.map { "\(fmt.formatCurrency(fmt.perAreaValue(perHectare: $0)))/\(fmt.areaUnitAbbreviation)" } ?? "—")
             summaryRow("Yield", value: totalYield > 0 ? String(format: "%.2f t", totalYield) : "—")
-            summaryRow("Cost / tonne", value: costPerTonne.map { String(format: "$%.2f/t", $0) } ?? "—")
+            summaryRow("Cost / tonne", value: costPerTonne.map { "\(fmt.formatCurrency($0))/t" } ?? "—")
             if rows.isEmpty {
                 Text("No cost allocations yet — recalculate to populate.")
                     .font(.caption)
@@ -216,7 +218,7 @@ struct CostReportsView: View {
             }
         } header: {
             HStack(spacing: 6) {
-                Text("Season × Block × Variety")
+                Text("Season × \(fmt.blockTermCapitalised) × Variety")
                 if groups.contains(where: { $0.0.variety == "Unassigned variety" }) {
                     Button {
                         showUnassignedInfo = true
@@ -282,7 +284,7 @@ struct CostReportsView: View {
                 Text("\(String(key.seasonYear)) · \(key.paddockName)")
                     .font(.headline)
                 Spacer()
-                Text(formatCurrency(agg.total))
+                Text(fmt.formatCurrency(agg.total))
                     .font(.headline.monospacedDigit())
             }
             HStack(spacing: 8) {
@@ -297,7 +299,7 @@ struct CostReportsView: View {
                     Text(f.capitalized)
                 }
                 Text("·")
-                Text(String(format: "%.2f ha", agg.area))
+                Text(fmt.formatArea(hectares: agg.area))
                 if agg.yieldT > 0 {
                     Text("·")
                     Text(String(format: "%.1f t", agg.yieldT))
@@ -309,7 +311,7 @@ struct CostReportsView: View {
             .foregroundStyle(.secondary)
             HStack(spacing: 10) {
                 if agg.area > 0 {
-                    Text(String(format: "$%.0f/ha", agg.total / agg.area))
+                    Text("\(fmt.formatCurrency(fmt.perAreaValue(perHectare: agg.total / agg.area)))/\(fmt.areaUnitAbbreviation)")
                 }
                 if agg.yieldT > 0 {
                     Text(String(format: "$%.0f/t", agg.total / agg.yieldT))
@@ -423,12 +425,6 @@ struct CostReportsView: View {
         }
     }
 
-    private func formatCurrency(_ value: Double) -> String {
-        let f = NumberFormatter()
-        f.numberStyle = .currency
-        f.maximumFractionDigits = 0
-        return f.string(from: NSNumber(value: value)) ?? String(format: "$%.0f", value)
-    }
 }
 
 // MARK: - Detail drilldown
@@ -437,6 +433,8 @@ struct CostBreakdownDetailView: View {
     let rows: [TripCostAllocation]
     let title: String
     @Environment(MigratedDataStore.self) private var store
+
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
 
     var body: some View {
         List {
@@ -452,12 +450,12 @@ struct CostBreakdownDetailView: View {
                             Text(tripTitle(for: row))
                                 .font(.subheadline.weight(.semibold))
                             Spacer()
-                            Text(formatCurrency(row.totalCost ?? 0))
+                            Text(fmt.formatCurrency(row.totalCost ?? 0))
                                 .font(.subheadline.monospacedDigit())
                         }
                         HStack(spacing: 6) {
                             if let f = row.tripFunction { Text(f.capitalized) }
-                            if let a = row.allocationAreaHa { Text("· \(String(format: "%.2f ha", a))") }
+                            if let a = row.allocationAreaHa { Text("· \(fmt.formatArea(hectares: a))") }
                             if let y = row.yieldTonnes { Text("· \(String(format: "%.1f t", y))") }
                         }
                         .font(.caption)
@@ -480,17 +478,10 @@ struct CostBreakdownDetailView: View {
 
     private func tripTitle(for row: TripCostAllocation) -> String {
         if let trip = store.trips.first(where: { $0.id == row.tripId }) {
-            let date = trip.startTime.formatted(date: .abbreviated, time: .omitted)
+            let date = fmt.formatDate(trip.startTime)
             return "\(trip.tripFunction?.capitalized ?? "Trip") · \(date)"
         }
         return "Trip"
-    }
-
-    private func formatCurrency(_ value: Double) -> String {
-        let f = NumberFormatter()
-        f.numberStyle = .currency
-        f.maximumFractionDigits = 0
-        return f.string(from: NSNumber(value: value)) ?? String(format: "$%.0f", value)
     }
 }
 

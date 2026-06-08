@@ -42,6 +42,7 @@ struct TripDetailView: View {
     }
 
     private var tz: TimeZone { store.settings.resolvedTimeZone }
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
 
     private var displayName: String {
         if let record = sprayRecord, !record.sprayReference.isEmpty {
@@ -552,12 +553,12 @@ struct TripDetailView: View {
                 valueOverride: r.treatedAreaHa.map { formatHectares($0) } ?? "—"
             )
             costLineRow(
-                label: "Cost per ha",
+                label: "Cost per \(fmt.areaUnitAbbreviation)",
                 detail: nil,
                 amount: 0,
                 showAmount: false,
                 icon: "dollarsign.square",
-                valueOverride: r.costPerHa.map { "\(formatCurrency($0))/ha" } ?? "—"
+                valueOverride: r.costPerHa.map { "\(formatCurrency(fmt.perAreaValue(perHectare: $0)))/\(fmt.areaUnitAbbreviation)" } ?? "—"
             )
             if r.costPerHa == nil, let w = r.areaWarning {
                 warningRow(w)
@@ -600,9 +601,9 @@ struct TripDetailView: View {
         // Show the fuel basis, rate and litres even when cost per litre is
         // unavailable, as long as we could estimate litres.
         guard f.litres > 0, let rate = f.fuelUsageLPerHour, rate > 0 else { return nil }
-        var parts: [String] = ["\(formatLitres(f.litres)) · \(String(format: "%.1f", rate)) L/hr"]
+        var parts: [String] = ["\(formatLitres(f.litres)) · \(fmt.formatFuelRatePerHour(litresPerHour: rate))"]
         if let perL = f.costPerLitre {
-            parts.append("\(formatCurrency(perL))/L")
+            parts.append(fmt.formatFuelCostPerUnit(perLitre: perL))
         }
         parts.append(f.basis.label)
         return parts.joined(separator: " · ")
@@ -638,7 +639,7 @@ struct TripDetailView: View {
     }
 
     private func formatHectares(_ value: Double) -> String {
-        String(format: "%.2f ha", value)
+        fmt.formatArea(hectares: value)
     }
 
     private func formatTonnes(_ value: Double) -> String {
@@ -659,10 +660,7 @@ struct TripDetailView: View {
     }
 
     private func formatCurrency(_ value: Double) -> String {
-        let f = NumberFormatter()
-        f.numberStyle = .currency
-        f.maximumFractionDigits = 2
-        return f.string(from: NSNumber(value: value)) ?? String(format: "$%.2f", value)
+        fmt.formatCurrency(value)
     }
 
     private func formatHours(_ hours: Double) -> String {
@@ -670,7 +668,7 @@ struct TripDetailView: View {
     }
 
     private func formatLitres(_ litres: Double) -> String {
-        String(format: "%.1f L", litres)
+        fmt.formatFuel(litres: litres)
     }
 
     private func completenessIcon(_ c: TripCostService.CostingCompleteness) -> String {
