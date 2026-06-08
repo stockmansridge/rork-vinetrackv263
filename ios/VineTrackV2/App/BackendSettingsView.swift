@@ -188,6 +188,9 @@ struct BackendSettingsView: View {
         let symbol: String
         let color: Color
         let destination: AnyView
+        /// Parent top-level card this screen lives under, shown as a
+        /// breadcrumb path in search results (nil for top-level cards).
+        var parent: String? = nil
     }
 
     private var isSearchActive: Bool {
@@ -309,6 +312,9 @@ struct BackendSettingsView: View {
                 destination: AnyView(AccountDeletionRequestView())
             )
         ]
+        // Child setup screens — indexed so search can navigate one level
+        // deeper than the top-level cards. Display/navigation only.
+        items.append(contentsOf: childSettingsItems)
         if let vineyard = store.selectedVineyard {
             items.append(SettingsSearchItem(
                 title: "Team & Access",
@@ -327,6 +333,98 @@ struct BackendSettingsView: View {
                 destination: AnyView(RolesPermissionsInfoView())
             ))
         }
+        return items
+    }
+
+    /// Child setup screens that live under the top-level cards. Each
+    /// carries its parent breadcrumb so search can deep-link directly.
+    private var childSettingsItems: [SettingsSearchItem] {
+        var items: [SettingsSearchItem] = [
+            // Under Vineyard Setup
+            SettingsSearchItem(
+                title: "Region & Units",
+                subtitle: "Country, currency & units",
+                keywords: ["region", "regional", "currency", "units", "country", "acres", "gallons", "date format", "hectares", "litres", "terminology", "international"],
+                symbol: "ruler",
+                color: .teal,
+                destination: AnyView(RegionUnitsSettingsView()),
+                parent: "Vineyard Setup"
+            ),
+            SettingsSearchItem(
+                title: "Paddocks / Blocks",
+                subtitle: "Map, rows & vine counts",
+                keywords: ["blocks", "paddocks", "rows", "vines", "map"],
+                symbol: "square.grid.2x2.fill",
+                color: VineyardTheme.leafGreen,
+                destination: AnyView(VineyardSetupHubView()),
+                parent: "Vineyard Setup"
+            ),
+            SettingsSearchItem(
+                title: "Grape Varieties",
+                subtitle: "Master & custom varieties",
+                keywords: ["varieties", "grapes", "cultivar", "clone"],
+                symbol: "leaf.circle",
+                color: VineyardTheme.leafGreen,
+                destination: AnyView(GrapeVarietyManagementView()),
+                parent: "Vineyard Setup"
+            ),
+            SettingsSearchItem(
+                title: "Growth Stage Images",
+                subtitle: "Reference images for E-L stages",
+                keywords: ["growth stages", "images", "el stage", "phenology"],
+                symbol: "photo.on.rectangle.angled",
+                color: VineyardTheme.leafGreen,
+                destination: AnyView(GrowthStageImagesSettingsView()),
+                parent: "Vineyard Setup"
+            ),
+            // Under Spray & Equipment
+            SettingsSearchItem(
+                title: "Spray Management",
+                subtitle: "Presets and programs",
+                keywords: ["spray", "presets", "programs", "tank"],
+                symbol: "drop.fill",
+                color: .teal,
+                destination: AnyView(SprayManagementSettingsView()),
+                parent: "Spray & Equipment"
+            ),
+            SettingsSearchItem(
+                title: "Equipment & Tractors",
+                subtitle: "Sprayers, tractors, fuel",
+                keywords: ["equipment", "tractors", "sprayers", "fuel", "machinery"],
+                symbol: "wrench.and.screwdriver.fill",
+                color: VineyardTheme.earthBrown,
+                destination: AnyView(EquipmentManagementView()),
+                parent: "Spray & Equipment"
+            ),
+            SettingsSearchItem(
+                title: "Chemicals",
+                subtitle: "Saved chemical library",
+                keywords: ["chemicals", "library", "products", "sprays"],
+                symbol: "flask.fill",
+                color: .purple,
+                destination: AnyView(ChemicalsManagementView()),
+                parent: "Spray & Equipment"
+            ),
+            SettingsSearchItem(
+                title: "Saved Inputs",
+                subtitle: "Seed, fertiliser & inputs library",
+                keywords: ["saved inputs", "seed", "fertiliser", "fertilizer", "inputs"],
+                symbol: "leaf.fill",
+                color: VineyardTheme.leafGreen,
+                destination: AnyView(SavedInputsManagementView()),
+                parent: "Spray & Equipment"
+            ),
+            // Under Team Operations
+            SettingsSearchItem(
+                title: "Operator Categories",
+                subtitle: "Operator labour categories",
+                keywords: ["operators", "categories", "labour", "labor", "team"],
+                symbol: "person.badge.clock.fill",
+                color: .blue,
+                destination: AnyView(OperatorCategoriesView()),
+                parent: "Team Operations"
+            )
+        ]
         return items
     }
 
@@ -354,13 +452,34 @@ struct BackendSettingsView: View {
                     NavigationLink {
                         item.destination
                     } label: {
-                        SettingsRow(
-                            title: item.title,
-                            subtitle: item.subtitle,
-                            symbol: item.symbol,
-                            color: item.color
-                        )
+                        searchResultLabel(for: item)
                     }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func searchResultLabel(for item: SettingsSearchItem) -> some View {
+        HStack(spacing: 12) {
+            SettingsIconTile(symbol: item.symbol, color: item.color)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.primary)
+                if let parent = item.parent {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 8, weight: .semibold))
+                        Text(parent)
+                    }
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.tertiary)
+                }
+                if !item.subtitle.isEmpty {
+                    Text(item.subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
