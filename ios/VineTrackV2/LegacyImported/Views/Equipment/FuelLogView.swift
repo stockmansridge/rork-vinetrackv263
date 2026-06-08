@@ -115,9 +115,13 @@ struct FuelLogRow: View {
     let log: TractorFuelLog
     let rate: TractorFuelRateResult
     @Environment(\.accessControl) private var accessControl
+    @Environment(MigratedDataStore.self) private var store
+
+    /// Region-aware display formatter (AU defaults when no settings exist).
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
 
     private var litresText: String {
-        "\(String(format: "%.1f", log.litresAdded)) L"
+        fmt.formatFuel(litres: log.litresAdded)
     }
 
     var body: some View {
@@ -147,7 +151,7 @@ struct FuelLogRow: View {
                         .foregroundStyle(.secondary)
                 }
                 if (accessControl?.canViewFinancials ?? false), let cpl = log.costPerLitre {
-                    Text("$\(String(format: "%.2f", cpl))/L")
+                    Text(fmt.formatFuelCostPerUnit(perLitre: cpl))
                         .font(.caption.weight(.medium))
                         .foregroundStyle(VineyardTheme.olive)
                 }
@@ -155,7 +159,7 @@ struct FuelLogRow: View {
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
                 if let lph = rate.litresPerHour {
-                    Text("\(String(format: "%.1f", lph)) L/hr")
+                    Text(fmt.formatFuelRatePerHour(litresPerHour: lph))
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(rate.reliability == .reliable ? VineyardTheme.olive : .orange)
                     Text(rate.reliability == .reliable ? "calculated" : "estimate")

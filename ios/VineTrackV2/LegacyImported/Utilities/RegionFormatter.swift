@@ -88,6 +88,25 @@ nonisolated struct RegionFormatter: Sendable {
         return "\(Self.number(value, fractionDigits: fractionDigits)) \(fuelUnitAbbreviation)"
     }
 
+    /// Fuel cost per fuel unit. Input is the canonical cost **per litre**; for
+    /// imperial/US fuel this is converted to cost **per gallon** so the rate and
+    /// its unit label stay consistent (e.g. "$1.85/L" (AU) or "$7.00/gal" (US)).
+    func formatFuelCostPerUnit(perLitre: Double) -> String {
+        let perUnit: Double
+        switch settings.fuel {
+        case .litres: perUnit = perLitre
+        case .gallons: perUnit = perLitre / gallonsPerLitre
+        }
+        return "\(formatCurrency(perUnit))/\(fuelUnitAbbreviation)"
+    }
+
+    /// Fuel consumption rate per engine hour. Input is canonical litres/hour;
+    /// converts to gal/hr for imperial/US (e.g. "12.5 L/hr" or "3.3 gal/hr").
+    func formatFuelRatePerHour(litresPerHour: Double, fractionDigits: Int = 1) -> String {
+        let value = fuelValue(litres: litresPerHour)
+        return "\(Self.number(value, fractionDigits: fractionDigits)) \(fuelUnitAbbreviation)/hr"
+    }
+
     /// US vs imperial gallon depending on the organisation's country.
     private var gallonsPerLitre: Double {
         settings.usesUSGallon ? Self.usGallonsPerLitre : Self.imperialGallonsPerLitre

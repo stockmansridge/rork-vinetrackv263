@@ -185,16 +185,20 @@ struct TractorRow: View {
 struct FuelPurchaseRow: View {
     let purchase: FuelPurchase
     @Environment(\.accessControl) private var accessControl
+    @Environment(MigratedDataStore.self) private var store
+
+    /// Region-aware display formatter (AU defaults when no settings exist).
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
 
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
                 if accessControl?.canViewFinancials ?? false {
-                    Text("\(String(format: "%.0f", purchase.volumeLitres)) L — $\(String(format: "%.2f", purchase.totalCost))")
+                    Text("\(fmt.formatFuel(litres: purchase.volumeLitres, fractionDigits: 0)) — \(fmt.formatCurrency(purchase.totalCost))")
                         .font(.body.weight(.medium))
                         .foregroundStyle(.primary)
                 } else {
-                    Text("\(String(format: "%.0f", purchase.volumeLitres)) L")
+                    Text(fmt.formatFuel(litres: purchase.volumeLitres, fractionDigits: 0))
                         .font(.body.weight(.medium))
                         .foregroundStyle(.primary)
                 }
@@ -203,7 +207,7 @@ struct FuelPurchaseRow: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     if accessControl?.canViewFinancials ?? false {
-                        Text("$\(String(format: "%.2f", purchase.costPerLitre))/L")
+                        Text(fmt.formatFuelCostPerUnit(perLitre: purchase.costPerLitre))
                             .font(.caption.weight(.medium))
                             .foregroundStyle(VineyardTheme.olive)
                     }

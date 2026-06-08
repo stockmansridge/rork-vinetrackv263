@@ -18,6 +18,9 @@ struct FuelView: View {
 
     private var canManageSetup: Bool { accessControl?.canManageSetup ?? false }
 
+    /// Region-aware display formatter (AU defaults when no settings exist).
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
+
     // MARK: - Fuel Log data (mirrors FuelLogView)
 
     private var vineyardTractors: [Tractor] {
@@ -118,7 +121,7 @@ struct FuelView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         if accessControl?.canViewFinancials ?? false {
-                            Text("$\(String(format: "%.2f", store.seasonFuelCostPerLitre))/L")
+                            Text(fmt.formatFuelCostPerUnit(perLitre: store.seasonFuelCostPerLitre))
                                 .font(.headline.bold())
                                 .foregroundStyle(VineyardTheme.olive)
                         }
@@ -129,7 +132,7 @@ struct FuelView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         let totalVol = store.fuelPurchases.reduce(0) { $0 + $1.volumeLitres }
-                        Text("\(String(format: "%.0f", totalVol)) L")
+                        Text(fmt.formatFuel(litres: totalVol, fractionDigits: 0))
                             .font(.subheadline.weight(.medium))
                     }
                 }
