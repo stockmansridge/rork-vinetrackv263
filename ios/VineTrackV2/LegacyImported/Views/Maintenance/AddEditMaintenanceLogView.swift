@@ -9,7 +9,7 @@ struct AddEditMaintenanceLogView: View {
     let existingLog: MaintenanceLog?
 
     @State private var itemName: String = ""
-    @State private var showAddOther: Bool = false
+    @State private var activeAddSheet: AddSheet?
     @State private var hours: String = ""
     @State private var machineHours: String = ""
     @State private var workCompleted: String = ""
@@ -24,6 +24,16 @@ struct AddEditMaintenanceLogView: View {
     @State private var showDeleteAlert: Bool = false
 
     private var isEditing: Bool { existingLog != nil }
+
+    /// Which add flow the + menu launches. Each opens the matching equipment
+    /// add sheet; the selection still saves as a plain `itemName` string.
+    private enum AddSheet: Identifiable {
+        case tractor
+        case sprayEquipment
+        case vineyardMachine
+        case otherEquipment
+        var id: Int { hashValue }
+    }
 
     private var otherEquipmentItems: [EquipmentItem] {
         guard let vid = store.selectedVineyardId else { return [] }
@@ -99,8 +109,27 @@ struct AddEditMaintenanceLogView: View {
                             .contentShape(Rectangle())
                         }
                         if accessControl?.canManageSetup ?? false {
-                            Button {
-                                showAddOther = true
+                            Menu {
+                                Button {
+                                    activeAddSheet = .tractor
+                                } label: {
+                                    Label("Add Tractor", systemImage: "tractor.fill")
+                                }
+                                Button {
+                                    activeAddSheet = .sprayEquipment
+                                } label: {
+                                    Label("Add Spray Equipment", systemImage: "drop.fill")
+                                }
+                                Button {
+                                    activeAddSheet = .vineyardMachine
+                                } label: {
+                                    Label("Add Vineyard Machine", systemImage: "car.fill")
+                                }
+                                Button {
+                                    activeAddSheet = .otherEquipment
+                                } label: {
+                                    Label("Add Other Equipment & Asset", systemImage: "shippingbox.fill")
+                                }
                             } label: {
                                 Image(systemName: "plus.circle.fill")
                                     .font(.title3)
@@ -297,9 +326,18 @@ struct AddEditMaintenanceLogView: View {
             } message: {
                 Text("Are you sure you want to delete this maintenance record?")
             }
-            .sheet(isPresented: $showAddOther) {
-                OtherEquipmentFormSheet(item: nil) { saved in
-                    itemName = saved.displayName
+            .sheet(item: $activeAddSheet) { sheet in
+                switch sheet {
+                case .tractor:
+                    TractorFormSheet(tractor: nil)
+                case .sprayEquipment:
+                    EquipmentFormSheet(equipment: nil)
+                case .vineyardMachine:
+                    VineyardMachineFormSheet(machine: nil)
+                case .otherEquipment:
+                    OtherEquipmentFormSheet(item: nil) { saved in
+                        itemName = saved.displayName
+                    }
                 }
             }
             .onAppear {
