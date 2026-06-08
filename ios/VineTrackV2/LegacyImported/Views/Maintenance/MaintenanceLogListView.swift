@@ -103,7 +103,7 @@ struct MaintenanceLogListView: View {
                     Text("Total")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text(totalPartsCost + totalLabourCost, format: .currency(code: currencyCode))
+                    Text(fmt.formatCurrency(totalPartsCost + totalLabourCost))
                         .font(.title2.weight(.bold).monospacedDigit())
                         .foregroundStyle(VineyardTheme.earthBrown)
                 }
@@ -144,7 +144,7 @@ struct MaintenanceLogListView: View {
             Image(systemName: icon)
                 .font(.title3)
                 .foregroundStyle(color)
-            Text(value, format: .currency(code: currencyCode))
+            Text(fmt.formatCurrency(value))
                 .font(.subheadline.weight(.bold).monospacedDigit())
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
@@ -225,7 +225,7 @@ struct MaintenanceLogListView: View {
                             Text("•")
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
-                            Text(log.totalCost, format: .currency(code: currencyCode))
+                            Text(fmt.formatCurrency(log.totalCost))
                                 .font(.caption2.weight(.medium))
                                 .foregroundStyle(VineyardTheme.earthBrown)
                         }
@@ -244,12 +244,9 @@ struct MaintenanceLogListView: View {
                 Spacer()
 
                 VStack(alignment: .trailing, spacing: 4) {
-                    Text(log.date, format: .dateTime.day().month(.abbreviated))
+                    Text(fmt.formatDate(log.date))
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
-                    Text(log.date, format: .dateTime.year())
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
                 }
             }
             .padding(14)
@@ -275,7 +272,5 @@ struct MaintenanceLogListView: View {
         .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 14))
     }
 
-    private var currencyCode: String {
-        Locale.current.currency?.identifier ?? "USD"
-    }
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
 }

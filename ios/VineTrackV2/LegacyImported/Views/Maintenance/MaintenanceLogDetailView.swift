@@ -61,7 +61,7 @@ struct MaintenanceLogDetailView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(currentLog.itemName)
                     .font(.title3.weight(.bold))
-                Text(currentLog.date, format: .dateTime.day().month(.wide).year())
+                Text(fmt.formatDate(currentLog.date))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 if let by = currentLog.createdBy, !by.isEmpty {
@@ -144,7 +144,7 @@ struct MaintenanceLogDetailView: View {
                 Text("Total")
                     .font(.subheadline.weight(.bold))
                 Spacer()
-                Text(currentLog.totalCost, format: .currency(code: currencyCode))
+                Text(fmt.formatCurrency(currentLog.totalCost))
                     .font(.title3.weight(.bold).monospacedDigit())
                     .foregroundStyle(VineyardTheme.earthBrown)
             }
@@ -155,7 +155,7 @@ struct MaintenanceLogDetailView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text(currentLog.totalCost / currentLog.hours, format: .currency(code: currencyCode))
+                    Text(fmt.formatCurrency(currentLog.totalCost / currentLog.hours))
                         .font(.caption.weight(.medium).monospacedDigit())
                         .foregroundStyle(.secondary)
                     Text("/hr")
@@ -178,7 +178,7 @@ struct MaintenanceLogDetailView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             Spacer()
-            Text(amount, format: .currency(code: currencyCode))
+            Text(fmt.formatCurrency(amount))
                 .font(.subheadline.weight(.medium).monospacedDigit())
         }
     }
@@ -238,7 +238,5 @@ struct MaintenanceLogDetailView: View {
         }
     }
 
-    private var currencyCode: String {
-        Locale.current.currency?.identifier ?? "USD"
-    }
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
 }

@@ -207,7 +207,7 @@ struct AddEditMaintenanceLogView: View {
                             Text("Total")
                                 .fontWeight(.semibold)
                             Spacer()
-                            Text(computedTotal, format: .currency(code: currencyCode))
+                            Text(fmt.formatCurrency(computedTotal))
                                 .fontWeight(.semibold)
                                 .foregroundStyle(VineyardTheme.earthBrown)
                         }
@@ -362,12 +362,12 @@ struct AddEditMaintenanceLogView: View {
         (Double(partsCost) ?? 0) + (Double(labourCost) ?? 0)
     }
 
-    private var currencyCode: String {
-        Locale.current.currency?.identifier ?? "USD"
-    }
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
 
     private var currencySymbol: String {
-        Locale.current.currencySymbol ?? "$"
+        fmt.formatCurrency(0)
+            .components(separatedBy: CharacterSet(charactersIn: "0123456789.,"))
+            .first(where: { !$0.isEmpty }) ?? "$"
     }
 
     private func saveLog() {
