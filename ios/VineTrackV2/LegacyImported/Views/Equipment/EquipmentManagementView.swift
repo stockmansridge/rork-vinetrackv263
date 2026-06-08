@@ -3,12 +3,6 @@ import SwiftUI
 struct EquipmentManagementView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(\.accessControl) private var accessControl
-    @State private var showAddSheet: Bool = false
-    @State private var editingEquipment: SprayEquipmentItem?
-    @State private var showAddTractorSheet: Bool = false
-    @State private var editingTractor: Tractor?
-    @State private var showAddFuelSheet: Bool = false
-    @State private var editingFuelPurchase: FuelPurchase?
 
     private var canManageSetup: Bool { accessControl?.canManageSetup ?? false }
 
@@ -44,261 +38,77 @@ struct EquipmentManagementView: View {
         return "\(count) fill\(count == 1 ? "" : "s") recorded"
     }
 
+    private var fuelPurchaseSubtitle: String {
+        let count = store.fuelPurchases.count
+        if count == 0 { return "Track cost per litre for the season" }
+        return "\(count) purchase\(count == 1 ? "" : "s") recorded"
+    }
+
+    private func navCard(title: String, subtitle: String) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.body.weight(.medium))
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+    }
+
     var body: some View {
         List {
             Section {
                 NavigationLink {
                     VineyardMachineManagementView()
                 } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Manage Vineyard Machines")
-                                .font(.body.weight(.medium))
-                            Text(machineSubtitle)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                    }
+                    navCard(title: "Manage Vineyard Machines", subtitle: machineSubtitle)
                 }
             } header: {
-                HStack {
-                    Label("Vineyard Machines", systemImage: "gearshape.2.fill")
-                        .font(.caption.weight(.semibold))
-                        .textCase(.uppercase)
-                    Spacer()
-                }
+                sectionHeader("Vineyard Machines", systemImage: "gearshape.2.fill")
             } footer: {
-                Text("Tractors, ATVs, side-by-sides, harvesters, utility vehicles and other powered machines used directly for vineyard work. Used for Fuel Log and job costing where enabled.")
-            }
-
-            Section {
-                ForEach(store.tractors) { tractor in
-                    Group {
-                        if canManageSetup {
-                            Button { editingTractor = tractor } label: { TractorRow(tractor: tractor) }
-                        } else {
-                            TractorRow(tractor: tractor)
-                        }
-                    }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                        if canManageSetup {
-                            Button(role: .destructive) {
-                                store.deleteTractor(tractor)
-                            } label: {
-                                Label("Delete", systemImage: "trash")
-                            }
-                        }
-                    }
-                }
-            } header: {
-                HStack {
-                    Label("Tractors", systemImage: "truck.pickup.side.fill")
-                        .font(.caption.weight(.semibold))
-                        .textCase(.uppercase)
-                    Spacer()
-                    if canManageSetup {
-                        Button {
-                            showAddTractorSheet = true
-                        } label: {
-                            Image(systemName: "plus.circle.fill")
-                                .font(.body)
-                        }
-                    }
-                }
-            } footer: {
-                if canManageSetup {
-                    Text("Tractors also appear under Vineyard Machines. Fuel usage (L/hr) can typically be found in your tractor's user manual under engine specifications.")
-                }
-            }
-
-            Section {
-                ForEach(store.sprayEquipment) { item in
-                    Group {
-                        if canManageSetup {
-                            Button { editingEquipment = item } label: { EquipmentRow(equipment: item) }
-                        } else {
-                            EquipmentRow(equipment: item)
-                        }
-                    }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                        if canManageSetup {
-                            Button(role: .destructive) {
-                                store.deleteSprayEquipment(item)
-                            } label: {
-                                Label("Delete", systemImage: "trash")
-                            }
-                        }
-                    }
-                }
-            } header: {
-                HStack {
-                    Label("Spray Rigs & Tanks", systemImage: "wrench.and.screwdriver")
-                        .font(.caption.weight(.semibold))
-                        .textCase(.uppercase)
-                    Spacer()
-                    if canManageSetup {
-                        Button {
-                            showAddSheet = true
-                        } label: {
-                            Image(systemName: "plus.circle.fill")
-                                .font(.body)
-                        }
-                    }
-                }
-            } footer: {
-                if !canManageSetup {
-                    Text("Setup data is managed by vineyard owners and managers.")
-                }
-            }
-
-            Section {
-                NavigationLink {
-                    OtherEquipmentManagementView()
-                } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Manage Other Items")
-                                .font(.body.weight(.medium))
-                            Text(otherItemsSubtitle)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                    }
-                }
-            } header: {
-                HStack {
-                    Label("Other Equipment & Assets", systemImage: "shippingbox.fill")
-                        .font(.caption.weight(.semibold))
-                        .textCase(.uppercase)
-                    Spacer()
-                }
-            } footer: {
-                Text("Trailers, implements, tools, irrigation parts, workshop gear and other non-fuel-tracked assets. Not used for Fuel Log or machine fuel costing.")
+                Text("Tractors, ATVs, side-by-sides, harvesters, utility vehicles and other powered machines used directly for vineyard work.")
             }
 
             Section {
                 NavigationLink {
                     FuelLogView()
                 } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Fuel Log")
-                                .font(.body.weight(.medium))
-                            Text(fuelLogSubtitle)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                    }
+                    navCard(title: "Fuel Log", subtitle: fuelLogSubtitle)
+                }
+                NavigationLink {
+                    FuelPurchasesView()
+                } label: {
+                    navCard(title: "Fuel Purchases", subtitle: fuelPurchaseSubtitle)
                 }
             } header: {
-                HStack {
-                    Label("Fuel Log", systemImage: "gauge.with.needle")
-                        .font(.caption.weight(.semibold))
-                        .textCase(.uppercase)
-                    Spacer()
-                }
+                sectionHeader("Fuel", systemImage: "fuelpump.fill")
             } footer: {
-                Text("Record litres of diesel added and engine hours each time a tractor is filled. VineTrack calculates litres per hour from consecutive fills. Operators can record fills.")
+                Text("Record diesel fills against vineyard machines to calculate fuel use, and log fuel purchases to track cost per litre.")
             }
 
             Section {
-                ForEach(store.fuelPurchases.sorted(by: { $0.date > $1.date })) { purchase in
-                    Group {
-                        if canManageSetup {
-                            Button { editingFuelPurchase = purchase } label: { FuelPurchaseRow(purchase: purchase) }
-                        } else {
-                            FuelPurchaseRow(purchase: purchase)
-                        }
-                    }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                        if canManageSetup {
-                            Button(role: .destructive) {
-                                store.deleteFuelPurchase(purchase)
-                            } label: {
-                                Label("Delete", systemImage: "trash")
-                            }
-                        }
-                    }
-                }
-
-                if !store.fuelPurchases.isEmpty {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Season Average")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            if accessControl?.canViewFinancials ?? false {
-                                Text("$\(String(format: "%.2f", store.seasonFuelCostPerLitre))/L")
-                                    .font(.headline.bold())
-                                    .foregroundStyle(VineyardTheme.olive)
-                            }
-                        }
-                        Spacer()
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text("Total Purchased")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            let totalVol = store.fuelPurchases.reduce(0) { $0 + $1.volumeLitres }
-                            Text("\(String(format: "%.0f", totalVol)) L")
-                                .font(.subheadline.weight(.medium))
-                        }
-                    }
-                    .padding(.vertical, 4)
+                NavigationLink {
+                    OtherEquipmentManagementView()
+                } label: {
+                    navCard(title: "Manage Other Items", subtitle: otherItemsSubtitle)
                 }
             } header: {
-                HStack {
-                    Label("Fuel Purchases", systemImage: "fuelpump.circle.fill")
-                        .font(.caption.weight(.semibold))
-                        .textCase(.uppercase)
-                    Spacer()
-                    if canManageSetup {
-                        Button {
-                            showAddFuelSheet = true
-                        } label: {
-                            Image(systemName: "plus.circle.fill")
-                                .font(.body)
-                        }
-                    }
-                }
+                sectionHeader("Other Equipment & Assets", systemImage: "shippingbox.fill")
             } footer: {
-                if canManageSetup {
-                    Text("Record fuel purchases to calculate an average cost per litre for the season.")
-                }
+                Text("Trailers, implements, tools, irrigation parts, workshop gear and other non-fuel-tracked assets.")
             }
         }
         .listStyle(.insetGrouped)
         .navigationTitle("Equipment")
         .navigationBarTitleDisplayMode(.inline)
-        .overlay {
-            if store.sprayEquipment.isEmpty && store.tractors.isEmpty && store.fuelPurchases.isEmpty {
-                ContentUnavailableView {
-                    Label("No Equipment", systemImage: "wrench.and.screwdriver")
-                } description: {
-                    Text("Add your spray rigs, tanks, and tractors")
-                }
-            }
-        }
-        .sheet(isPresented: $showAddSheet) {
-            EquipmentFormSheet(equipment: nil)
-        }
-        .sheet(item: $editingEquipment) { item in
-            EquipmentFormSheet(equipment: item)
-        }
-        .sheet(isPresented: $showAddTractorSheet) {
-            TractorFormSheet(tractor: nil)
-        }
-        .sheet(item: $editingTractor) { item in
-            TractorFormSheet(tractor: item)
-        }
-        .sheet(isPresented: $showAddFuelSheet) {
-            FuelPurchaseFormSheet(purchase: nil)
-        }
-        .sheet(item: $editingFuelPurchase) { item in
-            FuelPurchaseFormSheet(purchase: item)
-        }
+    }
+
+    private func sectionHeader(_ title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(.caption.weight(.semibold))
+            .textCase(.uppercase)
     }
 }
 

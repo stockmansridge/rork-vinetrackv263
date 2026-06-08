@@ -62,10 +62,37 @@ struct VineyardMachineManagementView: View {
                 }
             } footer: {
                 if canManageSetup {
-                    Text("Add ATVs, side-by-sides, harvesters, utility vehicles and other machines. Machines with fuel tracking on appear in the Fuel Log. Tractors are managed in the Tractors section.")
+                    Text("Add ATVs, side-by-sides, harvesters, utility vehicles and other machines. Machines with fuel tracking on appear in the Fuel Log. Tractors are managed in the Tractors section below.")
                 } else {
                     Text("Vineyard machines are managed by vineyard owners and managers.")
                 }
+            }
+
+            Section {
+                NavigationLink {
+                    TractorManagementView()
+                } label: {
+                    machineNavCard(
+                        title: "Manage Tractors",
+                        subtitle: tractorSubtitle,
+                        systemImage: "truck.pickup.side.fill"
+                    )
+                }
+                NavigationLink {
+                    SprayEquipmentManagementView()
+                } label: {
+                    machineNavCard(
+                        title: "Manage Spray Rigs & Tanks",
+                        subtitle: spraySubtitle,
+                        systemImage: "wrench.and.screwdriver"
+                    )
+                }
+            } header: {
+                Label("Related Equipment", systemImage: "square.grid.2x2")
+                    .font(.caption.weight(.semibold))
+                    .textCase(.uppercase)
+            } footer: {
+                Text("Tractor-backed machines are managed under Tractors to keep trip costing intact. Spray rigs and tanks are not fuel-tracked.")
             }
         }
         .listStyle(.insetGrouped)
@@ -87,6 +114,35 @@ struct VineyardMachineManagementView: View {
         }
         .sheet(item: $editingMachine) { item in
             VineyardMachineFormSheet(machine: item)
+        }
+    }
+
+    private var tractorSubtitle: String {
+        let count = store.tractors.count
+        if count == 0 { return "Add and edit tractors" }
+        return "\(count) tractor\(count == 1 ? "" : "s")"
+    }
+
+    private var spraySubtitle: String {
+        let count = store.sprayEquipment.count
+        if count == 0 { return "Add spray rigs and tanks" }
+        return "\(count) item\(count == 1 ? "" : "s")"
+    }
+
+    private func machineNavCard(title: String, subtitle: String, systemImage: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.body)
+                .foregroundStyle(VineyardTheme.olive)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.body.weight(.medium))
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
         }
     }
 
