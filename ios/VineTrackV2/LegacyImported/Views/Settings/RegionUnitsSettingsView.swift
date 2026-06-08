@@ -31,6 +31,7 @@ struct RegionUnitsSettingsView: View {
     @State private var terminologyRegion: TerminologyRegion = .auNz
 
     @State private var isSaving: Bool = false
+    @State private var isRefreshing: Bool = false
     @State private var savedFeedback: Bool = false
     @State private var errorMessage: String?
     @State private var pendingCountry: RegionCountry?
@@ -74,6 +75,7 @@ struct RegionUnitsSettingsView: View {
             }
         }
         .onAppear(perform: loadFromSettings)
+        .task { await refreshFromServer() }
         .alert("Apply recommended defaults?", isPresented: applyDefaultsBinding, presenting: pendingCountry) { country in
             Button("Apply Defaults") { applyRecommendedDefaults(for: country) }
             Button("Keep Current Settings", role: .cancel) { applyCountryOnly(country) }
@@ -240,6 +242,25 @@ struct RegionUnitsSettingsView: View {
         sprayRateAreaUnit = region.sprayRateArea
         dateFormat = region.dateStyle
         terminologyRegion = region.terminology
+    }
+
+    /// Pull the authoritative server values directly when the screen opens, so
+    /// settings saved on the Lovable portal or another device are reflected
+    /// immediately — not just after a background sync. The merge keeps AU
+    /// defaults for any null server field, then the working copy is reloaded.
+    private func refreshFromServer() async {
+        guard !isRefreshing, let vineyardId = store.selectedVineyardId else { return }
+        isRefreshing = true
+        defer { isRefreshing = false }
+        do {
+            guard let remote = try await vineyardRepository.getVineyardRegionSettings(vineyardId: vineyardId) else { return }
+            store.applyRemoteVineyardRegionSettings(remote, vineyardId: vineyardId)
+            // Don't clobber in-progress edits the user is making.
+            guard !isSaving, pendingCountry == nil else { return }
+            loadFromSettings()
+        } catch {
+            // Offline / RPC missing — keep the cached local values already shown.
+        }
     }
 
     private func save() async {

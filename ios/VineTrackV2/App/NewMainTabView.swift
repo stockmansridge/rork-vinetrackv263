@@ -43,6 +43,10 @@ struct NewMainTabView: View {
     @State private var isSweeping: Bool = false
     @State private var portalPromptTrigger: PortalPromptTrigger?
 
+    /// Used by the full sweep to pull vineyard-scoped organisation region
+    /// settings (country/units/date format/terminology) from Supabase.
+    private let vineyardRegionRepository: any VineyardRepositoryProtocol = SupabaseVineyardRepository()
+
     var body: some View {
         TabView(selection: $selectedTab) {
             NewHomeTabView(selectedTab: $selectedTab)
@@ -240,6 +244,11 @@ struct NewMainTabView: View {
         await yieldSessionSync.syncForSelectedVineyard()
         await damageRecordSync.syncForSelectedVineyard()
         await historicalYieldSync.syncForSelectedVineyard()
+        // Vineyard-scoped organisation region/unit settings (country, currency,
+        // units, date format, terminology). Previously only pulled on vineyard
+        // selection — pulling it here too means a manual/forced "Sync now"
+        // picks up changes saved from the Lovable portal or another device.
+        await syncVineyardRegionSettings()
         switch alertRefresh {
         case .generate: await alertService.generateAndRefresh()
         case .refresh:  await alertService.refresh()
@@ -253,6 +262,72 @@ struct NewMainTabView: View {
             failedDeletes: aggregateFailedDeletes,
             error: aggregateSyncError
         )
+    }
+
+    // MARK: - Vineyard region settings
+
+    /// Pull the vineyard-scoped organisation region settings from Supabase and
+    /// merge them into local `AppSettings.regionSettings`. Server values win;
+    /// any null server field keeps the local fallback (AU default unless an
+    /// owner/manager changed it). Called from the full sweep so a manual/forced
+    /// "Sync now" applies settings saved on the Lovable portal or another
+    /// device, not just on vineyard selection.
+    ///
+    /// Backfill safety: if the server has *no* region values but the local copy
+    /// diverges from AU defaults, push the local copy up exactly once — but
+    /// ONLY if the current user is an owner/manager (the server RPC enforces
+    /// this too; this is the client guard).
+    private func syncVineyardRegionSettings() async {
+        guard let vineyardId = store.selectedVineyardId else { return }
+        do {
+            guard let remote = try await vineyardRegionRepository.getVineyardRegionSettings(vineyardId: vineyardId) else {
+                #if DEBUG
+                print("[RegionSync] vineyard=\(vineyardId) no server row — keeping local fallback")
+                #endif
+                return
+            }
+            #if DEBUG
+            let before = store.settings.regionSettings
+            #endif
+            let merged = store.applyRemoteVineyardRegionSettings(remote, vineyardId: vineyardId)
+            #if DEBUG
+            let after = store.settings.regionSettings
+            print("""
+            [RegionSync] vineyard=\(vineyardId)
+              server: country=\(remote.countryCode ?? "nil") currency=\(remote.currencyCode ?? "nil") area=\(remote.areaUnit ?? "nil") volume=\(remote.volumeUnit ?? "nil") distance=\(remote.distanceUnit ?? "nil") fuel=\(remote.fuelUnit ?? "nil") sprayRate=\(remote.sprayRateAreaUnit ?? "nil") date=\(remote.dateFormat ?? "nil") term=\(remote.terminologyRegion ?? "nil")
+              before: country=\(before.countryCode) currency=\(before.currencyCode) area=\(before.areaUnit) date=\(before.dateFormat) term=\(before.terminologyRegion)
+              after:  country=\(after.countryCode) currency=\(after.currencyCode) area=\(after.areaUnit) date=\(after.dateFormat) term=\(after.terminologyRegion)
+              savedLocally=\(before != after) needsBackfill=\(merged.needsBackfill)
+            """)
+            #endif
+            guard merged.needsBackfill else { return }
+
+            // Owner/manager-only backfill guard (accessControl is refreshed for
+            // the selected vineyard before the sweep runs).
+            guard accessControl.canChangeSettings else { return }
+
+            let region = merged.settingsToBackfill
+            _ = try? await vineyardRegionRepository.setVineyardRegionSettings(
+                BackendVineyardRegionSettings(
+                    vineyardId: vineyardId,
+                    countryCode: region.countryCode,
+                    currencyCode: region.currencyCode,
+                    timezone: region.timezone,
+                    areaUnit: region.areaUnit,
+                    volumeUnit: region.volumeUnit,
+                    distanceUnit: region.distanceUnit,
+                    fuelUnit: region.fuelUnit,
+                    sprayRateAreaUnit: region.sprayRateAreaUnit,
+                    dateFormat: region.dateFormat,
+                    terminologyRegion: region.terminologyRegion
+                )
+            )
+        } catch {
+            // Offline / RPC missing / not a member — keep existing local settings.
+            #if DEBUG
+            print("[RegionSync] fetch failed for vineyard=\(vineyardId): \(error.localizedDescription)")
+            #endif
+        }
     }
 
     // MARK: - Aggregate sync state
