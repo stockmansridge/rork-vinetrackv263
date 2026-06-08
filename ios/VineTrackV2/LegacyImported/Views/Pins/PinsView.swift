@@ -263,6 +263,7 @@ struct PinsView: View {
         let vineyardName = store.selectedVineyard?.name ?? "Vineyard"
         let logoData = store.selectedVineyard?.logoData
         let exportTimeZone = store.settings.resolvedTimeZone
+        let regionFormatter = store.settings.regionFormatter
 
         let pinReports = pinsToExport.map { pin in
             let paddockName: String
@@ -280,7 +281,7 @@ struct PinsView: View {
 
             if format == .pdf || format == .both {
                 let snapshot = await PinsPDFService.captureMapSnapshot(pins: pinsToExport)
-                let pdfData = PinsPDFService.generatePDF(pins: pinReports, vineyardName: vineyardName, mapSnapshot: snapshot, logoData: logoData, timeZone: exportTimeZone)
+                let pdfData = PinsPDFService.generatePDF(pins: pinReports, vineyardName: vineyardName, mapSnapshot: snapshot, logoData: logoData, timeZone: exportTimeZone, formatter: regionFormatter)
                 urls.append(PinsPDFService.savePDFToTemp(data: pdfData, fileName: fileName))
             }
 
@@ -810,9 +811,11 @@ struct PinRowView: View {
     let onComplete: () -> Void
     let onDelete: () -> Void
     let onHeadingTap: () -> Void
+    @Environment(MigratedDataStore.self) private var store
     @Environment(BackendAccessControl.self) private var accessControl
     @Environment(PinSyncService.self) private var pinSync
     private var canDelete: Bool { accessControl.canDeleteOperationalRecords }
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
     @State private var showFullPhoto: Bool = false
 
     private var headingText: String {
@@ -832,10 +835,7 @@ struct PinRowView: View {
 
     private var formattedDistance: String {
         guard let distance else { return "—" }
-        if distance < 1000 {
-            return "\(Int(distance))m"
-        }
-        return String(format: "%.1fkm", distance / 1000)
+        return fmt.formatShortDistance(metres: distance)
     }
 
     var body: some View {
@@ -934,7 +934,7 @@ struct PinRowView: View {
                 Spacer()
                 InfoTag(icon: "safari", text: "\(headingText) (\(Int(pin.heading))\u{00B0})")
                 Spacer()
-                InfoTag(icon: "clock", text: pin.timestamp.formatted(date: .numeric, time: .shortened))
+                InfoTag(icon: "clock", text: fmt.formatDateTime(pin.timestamp))
             }
 
             if pin.isCompleted, let completedBy = pin.completedBy, let completedAt = pin.completedAt {
@@ -942,7 +942,7 @@ struct PinRowView: View {
                     Image(systemName: "checkmark.seal.fill")
                         .font(.caption2)
                         .foregroundStyle(VineyardTheme.leafGreen)
-                    Text("Completed by \(completedBy) \u{2022} \(completedAt.formatted(date: .numeric, time: .shortened))")
+                    Text("Completed by \(completedBy) \u{2022} \(fmt.formatDateTime(completedAt))")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -1101,7 +1101,9 @@ struct PinDirectionsSheet: View {
     let pin: VinePin
     @Environment(\.dismiss) private var dismiss
     @Environment(LocationService.self) private var locationService
+    @Environment(MigratedDataStore.self) private var store
     @State private var position: MapCameraPosition = .automatic
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
 
     private var userCoordinate: CLLocationCoordinate2D? {
         locationService.location?.coordinate
@@ -1111,10 +1113,7 @@ struct PinDirectionsSheet: View {
         guard let userLocation = locationService.location else { return "—" }
         let pinLocation = CLLocation(latitude: pin.latitude, longitude: pin.longitude)
         let distance = userLocation.distance(from: pinLocation)
-        if distance < 1000 {
-            return "\(Int(distance))m away"
-        }
-        return String(format: "%.1fkm away", distance / 1000)
+        return "\(fmt.formatShortDistance(metres: distance)) away"
     }
 
     var body: some View {
@@ -1196,6 +1195,7 @@ struct PinDetailSheet: View {
     @State private var showFullPhoto: Bool = false
     @State private var memberDirectory: [UUID: String] = [:]
     private let teamRepository: any TeamRepositoryProtocol = SupabaseTeamRepository()
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
 
     private func resolveDisplayName(userId: UUID?, fallbackText: String?) -> String? {
         let trimmed = fallbackText?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1318,7 +1318,7 @@ struct PinDetailSheet: View {
                 }
 
                 Section("Details") {
-                    LabeledContent("Block", value: paddockName)
+                    LabeledContent(fmt.blockTermCapitalised, value: paddockName)
                     // New attachment model: prefer split row info when available.
                     // Side belongs with the driving path, not the attached vine row.
                     if pin.pinRowNumber != nil || pin.drivingRowNumber != nil {
@@ -1342,7 +1342,7 @@ struct PinDetailSheet: View {
                     if let createdByName = resolveDisplayName(userId: pin.createdByUserId, fallbackText: pin.createdBy) {
                         LabeledContent("Created by", value: createdByName)
                     }
-                    LabeledContent("Created", value: pin.timestamp.formatted(date: .abbreviated, time: .shortened))
+                    LabeledContent("Created", value: fmt.formatDateTime(pin.timestamp))
                     LabeledContent("Latitude", value: String(format: "%.6f", pin.latitude))
                     LabeledContent("Longitude", value: String(format: "%.6f", pin.longitude))
                     LabeledContent("Status", value: pin.isCompleted ? "Completed" : "Active")
@@ -1354,7 +1354,7 @@ struct PinDetailSheet: View {
                             LabeledContent("Completed by", value: completedByName)
                         }
                         if let completedAt = pin.completedAt {
-                            LabeledContent("Completed", value: completedAt.formatted(date: .abbreviated, time: .shortened))
+                            LabeledContent("Completed", value: fmt.formatDateTime(completedAt))
                         }
                     }
                 }
@@ -1444,7 +1444,9 @@ struct PinFilterSheet: View {
     let uniqueNames: [String]
     let nameColorMap: [String: String]
     let uniquePaddocks: [(id: UUID, name: String)]
+    @Environment(MigratedDataStore.self) private var store
     @Environment(\.dismiss) private var dismiss
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
 
     private var hasActiveFilters: Bool {
         !selectedNames.isEmpty || !selectedPaddockIds.isEmpty
@@ -1493,7 +1495,7 @@ struct PinFilterSheet: View {
                     .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                 }
 
-                Section("Block") {
+                Section(fmt.blockTermCapitalised) {
                     ScrollView(.horizontal) {
                         HStack(spacing: 8) {
                             FilterChip(title: "All", isSelected: selectedPaddockIds.isEmpty) {

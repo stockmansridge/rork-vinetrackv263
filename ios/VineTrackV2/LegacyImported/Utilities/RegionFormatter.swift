@@ -127,6 +127,27 @@ nonisolated struct RegionFormatter: Sendable {
         }
     }
 
+    /// Short, navigation-style distance for nearby points (e.g. distance to a
+    /// pin). Uses metres/kilometres for metric and feet/miles for imperial,
+    /// switching to the larger unit past ~1 unit. With AU (metric) defaults this
+    /// matches the previous "337m" / "1.5km" display exactly.
+    func formatShortDistance(metres: Double) -> String {
+        switch settings.distance {
+        case .metric:
+            if metres < 1000 {
+                return "\(Int(metres.rounded()))m"
+            }
+            return "\(Self.number(metres / 1000.0, fractionDigits: 1))km"
+        case .imperial:
+            let feet = metres * Self.feetPerMetre
+            if feet < 5280 {
+                return "\(Int(feet.rounded()))ft"
+            }
+            let miles = (metres / 1000.0) * Self.milesPerKilometre
+            return "\(Self.number(miles, fractionDigits: 1))mi"
+        }
+    }
+
     /// Speed input is km/h (canonical). Converts to mph for imperial.
     func formatSpeed(kmh: Double, fractionDigits: Int = 1) -> String {
         switch settings.distance {

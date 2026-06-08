@@ -10,7 +10,7 @@ struct PinsPDFService {
         let paddockName: String
     }
 
-    static func generatePDF(pins: [PinReport], vineyardName: String, mapSnapshot: UIImage?, logoData: Data? = nil, timeZone: TimeZone = .current) -> Data {
+    static func generatePDF(pins: [PinReport], vineyardName: String, mapSnapshot: UIImage?, logoData: Data? = nil, timeZone: TimeZone = .current, formatter: RegionFormatter = .australian) -> Data {
         let pageWidth: CGFloat = 595.0
         let pageHeight: CGFloat = 842.0
         let margin: CGFloat = 40.0
@@ -93,7 +93,7 @@ struct PinsPDFService {
                 y: &y
             )
 
-            let dateStr = Date().formattedTZ(date: .abbreviated, time: .shortened, in: timeZone)
+            let dateStr = formatter.formatDateTime(Date())
             drawText(dateStr, font: captionFont, color: .darkGray)
             y += 4
 
@@ -150,7 +150,7 @@ struct PinsPDFService {
             let headerAttrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 9, weight: .bold), .foregroundColor: UIColor.darkGray]
             ("Type" as NSString).draw(at: CGPoint(x: colType, y: y), withAttributes: headerAttrs)
             ("Name" as NSString).draw(at: CGPoint(x: colName, y: y), withAttributes: headerAttrs)
-            ("Block" as NSString).draw(at: CGPoint(x: colBlock, y: y), withAttributes: headerAttrs)
+            (formatter.blockTermCapitalised as NSString).draw(at: CGPoint(x: colBlock, y: y), withAttributes: headerAttrs)
             ("Row" as NSString).draw(at: CGPoint(x: colRow, y: y), withAttributes: headerAttrs)
             ("Side" as NSString).draw(at: CGPoint(x: colSide, y: y), withAttributes: headerAttrs)
             ("Status" as NSString).draw(at: CGPoint(x: colStatus, y: y), withAttributes: headerAttrs)
@@ -193,7 +193,7 @@ struct PinsPDFService {
                 let statusAttrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 9, weight: .semibold), .foregroundColor: statusColor]
                 (statusStr as NSString).draw(at: CGPoint(x: colStatus, y: y), withAttributes: statusAttrs)
 
-                let dateString = pin.timestamp.formattedTZ(date: .numeric, time: .shortened, in: timeZone)
+                let dateString = formatter.formatDateTime(pin.timestamp)
                 (dateString as NSString).draw(at: CGPoint(x: colDate, y: y), withAttributes: cellSecAttrs)
 
                 let detailY = y + 13
