@@ -3,7 +3,22 @@ import PDFKit
 import MapKit
 
 struct SprayRecordPDFService {
-    static func generatePDF(record: SprayRecord, trip: Trip?, vineyardName: String, paddockName: String, personName: String, paddocks: [Paddock] = [], mapSnapshot: UIImage? = nil, logoData: Data? = nil, fuelCost: Double = 0, operatorCost: Double = 0, operatorCategoryName: String? = nil, includeCostings: Bool = true, timeZone: TimeZone = .current, tripCostResult: TripCostService.Result? = nil) -> Data {
+    /// REFERENCE IMPLEMENTATION for region-aware exports.
+    ///
+    /// This is the first export wired to `RegionFormatter`. Other export
+    /// services should follow the same pattern:
+    /// 1. Accept a `formatter: RegionFormatter` parameter (default `.australian`
+    ///    so existing call sites and AU users are unaffected).
+    /// 2. Pass `store.settings.regionFormatter` from the view.
+    /// 3. Never read raw stored values for display — route every area, volume,
+    ///    fuel, spray-rate, currency and terminology string through `formatter`
+    ///    so units are always explicitly and correctly labelled.
+    /// 4. Records are NOT mutated — the formatter only affects display strings.
+    ///
+    /// With Australian defaults the numeric values are identical to before;
+    /// only unit-label casing is normalised (e.g. "Ha" → "ha"), currency gains
+    /// locale grouping, and dates render in the configured DD/MM/YYYY order.
+    static func generatePDF(record: SprayRecord, trip: Trip?, vineyardName: String, paddockName: String, personName: String, paddocks: [Paddock] = [], mapSnapshot: UIImage? = nil, logoData: Data? = nil, fuelCost: Double = 0, operatorCost: Double = 0, operatorCategoryName: String? = nil, includeCostings: Bool = true, timeZone: TimeZone = .current, formatter: RegionFormatter = .australian, tripCostResult: TripCostService.Result? = nil) -> Data {
         let pageWidth: CGFloat = 595.0
         let pageHeight: CGFloat = 842.0
         let margin: CGFloat = 40.0
@@ -97,23 +112,23 @@ struct SprayRecordPDFService {
             }
 
             if !paddockName.isEmpty {
-                drawText("Block: \(paddockName)", font: bodyFont, color: .black)
+                drawText("\(formatter.blockTermCapitalised): \(paddockName)", font: bodyFont, color: .black)
             }
 
             // Trip Info
             if let trip = trip {
                 drawSectionHeader("Trip Information")
 
-                let dateFormatter = DateFormatter()
-                dateFormatter.dateStyle = .medium
-                dateFormatter.timeZone = timeZone
+                // Date portion via the region formatter (DD/MM/YYYY for AU);
+                // time-of-day keeps the existing localised short style so AU
+                // output is unchanged.
                 let timeFormatter = DateFormatter()
                 timeFormatter.timeStyle = .short
                 timeFormatter.timeZone = timeZone
 
-                drawRow(label: "Start Time", value: "\(dateFormatter.string(from: trip.startTime)) \(timeFormatter.string(from: trip.startTime))")
+                drawRow(label: "Start Time", value: "\(formatter.formatDate(trip.startTime)) \(timeFormatter.string(from: trip.startTime))")
                 if let endTime = trip.endTime {
-                    drawRow(label: "End Time", value: "\(dateFormatter.string(from: endTime)) \(timeFormatter.string(from: endTime))")
+                    drawRow(label: "End Time", value: "\(formatter.formatDate(endTime)) \(timeFormatter.string(from: endTime))")
                 }
                 let duration = trip.activeDuration
                 let hours = Int(duration) / 3600
@@ -130,14 +145,7 @@ struct SprayRecordPDFService {
                     drawRow(label: "Operator", value: trip.personName)
                 }
                 if trip.totalDistance > 0 {
-                    let useMetric = Locale.current.measurementSystem == .metric
-                    if useMetric {
-                        let km = trip.totalDistance / 1000.0
-                        drawRow(label: "Total Distance", value: String(format: "%.2f km", km))
-                    } else {
-                        let miles = trip.totalDistance / 1609.34
-                        drawRow(label: "Total Distance", value: String(format: "%.2f mi", miles))
-                    }
+                    drawRow(label: "Total Distance", value: formatter.formatDistance(metres: trip.totalDistance))
                 }
                 drawRow(label: "Tracking Pattern", value: trip.trackingPattern.rawValue.capitalized)
                 drawRow(label: "Total Rows", value: "\(trip.rowSequence.count)")
@@ -170,10 +178,7 @@ struct SprayRecordPDFService {
             // Conditions
             drawSectionHeader("Conditions")
 
-            let dateFormatter = DateFormatter()
-            dateFormatter.dateStyle = .medium
-            dateFormatter.timeZone = timeZone
-            drawRow(label: "Date", value: dateFormatter.string(from: record.date))
+            drawRow(label: "Date", value: formatter.formatDate(record.date))
 
             let timeFormatter = DateFormatter()
             timeFormatter.timeStyle = .short
@@ -218,7 +223,7 @@ struct SprayRecordPDFService {
                     drawRow(label: "No. Fans/Jets", value: record.numberOfFansJets)
                 }
                 if let avgSpeed = record.averageSpeed {
-                    drawRow(label: "Average Speed", value: String(format: "%.1f km/h", avgSpeed))
+                    drawRow(label: "Average Speed", value: formatter.formatSpeed(kmh: avgSpeed))
                 }
             }
 
@@ -226,11 +231,11 @@ struct SprayRecordPDFService {
             for tank in record.tanks {
                 drawSectionHeader("Tank \(tank.tankNumber)")
 
-                drawRow(label: "Water Volume", value: String(format: "%.1f L", tank.waterVolume))
-                drawRow(label: "Spray Rate", value: String(format: "%.1f L/Ha", tank.sprayRatePerHa))
+                drawRow(label: "Water Volume", value: formatter.formatVolume(litres: tank.waterVolume))
+                drawRow(label: "Spray Rate", value: formatter.formatSprayRate(perHectare: tank.sprayRatePerHa, unitLabel: "L", fractionDigits: 1))
                 drawRow(label: "Concentration Factor", value: String(format: "%.2f", tank.concentrationFactor))
                 if tank.areaPerTank > 0 {
-                    drawRow(label: "Area per Tank", value: String(format: "%.2f Ha", tank.areaPerTank))
+                    drawRow(label: "Area per Tank", value: formatter.formatArea(hectares: tank.areaPerTank))
                 }
 
                 if !tank.rowApplications.isEmpty {
@@ -249,7 +254,7 @@ struct SprayRecordPDFService {
                     let colHeaderAttrs: [NSAttributedString.Key: Any] = [.font: captionFont, .foregroundColor: UIColor.black]
                     ("CHEMICAL" as NSString).draw(at: CGPoint(x: colX[0], y: y), withAttributes: colHeaderAttrs)
                     ("VOL/TANK" as NSString).draw(at: CGPoint(x: colX[1], y: y), withAttributes: colHeaderAttrs)
-                    ("RATE/HA" as NSString).draw(at: CGPoint(x: colX[2], y: y), withAttributes: colHeaderAttrs)
+                    ("RATE/\(formatter.sprayRateAreaAbbreviation.uppercased())" as NSString).draw(at: CGPoint(x: colX[2], y: y), withAttributes: colHeaderAttrs)
                     y += 14
 
                     for chemical in tank.chemicals {
@@ -258,8 +263,12 @@ struct SprayRecordPDFService {
                         let valAttrs: [NSAttributedString.Key: Any] = [.font: bodyBoldFont, .foregroundColor: UIColor.black]
                         let name = chemical.name.isEmpty ? "Unnamed" : chemical.name
                         (name as NSString).draw(at: CGPoint(x: colX[0], y: y), withAttributes: nameAttrs)
+                        // Chemical product amounts stay in their native product
+                        // unit (L/kg) — those are manufacturer-specified, not a
+                        // region preference. Only the per-area denominator is
+                        // region-aware via the spray-rate formatter.
                         (String(format: "%.2f %@", chemical.displayVolume, chemical.unitLabel) as NSString).draw(at: CGPoint(x: colX[1], y: y), withAttributes: valAttrs)
-                        (String(format: "%.2f %@/Ha", chemical.displayRate, chemical.unitLabel) as NSString).draw(at: CGPoint(x: colX[2], y: y), withAttributes: valAttrs)
+                        (formatter.formatSprayRate(perHectare: chemical.displayRate, unitLabel: chemical.unitLabel) as NSString).draw(at: CGPoint(x: colX[2], y: y), withAttributes: valAttrs)
                         y += 18
                     }
                 }
@@ -311,10 +320,10 @@ struct SprayRecordPDFService {
                     drawRow(label: "  Note: \(w)", value: "", indent: 12)
                 } else {
                     if let name = r.labour.categoryName, let rate = r.labour.costPerHour, rate > 0 {
-                        drawRow(label: "Labour (\(name))", value: String(format: "$%.2f", r.labour.cost))
-                        drawRow(label: "  \(String(format: "$%.2f", rate))/hr × \(String(format: "%.2f", r.labour.hours)) hr", value: "", indent: 12)
+                        drawRow(label: "Labour (\(name))", value: formatter.formatCurrency(r.labour.cost))
+                        drawRow(label: "  \(formatter.formatCurrency(rate))/hr × \(String(format: "%.2f", r.labour.hours)) hr", value: "", indent: 12)
                     } else {
-                        drawRow(label: "Labour", value: String(format: "$%.2f", r.labour.cost))
+                        drawRow(label: "Labour", value: formatter.formatCurrency(r.labour.cost))
                     }
                 }
 
@@ -322,11 +331,11 @@ struct SprayRecordPDFService {
                     drawRow(label: "Fuel", value: "—")
                     drawRow(label: "  Note: \(w)", value: "", indent: 12)
                 } else {
-                    drawRow(label: "Fuel litres (est.)", value: String(format: "%.1f L", r.fuel.litres))
+                    drawRow(label: "Fuel used (est.)", value: formatter.formatFuel(litres: r.fuel.litres))
                     if let perL = r.fuel.costPerLitre {
-                        drawRow(label: "Fuel cost per litre", value: String(format: "$%.2f/L", perL))
+                        drawRow(label: "Fuel cost per \(formatter.fuelUnitAbbreviation)", value: "\(formatter.formatCurrency(perL))/\(formatter.fuelUnitAbbreviation)")
                     }
-                    drawRow(label: "Fuel cost", value: String(format: "$%.2f", r.fuel.cost))
+                    drawRow(label: "Fuel cost", value: formatter.formatCurrency(r.fuel.cost))
                 }
 
                 if let chem = r.chemical {
@@ -334,7 +343,7 @@ struct SprayRecordPDFService {
                         drawRow(label: "Chemical/Input", value: "—")
                         drawRow(label: "  Note: \(w)", value: "", indent: 12)
                     } else {
-                        drawRow(label: "Chemical/Input", value: String(format: "$%.2f", chem.cost))
+                        drawRow(label: "Chemical/Input", value: formatter.formatCurrency(chem.cost))
                         if let w = chem.warning {
                             drawRow(label: "  Note: \(w)", value: "", indent: 12)
                         }
@@ -343,7 +352,7 @@ struct SprayRecordPDFService {
 
                 if let s = r.seeding {
                     if s.cost > 0 {
-                        drawRow(label: "Seed/Input", value: String(format: "$%.2f", s.cost))
+                        drawRow(label: "Seed/Input", value: formatter.formatCurrency(s.cost))
                         if let w = s.warning {
                             drawRow(label: "  Note: \(w)", value: "", indent: 12)
                         }
@@ -353,7 +362,7 @@ struct SprayRecordPDFService {
                 }
 
                 y += 4
-                drawRow(label: "Total estimated cost", value: String(format: "$%.2f", r.totalCost))
+                drawRow(label: "Total estimated cost", value: formatter.formatCurrency(r.totalCost))
                 let statusLabel: String = {
                     switch r.completeness {
                     case .complete: return "Complete"
@@ -364,14 +373,17 @@ struct SprayRecordPDFService {
                 drawRow(label: "Costing status", value: statusLabel)
 
                 if let ha = r.treatedAreaHa {
-                    drawRow(label: "Treated area", value: String(format: "%.2f ha", ha))
+                    drawRow(label: "Treated area", value: formatter.formatArea(hectares: ha))
                 } else {
                     drawRow(label: "Treated area", value: "—")
                 }
                 if let cph = r.costPerHa {
-                    drawRow(label: "Cost per ha", value: String(format: "$%.2f/ha", cph))
+                    // `costPerHa` is canonical $/hectare. Convert the per-area
+                    // denominator to the configured spray/area unit for display.
+                    let perArea = formatter.sprayRateValue(perHectare: cph)
+                    drawRow(label: "Cost per \(formatter.areaUnitAbbreviation)", value: "\(formatter.formatCurrency(perArea))/\(formatter.areaUnitAbbreviation)")
                 } else {
-                    drawRow(label: "Cost per ha", value: "—")
+                    drawRow(label: "Cost per \(formatter.areaUnitAbbreviation)", value: "—")
                     if let w = r.areaWarning {
                         drawRow(label: "  Note: \(w)", value: "", indent: 12)
                     }
@@ -382,7 +394,7 @@ struct SprayRecordPDFService {
                     drawRow(label: "Yield", value: "—")
                 }
                 if let cpt = r.costPerTonne {
-                    drawRow(label: "Cost per tonne", value: String(format: "$%.2f/t", cpt))
+                    drawRow(label: "Cost per tonne", value: "\(formatter.formatCurrency(cpt))/t")
                 } else {
                     drawRow(label: "Cost per tonne", value: "—")
                     if let w = r.yieldWarning {
@@ -394,21 +406,21 @@ struct SprayRecordPDFService {
                 if hasCosts && includeCostings {
                     drawSectionHeader("Costs")
                     for (name, cost) in chemCosts {
-                        drawRow(label: name, value: String(format: "$%.2f", cost))
+                        drawRow(label: name, value: formatter.formatCurrency(cost))
                     }
                     if !chemCosts.isEmpty {
                         y += 4
-                        drawRow(label: "Chemical Subtotal", value: String(format: "$%.2f", totalSprayCost))
+                        drawRow(label: "Chemical Subtotal", value: formatter.formatCurrency(totalSprayCost))
                     }
                     if fuelCost > 0 {
-                        drawRow(label: "Fuel Cost", value: String(format: "$%.2f", fuelCost))
+                        drawRow(label: "Fuel Cost", value: formatter.formatCurrency(fuelCost))
                     }
                     if operatorCost > 0 {
-                        drawRow(label: operatorCategoryName ?? "Operator", value: String(format: "$%.2f", operatorCost))
+                        drawRow(label: operatorCategoryName ?? "Operator", value: formatter.formatCurrency(operatorCost))
                     }
                     y += 4
                     let grandTotal = totalSprayCost + fuelCost + operatorCost
-                    drawRow(label: "Total Cost", value: String(format: "$%.2f", grandTotal))
+                    drawRow(label: "Total Cost", value: formatter.formatCurrency(grandTotal))
                 }
             }
 
@@ -459,7 +471,7 @@ struct SprayRecordPDFService {
                 let tableHeaderAttrs: [NSAttributedString.Key: Any] = [.font: captionFont, .foregroundColor: UIColor.black]
                 checkPageBreak(needed: 16)
                 ("ROW" as NSString).draw(at: CGPoint(x: colRowX, y: y), withAttributes: tableHeaderAttrs)
-                ("BLOCK" as NSString).draw(at: CGPoint(x: colBlockX, y: y), withAttributes: tableHeaderAttrs)
+                (formatter.blockTerm.uppercased() as NSString).draw(at: CGPoint(x: colBlockX, y: y), withAttributes: tableHeaderAttrs)
                 ("STATUS" as NSString).draw(at: CGPoint(x: colStatusX, y: y), withAttributes: tableHeaderAttrs)
                 ("TANK" as NSString).draw(at: CGPoint(x: colTankX, y: y), withAttributes: tableHeaderAttrs)
                 y += 14
@@ -508,7 +520,7 @@ struct SprayRecordPDFService {
             checkPageBreak(needed: 30)
             drawDivider()
             let tzAbbrev = timeZone.abbreviation() ?? timeZone.identifier
-            let footerText = "Generated by VineTrack \u{2022} \(dateFormatter.string(from: Date())) (\(tzAbbrev))"
+            let footerText = "Generated by VineTrack \u{2022} \(formatter.formatDate(Date())) (\(tzAbbrev))"
             drawText(footerText, font: captionFont, color: .darkGray)
         }
 

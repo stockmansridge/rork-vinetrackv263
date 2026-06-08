@@ -816,6 +816,7 @@ extension SprayRecordDetailView {
                 operatorCategoryName: operatorCatName,
                 includeCostings: includeCostings,
                 timeZone: exportTimeZone,
+                formatter: store.settings.regionFormatter,
                 tripCostResult: costResult
             )
             let fileName = "SprayRecord_\(recordCopy.sprayReference.isEmpty ? "Record" : recordCopy.sprayReference)_\(recordCopy.date.formatted(.iso8601.year().month().day()))"
