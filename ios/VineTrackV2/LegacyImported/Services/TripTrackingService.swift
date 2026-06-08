@@ -255,6 +255,7 @@ final class TripTrackingService {
         personName: String = "",
         tripFunction: String? = nil,
         tripTitle: String? = nil,
+        machineId: UUID? = nil,
         tractorId: UUID? = nil,
         operatorUserId: UUID? = nil,
         operatorCategoryId: UUID? = nil
@@ -279,6 +280,7 @@ final class TripTrackingService {
             personName: personName,
             tripFunction: tripFunction,
             tripTitle: tripTitle,
+            machineId: machineId,
             tractorId: tractorId,
             operatorUserId: operatorUserId,
             operatorCategoryId: operatorCategoryId

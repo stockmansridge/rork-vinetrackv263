@@ -40,7 +40,9 @@ nonisolated enum TripCostService {
     }
 
     nonisolated struct FuelBreakdown: Sendable {
-        let tractorName: String?
+        /// Display name of the powered unit used for fuel (vineyard machine when
+        /// linked, otherwise the legacy tractor).
+        let machineName: String?
         let fuelUsageLPerHour: Double?
         let costPerLitre: Double?
         let litres: Double
@@ -107,7 +109,10 @@ nonisolated enum TripCostService {
     ///     Resolved by the caller in priority order:
     ///       1. `trip.operatorCategoryId`
     ///       2. `vineyard_members.operator_category_id` for `trip.operatorUserId`
-    ///   - tractor: Tractor referenced by `trip.tractorId`, if known.
+    ///   - machine: Vineyard machine referenced by `trip.machineId`, if known.
+    ///     Preferred fuel source when it has an approved (> 0) L/hr rate.
+    ///   - tractor: Tractor referenced by `trip.tractorId`, if known. Legacy
+    ///     fuel-rate fallback used when no machine rate is available.
     ///   - fuelPurchases: All fuel purchases for the vineyard. Used to derive
     ///     a weighted average cost per litre.
     ///   - sprayRecord: Linked spray record (`spray_records.trip_id == trip.id`)
@@ -115,6 +120,7 @@ nonisolated enum TripCostService {
     static func estimate(
         trip: Trip,
         operatorCategory: OperatorCategory?,
+        machine: VineyardMachine? = nil,
         tractor: Tractor?,
         fuelPurchases: [FuelPurchase],
         sprayRecord: SprayRecord?,
@@ -172,12 +178,26 @@ nonisolated enum TripCostService {
         let fuelBasis: FuelBasis = engineHourDelta != nil ? .engineHours : .duration
         let fuelHours = engineHourDelta ?? hours
         let weightedCostPerLitre = weightedFuelCostPerLitre(fuelPurchases)
+
+        // Resolve the effective fuel source. Prefer the linked vineyard machine
+        // when it has an approved (> 0) rate; otherwise fall back to the legacy
+        // tractor rate. A rate of 0 is treated as "not set" and never used.
+        let machineRate = machine?.fuelUsageLPerHour ?? 0
+        let tractorRate = tractor?.fuelUsageLPerHour ?? 0
+        let hasMachineLink = machine != nil || trip.machineId != nil
+        let hasTractorLink = tractor != nil || trip.tractorId != nil
+        let hasAnyLink = hasMachineLink || hasTractorLink
+        // Name prefers the machine identity when a machine is linked, otherwise
+        // the legacy tractor name.
+        let fuelSourceName = machine?.displayName ?? tractor?.displayName
+        let effectiveRate: Double = machineRate > 0 ? machineRate : tractorRate
+
         let fuel: FuelBreakdown
-        if let t = tractor, t.fuelUsageLPerHour > 0, fuelHours > 0, let perL = weightedCostPerLitre {
-            let litres = t.fuelUsageLPerHour * fuelHours
+        if effectiveRate > 0, fuelHours > 0, let perL = weightedCostPerLitre {
+            let litres = effectiveRate * fuelHours
             fuel = FuelBreakdown(
-                tractorName: t.displayName,
-                fuelUsageLPerHour: t.fuelUsageLPerHour,
+                machineName: fuelSourceName,
+                fuelUsageLPerHour: effectiveRate,
                 costPerLitre: perL,
                 litres: litres,
                 cost: litres * perL,
@@ -186,36 +206,42 @@ nonisolated enum TripCostService {
                 fuelHours: fuelHours,
                 engineHourDelta: engineHourDelta
             )
-        } else if tractor == nil, trip.tractorId == nil {
+        } else if !hasAnyLink {
             fuel = FuelBreakdown(
-                tractorName: nil,
+                machineName: nil,
                 fuelUsageLPerHour: nil,
                 costPerLitre: weightedCostPerLitre,
                 litres: 0,
                 cost: 0,
-                warning: "No tractor linked to this trip.",
+                warning: "No machine linked to this trip.",
                 basis: fuelBasis,
                 fuelHours: fuelHours,
                 engineHourDelta: engineHourDelta
             )
-        } else if let t = tractor, t.fuelUsageLPerHour <= 0 {
+        } else if effectiveRate <= 0 {
+            // Linked but no approved fuel rate. Point the user at the right place
+            // to set it depending on whether a machine or a legacy tractor is
+            // the source.
+            let warning = hasMachineLink
+                ? "Fuel rate missing \u{2014} set the machine's fuel usage (L/hr) in Vineyard Machines."
+                : "Fuel rate missing \u{2014} set the tractor's fuel usage (L/hr) in Equipment."
             fuel = FuelBreakdown(
-                tractorName: t.displayName,
+                machineName: fuelSourceName,
                 fuelUsageLPerHour: 0,
                 costPerLitre: weightedCostPerLitre,
                 litres: 0,
                 cost: 0,
-                warning: "Fuel rate missing \u{2014} set the tractor's fuel usage (L/hr) in Equipment.",
+                warning: warning,
                 basis: fuelBasis,
                 fuelHours: fuelHours,
                 engineHourDelta: engineHourDelta
             )
         } else if weightedCostPerLitre == nil {
             fuel = FuelBreakdown(
-                tractorName: tractor?.displayName,
-                fuelUsageLPerHour: tractor?.fuelUsageLPerHour,
+                machineName: fuelSourceName,
+                fuelUsageLPerHour: effectiveRate,
                 costPerLitre: nil,
-                litres: (tractor?.fuelUsageLPerHour ?? 0) * fuelHours,
+                litres: effectiveRate * fuelHours,
                 cost: 0,
                 warning: "No fuel purchases recorded \u{2014} add one in Equipment to enable fuel cost.",
                 basis: fuelBasis,
@@ -224,8 +250,8 @@ nonisolated enum TripCostService {
             )
         } else {
             fuel = FuelBreakdown(
-                tractorName: tractor?.displayName,
-                fuelUsageLPerHour: tractor?.fuelUsageLPerHour,
+                machineName: fuelSourceName,
+                fuelUsageLPerHour: effectiveRate,
                 costPerLitre: weightedCostPerLitre,
                 litres: 0,
                 cost: 0,

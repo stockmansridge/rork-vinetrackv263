@@ -22,10 +22,12 @@ struct StartTripSheet: View {
     /// false = lower rows first (descending). Replaces the old "Reverse direction" toggle.
     @State private var directionHigherFirst: Bool = true
     @State private var personName: String = ""
-    /// Tractor selection for the new trip. Persists as `trips.tractor_id` so
-    /// fuel cost estimates can be calculated downstream (TripCostService).
-    /// Optional — if left unset, the trip continues without fuel costing.
-    @State private var selectedTractorId: UUID?
+    /// Vineyard machine selection for the new trip. Persists as
+    /// `trips.machine_id` (preferred) plus `trips.tractor_id` for tractor-backed
+    /// machines, so fuel cost estimates can be calculated downstream
+    /// (TripCostService). Optional — if left unset, the trip continues without
+    /// fuel costing.
+    @State private var selectedMachineId: UUID?
     /// Optional engine-hour meter reading at trip start. Free text so it can be
     /// left blank; parsed to `Double` on start. Persists as
     /// `trips.start_engine_hours` for fuel allocation (Phase 3).
@@ -210,7 +212,7 @@ struct StartTripSheet: View {
                     if trackingPattern == .freeDrive {
                         freeDriveInfoSection
                     }
-                    tractorSection
+                    machineSection
                     operatorSection
                     if let error = tracking.errorMessage {
                         Text(error)
@@ -237,8 +239,8 @@ struct StartTripSheet: View {
                 if personName.isEmpty, let name = auth.userName {
                     personName = name
                 }
-                if selectedTractorId == nil {
-                    selectedTractorId = defaultTractorId
+                if selectedMachineId == nil {
+                    selectedMachineId = defaultMachineId
                 }
                 // Intentionally do NOT pre-select a block. Operators have
                 // accidentally started trips in the wrong block when one
@@ -963,67 +965,69 @@ struct StartTripSheet: View {
         }
     }
 
-    // MARK: Tractor
+    // MARK: Machine
 
-    /// Tractors available for the currently selected vineyard. Falls back to
-    /// the full list if no vineyard is selected (rare — the store usually
-    /// filters tractors at load time).
-    private var availableTractors: [Tractor] {
-        let vineyardId = store.selectedVineyardId
-        let filtered = store.tractors.filter { vineyardId == nil || $0.vineyardId == vineyardId }
-        return filtered.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+    /// Vineyard machines available for job costing in the current vineyard.
+    /// Filtered to active machines (`deleted_at` nil via the store) that are
+    /// flagged `available_for_job_costing`.
+    private var availableMachines: [VineyardMachine] {
+        store.machines()
+            .filter { $0.availableForJobCosting }
     }
 
-    /// Most recently used tractor from this vineyard's previous trips. Used as
+    /// Most recently used machine from this vineyard's previous trips. Used as
     /// a low-risk default when the operator opens Start Trip. Only returns a
-    /// tractor that still exists in the available list.
-    private var defaultTractorId: UUID? {
+    /// machine that still exists in the available list.
+    private var defaultMachineId: UUID? {
         let vineyardId = store.selectedVineyardId
+        let availableIds = Set(availableMachines.map { $0.id })
         let pool = store.trips
-            .filter { $0.vineyardId == vineyardId && $0.tractorId != nil }
+            .filter { $0.vineyardId == vineyardId && $0.machineId != nil }
             .sorted { $0.startTime > $1.startTime }
-        let availableIds = Set(availableTractors.map { $0.id })
-        if let recent = pool.first(where: { availableIds.contains($0.tractorId!) })?.tractorId {
+        if let recent = pool.first(where: { availableIds.contains($0.machineId!) })?.machineId {
             return recent
         }
-        // Only auto-default when exactly one tractor exists to avoid guessing.
-        if availableTractors.count == 1 {
-            return availableTractors.first?.id
+        // Only auto-default when exactly one machine exists to avoid guessing.
+        if availableMachines.count == 1 {
+            return availableMachines.first?.id
         }
         return nil
     }
 
-    private var selectedTractorLabel: String {
-        if let id = selectedTractorId, let t = availableTractors.first(where: { $0.id == id }) {
-            return t.displayName
-        }
-        return availableTractors.isEmpty ? "No tractors configured" : "No tractor selected"
+    private var selectedMachine: VineyardMachine? {
+        guard let id = selectedMachineId else { return nil }
+        return availableMachines.first { $0.id == id }
     }
 
-    private var tractorSection: some View {
-        sectionContainer(title: "Tractor", icon: "car.fill", tint: .indigo) {
+    private var selectedMachineLabel: String {
+        if let m = selectedMachine { return m.displayName }
+        return availableMachines.isEmpty ? "No vineyard machines configured" : "No machine selected"
+    }
+
+    private var machineSection: some View {
+        sectionContainer(title: "Machine", icon: "car.fill", tint: .indigo) {
             VStack(spacing: 10) {
                 Menu {
                     Button {
-                        selectedTractorId = nil
+                        selectedMachineId = nil
                     } label: {
                         HStack {
-                            Text("No tractor")
-                            if selectedTractorId == nil {
+                            Text("No machine")
+                            if selectedMachineId == nil {
                                 Spacer()
                                 Image(systemName: "checkmark")
                             }
                         }
                     }
-                    if !availableTractors.isEmpty {
+                    if !availableMachines.isEmpty {
                         Divider()
-                        ForEach(availableTractors) { tractor in
+                        ForEach(availableMachines) { machine in
                             Button {
-                                selectedTractorId = tractor.id
+                                selectedMachineId = machine.id
                             } label: {
                                 HStack {
-                                    Text(tractor.displayName)
-                                    if selectedTractorId == tractor.id {
+                                    Text("\(machine.displayName) · \(machine.machineType.displayName)")
+                                    if selectedMachineId == machine.id {
                                         Spacer()
                                         Image(systemName: "checkmark")
                                     }
@@ -1037,10 +1041,10 @@ struct StartTripSheet: View {
                             .foregroundStyle(.indigo)
                             .frame(width: 24)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Tractor")
+                            Text("Machine")
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(.primary)
-                            Text(selectedTractorLabel)
+                            Text(selectedMachineLabel)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -1054,23 +1058,23 @@ struct StartTripSheet: View {
                     .clipShape(.rect(cornerRadius: 12))
                 }
                 .buttonStyle(.plain)
-                .disabled(availableTractors.isEmpty)
+                .disabled(availableMachines.isEmpty)
 
-                if availableTractors.isEmpty {
-                    Text("Add tractors in Equipment to enable fuel cost estimates.")
+                if availableMachines.isEmpty {
+                    Text("Add vineyard machines in Equipment to enable fuel cost estimates.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 4)
-                } else if selectedTractorId == nil {
-                    Text("Optional — select a tractor so fuel cost can be estimated.")
+                } else if selectedMachineId == nil {
+                    Text("Optional — select a machine so fuel cost can be estimated.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 4)
                 }
 
-                if selectedTractorId != nil {
+                if selectedMachineId != nil {
                     HStack(spacing: 12) {
                         Image(systemName: "gauge.with.needle")
                             .foregroundStyle(.indigo)
@@ -1112,12 +1116,17 @@ struct StartTripSheet: View {
         return f
     }()
 
-    /// Latest engine-hour reading recorded for the selected tractor via the
-    /// fuel log (newest fill with engine hours). Used as a hint only.
+    /// Latest engine-hour reading recorded for the selected machine via the
+    /// fuel log (newest fill with engine hours). Prefers the machine link and
+    /// falls back to the legacy tractor link. Used as a hint only.
     private var lastKnownEngineHours: Double? {
-        guard let tractorId = selectedTractorId else { return nil }
+        guard let machineId = selectedMachineId else { return nil }
+        let legacyTractorId = selectedMachine?.legacyTractorId
         return store.tractorFuelLogs
-            .filter { $0.tractorId == tractorId && $0.engineHours != nil }
+            .filter {
+                $0.engineHours != nil &&
+                ($0.machineId == machineId || ($0.machineId == nil && legacyTractorId != nil && $0.tractorId == legacyTractorId))
+            }
             .sorted { $0.fillDateTime > $1.fillDateTime }
             .first?.engineHours
     }
@@ -1229,6 +1238,11 @@ struct StartTripSheet: View {
         let trimmedTitle = customTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedTitle: String? = trimmedTitle.isEmpty ? nil : trimmedTitle
 
+        // Resolve the legacy tractor link for backward compatibility: only
+        // tractor-backed machines populate `tractor_id`; non-tractor machines
+        // (ATV, side-by-side, etc.) leave it nil.
+        let legacyTractorId = selectedMachine?.legacyTractorId
+
         tracking.startTrip(
             type: .maintenance,
             paddockId: primary?.id,
@@ -1237,7 +1251,8 @@ struct StartTripSheet: View {
             personName: personName,
             tripFunction: selectedFunctionKey,
             tripTitle: resolvedTitle,
-            tractorId: selectedTractorId,
+            machineId: selectedMachineId,
+            tractorId: legacyTractorId,
             operatorUserId: auth.userId
         )
 
@@ -1254,7 +1269,7 @@ struct StartTripSheet: View {
             }
 
             // Phase 3 fuel allocation: optional start engine-hour reading.
-            if selectedTractorId != nil,
+            if selectedMachineId != nil,
                let hours = Double(startEngineHoursText.trimmingCharacters(in: .whitespaces)),
                hours >= 0 {
                 trip.startEngineHours = hours

@@ -407,6 +407,20 @@ struct TripDetailView: View {
         return store.tractors.first { $0.id == tid }
     }
 
+    /// Vineyard machine linked to this trip (preferred fuel source). Resolves
+    /// from `machineId` first, then falls back to the legacy tractor link so
+    /// older trips still surface their backfilled machine.
+    private var resolvedMachine: VineyardMachine? {
+        if let mid = currentTrip.machineId,
+           let m = store.vineyardMachines.first(where: { $0.id == mid }) {
+            return m
+        }
+        if let tid = currentTrip.tractorId {
+            return store.vineyardMachines.first { $0.legacyTractorId == tid && $0.vineyardId == currentTrip.vineyardId }
+        }
+        return nil
+    }
+
     private var tripFuelPurchases: [FuelPurchase] {
         store.fuelPurchases.filter { $0.vineyardId == trip.vineyardId }
     }
@@ -415,6 +429,7 @@ struct TripDetailView: View {
         TripCostService.estimate(
             trip: currentTrip,
             operatorCategory: resolvedOperatorCategory,
+            machine: resolvedMachine,
             tractor: resolvedTractor,
             fuelPurchases: tripFuelPurchases,
             sprayRecord: sprayRecord,

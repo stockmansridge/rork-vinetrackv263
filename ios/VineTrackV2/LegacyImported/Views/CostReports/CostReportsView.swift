@@ -536,6 +536,19 @@ struct TripCostAllocationRecalculator {
         let tractor: Tractor? = trip.tractorId.flatMap { id in
             store.tractors.first { $0.id == id }
         }
+        // Preferred fuel source: the linked vineyard machine (by machineId, or
+        // the legacy tractor link). Falls back to the tractor rate inside
+        // TripCostService when the machine has no approved rate.
+        let machine: VineyardMachine? = {
+            if let mid = trip.machineId,
+               let m = store.vineyardMachines.first(where: { $0.id == mid }) {
+                return m
+            }
+            if let tid = trip.tractorId {
+                return store.vineyardMachines.first { $0.legacyTractorId == tid && $0.vineyardId == trip.vineyardId }
+            }
+            return nil
+        }()
         let fuelPurchases = store.fuelPurchases.filter { $0.vineyardId == trip.vineyardId }
         let sprayRecord = store.sprayRecords.first { $0.tripId == trip.id }
 
@@ -552,6 +565,7 @@ struct TripCostAllocationRecalculator {
         let result = TripCostService.estimate(
             trip: trip,
             operatorCategory: operatorCategory,
+            machine: machine,
             tractor: tractor,
             fuelPurchases: fuelPurchases,
             sprayRecord: sprayRecord,

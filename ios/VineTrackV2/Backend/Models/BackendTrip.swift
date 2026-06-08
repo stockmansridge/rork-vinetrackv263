@@ -34,6 +34,9 @@ nonisolated struct BackendTrip: Codable, Sendable, Identifiable {
     let fillingTankNumber: Int?
 
     let personName: String?
+    /// Preferred link to the vineyard machine used for this trip (see
+    /// sql/098_trips_machine_id.sql). tractorId is the legacy fallback.
+    let machineId: UUID?
     let tractorId: UUID?
     let operatorUserId: UUID?
     let operatorCategoryId: UUID?
@@ -87,6 +90,7 @@ nonisolated struct BackendTrip: Codable, Sendable, Identifiable {
         case isFillingTank = "is_filling_tank"
         case fillingTankNumber = "filling_tank_number"
         case personName = "person_name"
+        case machineId = "machine_id"
         case tractorId = "tractor_id"
         case operatorUserId = "operator_user_id"
         case operatorCategoryId = "operator_category_id"
@@ -138,6 +142,8 @@ nonisolated struct BackendTripUpsert: Encodable, Sendable {
     let isFillingTank: Bool
     let fillingTankNumber: Int?
     let personName: String
+    /// Preferred link to the vineyard machine used for this trip.
+    let machineId: UUID?
     let tractorId: UUID?
     let operatorUserId: UUID?
     let operatorCategoryId: UUID?
@@ -192,6 +198,7 @@ nonisolated struct BackendTripUpsert: Encodable, Sendable {
         case isFillingTank = "is_filling_tank"
         case fillingTankNumber = "filling_tank_number"
         case personName = "person_name"
+        case machineId = "machine_id"
         case tractorId = "tractor_id"
         case operatorUserId = "operator_user_id"
         case operatorCategoryId = "operator_category_id"
@@ -247,6 +254,7 @@ extension BackendTrip {
             isFillingTank: trip.isFillingTank,
             fillingTankNumber: trip.fillingTankNumber,
             personName: trip.personName,
+            machineId: trip.machineId,
             tractorId: trip.tractorId,
             operatorUserId: trip.operatorUserId,
             operatorCategoryId: trip.operatorCategoryId,
@@ -297,6 +305,7 @@ extension BackendTrip {
             fillingTankNumber: fillingTankNumber,
             tripFunction: tripFunction,
             tripTitle: tripTitle,
+            machineId: machineId,
             tractorId: tractorId,
             operatorUserId: operatorUserId,
             operatorCategoryId: operatorCategoryId,

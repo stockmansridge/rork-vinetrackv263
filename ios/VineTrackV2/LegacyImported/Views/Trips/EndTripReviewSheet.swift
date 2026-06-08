@@ -265,12 +265,26 @@ struct EndTripReviewSheet: View {
         return store.tractors.first { $0.id == tid }
     }
 
+    /// Vineyard machine linked to this trip (preferred fuel source). Resolves
+    /// from `machineId` first, then the legacy tractor link.
+    private var fuelMachine: VineyardMachine? {
+        if let mid = liveTrip.machineId,
+           let m = store.vineyardMachines.first(where: { $0.id == mid }) {
+            return m
+        }
+        if let tid = liveTrip.tractorId {
+            return store.vineyardMachines.first { $0.legacyTractorId == tid && $0.vineyardId == liveTrip.vineyardId }
+        }
+        return nil
+    }
+
     /// Fuel-only breakdown reused from the shared `TripCostService` so the
     /// preview matches the trip detail / report figures exactly.
     private var fuelBreakdown: TripCostService.FuelBreakdown {
         TripCostService.estimate(
             trip: fuelEstimateTrip,
             operatorCategory: nil,
+            machine: fuelMachine,
             tractor: fuelTractor,
             fuelPurchases: store.fuelPurchases.filter { $0.vineyardId == liveTrip.vineyardId },
             sprayRecord: nil
@@ -283,8 +297,8 @@ struct EndTripReviewSheet: View {
         let rateMissing = (f.fuelUsageLPerHour ?? 0) <= 0
         Section {
             VStack(alignment: .leading, spacing: 8) {
-                if let name = f.tractorName {
-                    fuelRow("Tractor", value: name)
+                if let name = f.machineName {
+                    fuelRow("Machine", value: name)
                 }
                 fuelRow("Fuel basis", value: f.basis.label)
                 if let delta = f.engineHourDelta {

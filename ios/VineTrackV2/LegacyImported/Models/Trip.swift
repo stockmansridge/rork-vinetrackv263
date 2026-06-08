@@ -90,8 +90,15 @@ nonisolated struct Trip: Codable, Identifiable, Sendable, Hashable {
     /// or when the operator wants to add a custom label).
     var tripTitle: String?
 
-    /// Linked tractor used for this trip. Drives fuel cost estimation via
-    /// `tractors.fuel_usage_l_per_hour` × `activeDuration`.
+    /// Linked vineyard machine used for this trip (preferred). Drives fuel cost
+    /// estimation via `vineyard_machines.fuel_usage_l_per_hour` when an approved
+    /// (> 0) rate is set. Synced as `trips.machine_id` (see
+    /// sql/098_trips_machine_id.sql). When the machine is tractor-backed,
+    /// `tractorId` is also populated for backward compatibility.
+    var machineId: UUID?
+    /// Legacy linked tractor for this trip. Retained as the fuel-costing
+    /// fallback when no machine rate is available. Drives fuel cost estimation
+    /// via `tractors.fuel_usage_l_per_hour` × `activeDuration`.
     /// Synced as `trips.tractor_id` (see sql/057_trips_costing_links.sql).
     var tractorId: UUID?
     /// Linked operator (vineyard_members.user_id) when the operator is a known
@@ -198,6 +205,7 @@ nonisolated struct Trip: Codable, Identifiable, Sendable, Hashable {
         fillingTankNumber: Int? = nil,
         tripFunction: String? = nil,
         tripTitle: String? = nil,
+        machineId: UUID? = nil,
         tractorId: UUID? = nil,
         operatorUserId: UUID? = nil,
         operatorCategoryId: UUID? = nil,
@@ -237,6 +245,7 @@ nonisolated struct Trip: Codable, Identifiable, Sendable, Hashable {
         self.fillingTankNumber = fillingTankNumber
         self.tripFunction = tripFunction
         self.tripTitle = tripTitle
+        self.machineId = machineId
         self.tractorId = tractorId
         self.operatorUserId = operatorUserId
         self.operatorCategoryId = operatorCategoryId
@@ -257,7 +266,7 @@ nonisolated struct Trip: Codable, Identifiable, Sendable, Hashable {
         case pauseTimestamps, resumeTimestamps, isPaused
         case isFillingTank, fillingTankNumber
         case tripFunction, tripTitle
-        case tractorId, operatorUserId, operatorCategoryId
+        case machineId, tractorId, operatorUserId, operatorCategoryId
         case startEngineHours, endEngineHours
         case seedingDetails
         case manualCorrectionEvents
@@ -293,6 +302,7 @@ nonisolated struct Trip: Codable, Identifiable, Sendable, Hashable {
         fillingTankNumber = try container.decodeIfPresent(Int.self, forKey: .fillingTankNumber)
         tripFunction = try container.decodeIfPresent(String.self, forKey: .tripFunction)
         tripTitle = try container.decodeIfPresent(String.self, forKey: .tripTitle)
+        machineId = try container.decodeIfPresent(UUID.self, forKey: .machineId)
         tractorId = try container.decodeIfPresent(UUID.self, forKey: .tractorId)
         operatorUserId = try container.decodeIfPresent(UUID.self, forKey: .operatorUserId)
         operatorCategoryId = try container.decodeIfPresent(UUID.self, forKey: .operatorCategoryId)
