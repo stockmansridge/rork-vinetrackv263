@@ -19,7 +19,7 @@ struct EquipmentManagementView: View {
 
     private var otherItemsSubtitle: String {
         let count = otherItemsCount
-        if count == 0 { return "Add quad bikes, utes, pumps, generators…" }
+        if count == 0 { return "Add trailers, implements, tools, irrigation parts…" }
         return "\(count) item\(count == 1 ? "" : "s")"
     }
 
@@ -46,6 +46,72 @@ struct EquipmentManagementView: View {
 
     var body: some View {
         List {
+            Section {
+                NavigationLink {
+                    VineyardMachineManagementView()
+                } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Manage Vineyard Machines")
+                                .font(.body.weight(.medium))
+                            Text(machineSubtitle)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                }
+            } header: {
+                HStack {
+                    Label("Vineyard Machines", systemImage: "gearshape.2.fill")
+                        .font(.caption.weight(.semibold))
+                        .textCase(.uppercase)
+                    Spacer()
+                }
+            } footer: {
+                Text("Tractors, ATVs, side-by-sides, harvesters, utility vehicles and other powered machines used directly for vineyard work. Used for Fuel Log and job costing where enabled.")
+            }
+
+            Section {
+                ForEach(store.tractors) { tractor in
+                    Group {
+                        if canManageSetup {
+                            Button { editingTractor = tractor } label: { TractorRow(tractor: tractor) }
+                        } else {
+                            TractorRow(tractor: tractor)
+                        }
+                    }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        if canManageSetup {
+                            Button(role: .destructive) {
+                                store.deleteTractor(tractor)
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
+                    }
+                }
+            } header: {
+                HStack {
+                    Label("Tractors", systemImage: "truck.pickup.side.fill")
+                        .font(.caption.weight(.semibold))
+                        .textCase(.uppercase)
+                    Spacer()
+                    if canManageSetup {
+                        Button {
+                            showAddTractorSheet = true
+                        } label: {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.body)
+                        }
+                    }
+                }
+            } footer: {
+                if canManageSetup {
+                    Text("Tractors also appear under Vineyard Machines. Fuel usage (L/hr) can typically be found in your tractor's user manual under engine specifications.")
+                }
+            }
+
             Section {
                 ForEach(store.sprayEquipment) { item in
                     Group {
@@ -103,79 +169,13 @@ struct EquipmentManagementView: View {
                 }
             } header: {
                 HStack {
-                    Label("Other", systemImage: "shippingbox.fill")
+                    Label("Other Equipment & Assets", systemImage: "shippingbox.fill")
                         .font(.caption.weight(.semibold))
                         .textCase(.uppercase)
                     Spacer()
                 }
             } footer: {
-                Text("Quad bikes, utes, trailers, pumps, generators, slashers, mulchers, irrigation pumps, workshop tools, and other vineyard assets you maintain.")
-            }
-
-            Section {
-                ForEach(store.tractors) { tractor in
-                    Group {
-                        if canManageSetup {
-                            Button { editingTractor = tractor } label: { TractorRow(tractor: tractor) }
-                        } else {
-                            TractorRow(tractor: tractor)
-                        }
-                    }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                        if canManageSetup {
-                            Button(role: .destructive) {
-                                store.deleteTractor(tractor)
-                            } label: {
-                                Label("Delete", systemImage: "trash")
-                            }
-                        }
-                    }
-                }
-            } header: {
-                HStack {
-                    Label("Tractors", systemImage: "truck.pickup.side.fill")
-                        .font(.caption.weight(.semibold))
-                        .textCase(.uppercase)
-                    Spacer()
-                    if canManageSetup {
-                        Button {
-                            showAddTractorSheet = true
-                        } label: {
-                            Image(systemName: "plus.circle.fill")
-                                .font(.body)
-                        }
-                    }
-                }
-            } footer: {
-                if canManageSetup {
-                    Text("Fuel usage (L/hr) can typically be found in your tractor's user manual under engine specifications.")
-                }
-            }
-
-            Section {
-                NavigationLink {
-                    VineyardMachineManagementView()
-                } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Manage Vineyard Machines")
-                                .font(.body.weight(.medium))
-                            Text(machineSubtitle)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                    }
-                }
-            } header: {
-                HStack {
-                    Label("Vineyard Machines", systemImage: "gearshape.2.fill")
-                        .font(.caption.weight(.semibold))
-                        .textCase(.uppercase)
-                    Spacer()
-                }
-            } footer: {
-                Text("ATVs, side-by-sides, harvesters, utility vehicles and other machines. Add them here to track fuel and have them appear in the Fuel Log.")
+                Text("Trailers, implements, tools, irrigation parts, workshop gear and other non-fuel-tracked assets. Not used for Fuel Log or machine fuel costing.")
             }
 
             Section {

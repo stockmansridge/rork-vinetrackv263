@@ -28,7 +28,7 @@ struct OtherEquipmentManagementView: View {
         List {
             Section {
                 if items.isEmpty {
-                    Text("No items yet. Add quad bikes, utes, trailers, pumps, generators, slashers, mulchers, irrigation pumps, workshop tools, or any other vineyard asset you maintain.")
+                    Text("No items yet. Add trailers, implements, tools, irrigation parts, workshop gear, or other non-fuel-tracked vineyard assets you maintain. Powered machines like tractors, ATVs and side-by-sides belong under Vineyard Machines.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 } else {
