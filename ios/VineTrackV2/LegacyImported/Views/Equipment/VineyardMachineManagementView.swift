@@ -17,12 +17,19 @@ struct VineyardMachineManagementView: View {
 
     private var canManageSetup: Bool { accessControl?.canManageSetup ?? false }
 
-    /// Active machines for the current vineyard, sorted by display name.
-    private var machines: [VineyardMachine] { store.machines() }
-
     /// Tractor-backed machines stay read-only here — manage them in Tractors.
     private func isLegacyTractor(_ m: VineyardMachine) -> Bool { m.legacyTractorId != nil }
     private func canEdit(_ m: VineyardMachine) -> Bool { canManageSetup && !isLegacyTractor(m) }
+
+    /// Active machines for the current vineyard, sorted by display name.
+    ///
+    /// Tractor-backed machines (those with a `legacyTractorId`) are hidden here —
+    /// they are managed under the top-level Tractors section. The underlying
+    /// `vineyard_machines` rows still exist so the Fuel Log / Trip pickers and
+    /// legacy costing keep working.
+    private var machines: [VineyardMachine] {
+        store.machines().filter { $0.legacyTractorId == nil }
+    }
 
     var body: some View {
         List {
@@ -62,7 +69,7 @@ struct VineyardMachineManagementView: View {
                 }
             } footer: {
                 if canManageSetup {
-                    Text("Add ATVs, side-by-sides, harvesters, utility vehicles and other machines. Machines with fuel tracking on appear in the Fuel Log.")
+                    Text("Add ATVs, side-by-sides, harvesters, utility vehicles and other powered vineyard machines. Machines with fuel tracking on appear in the Fuel Log.")
                 } else {
                     Text("Vineyard machines are managed by vineyard owners and managers.")
                 }
