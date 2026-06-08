@@ -148,6 +148,7 @@ struct VineyardSetupHubView: View {
                 buttonCustomizationSection
                 growthStagesSection
                 weatherDataSection
+                regionUnitsSection
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 24)
@@ -694,6 +695,51 @@ struct VineyardSetupHubView: View {
 
             sectionFooter("Configure which E-L growth stages are available and manage reference images for visual confirmation.")
         }
+    }
+
+    // MARK: - Region & Units (drill-in)
+
+    private var regionUnitsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionHeader("Region", symbol: "globe", color: .teal)
+
+            cardBackground {
+                NavigationLink {
+                    RegionUnitsSettingsView()
+                } label: {
+                    HStack(spacing: 14) {
+                        Image(systemName: "ruler")
+                            .font(.title3)
+                            .foregroundStyle(Color.accentColor)
+                            .frame(width: 28, height: 28)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Region & Units")
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(.primary)
+                            Text(regionUnitsSummary)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+                }
+                .buttonStyle(.plain)
+            }
+
+            sectionFooter("Set the country, currency, units, date format and terminology used to display and export records. These settings never change stored records. Owners and managers only.")
+        }
+    }
+
+    private var regionUnitsSummary: String {
+        let r = store.settings.regionSettings
+        return [r.countryCode, r.currencyCode, r.area.abbreviation, r.dateStyle.rawValue].joined(separator: " \u{00B7} ")
     }
 
     // MARK: - Weather Data & Forecasting (drill-in)
