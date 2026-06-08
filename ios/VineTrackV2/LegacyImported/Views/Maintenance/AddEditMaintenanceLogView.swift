@@ -113,7 +113,7 @@ struct AddEditMaintenanceLogView: View {
                                 Button {
                                     activeAddSheet = .tractor
                                 } label: {
-                                    Label("Add Tractor", systemImage: "tractor.fill")
+                                    Label("Add Tractor", systemImage: "tractor")
                                 }
                                 Button {
                                     activeAddSheet = .sprayEquipment
