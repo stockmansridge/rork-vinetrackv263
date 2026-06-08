@@ -12,6 +12,8 @@ struct GrowthStageRecordsListView: View {
     @State private var searchText: String = ""
     @State private var showPDFExport: Bool = false
 
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
+
     private var vineyardRecords: [GrowthStageRecord] {
         guard let vineyardId = store.selectedVineyardId else { return [] }
         let mirrored = growthStageRecordSync.records.filter { $0.vineyardId == vineyardId }
@@ -189,7 +191,7 @@ struct GrowthStageRecordsListView: View {
                         .lineLimit(1)
                 }
                 Spacer()
-                Text(record.observedAt.formatted(date: .abbreviated, time: .omitted))
+                Text(fmt.formatDate(record.observedAt))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

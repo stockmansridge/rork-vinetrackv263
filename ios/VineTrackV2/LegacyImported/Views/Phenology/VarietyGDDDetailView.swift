@@ -9,6 +9,7 @@ struct VarietyGDDDetailView: View {
 
     @State private var selectedDate: Date?
 
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
     private var variety: GrapeVariety? { store.grapeVariety(for: varietyId) }
 
     private var allocatedBlocks: [Paddock] {
@@ -305,7 +306,7 @@ struct VarietyGDDDetailView: View {
                         Text(hit.kind == .reached ? "Target reached on" : "Projected crossover")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
-                        Text(hit.date.formatted(date: .abbreviated, time: .omitted))
+                        Text(fmt.formatDate(hit.date))
                             .font(.subheadline.monospacedDigit().weight(.semibold))
                             .foregroundStyle(tint)
                     }
@@ -499,7 +500,7 @@ struct VarietyGDDDetailView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(series.block.name)
                                 .font(.subheadline.weight(.semibold))
-                            Text("Since \(series.resetDate.formatted(date: .abbreviated, time: .omitted))")
+                            Text("Since \(fmt.formatDate(series.resetDate))")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }

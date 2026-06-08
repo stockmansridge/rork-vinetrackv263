@@ -78,6 +78,8 @@ private struct BudburstRow: View {
     let paddockId: UUID
     var dimmed: Bool = false
 
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
+
     @State private var date: Date = Date()
     @State private var hasDate: Bool = false
     @State private var loaded: Bool = false
@@ -124,7 +126,7 @@ private struct BudburstRow: View {
                     persist()
                 } label: {
                     Label {
-                        Text("Use observation: \(suggestion.formatted(.dateTime.day().month(.abbreviated).year()))")
+                        Text("Use observation: \(fmt.formatDate(suggestion))")
                             .font(.caption.weight(.semibold))
                     } icon: {
                         Image(systemName: "leaf.arrow.triangle.circlepath")

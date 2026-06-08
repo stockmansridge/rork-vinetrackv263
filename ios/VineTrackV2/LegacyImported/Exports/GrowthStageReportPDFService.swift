@@ -17,7 +17,9 @@ struct GrowthStageReportPDFService {
         seasonStartDay: Int,
         vintageColors: [Int: UIColor],
         logoData: Data? = nil,
-        timeZone: TimeZone = .current
+        timeZone: TimeZone = .current,
+        dateFormat: String = "d MMM yyyy",
+        localeIdentifier: String? = nil
     ) -> Data {
         let pageWidth: CGFloat = 595.0
         let pageHeight: CGFloat = 842.0
@@ -36,8 +38,11 @@ struct GrowthStageReportPDFService {
             let accentColor = VineyardTheme.uiOlive
 
             let dateFormatter = DateFormatter()
-            dateFormatter.dateFormat = "d MMM yyyy"
+            dateFormatter.dateFormat = dateFormat
             dateFormatter.timeZone = timeZone
+            if let localeIdentifier {
+                dateFormatter.locale = Locale(identifier: localeIdentifier)
+            }
 
             var seasonCalendar = Calendar(identifier: .gregorian)
             seasonCalendar.timeZone = timeZone

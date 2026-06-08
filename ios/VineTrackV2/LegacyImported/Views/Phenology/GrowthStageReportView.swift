@@ -15,6 +15,7 @@ struct GrowthStageReportView: View {
         let url: URL
     }
 
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
     private var seasonStartMonth: Int { store.settings.seasonStartMonth }
     private var seasonStartDay: Int { store.settings.seasonStartDay }
     private var tz: TimeZone { store.settings.resolvedTimeZone }
@@ -166,6 +167,8 @@ struct GrowthStageReportView: View {
         let seasonMonth = seasonStartMonth
         let seasonDay = seasonStartDay
         let exportTimeZone = tz
+        let exportDateFormat = store.settings.regionSettings.dateStyle.dateFormatTemplate
+        let exportLocaleIdentifier = "en_\(store.settings.regionSettings.countryCode.uppercased())"
 
         let blocks: [GrowthStageReportPDFService.BlockReport] = {
             let paddocks: [Paddock] = {
@@ -232,7 +235,9 @@ struct GrowthStageReportView: View {
                 seasonStartDay: seasonDay,
                 vintageColors: vintageColorMap,
                 logoData: nil,
-                timeZone: exportTimeZone
+                timeZone: exportTimeZone,
+                dateFormat: exportDateFormat,
+                localeIdentifier: exportLocaleIdentifier
             )
             let fileName = "GrowthStageReport_\(Date().formatted(.iso8601.year().month().day()))"
             let url = GrowthStageReportPDFService.savePDFToTemp(data: data, fileName: fileName)
@@ -316,7 +321,7 @@ struct GrowthStageReportView: View {
         } footer: {
             if let first = availableVintages.first {
                 let range = vintageRange(for: first)
-                Text("Vintage \(String(first)): \(range.start.formattedTZ(date: .abbreviated, time: .omitted, in: tz)) \u{2013} \(range.end.formattedTZ(date: .abbreviated, time: .omitted, in: tz))")
+                Text("Vintage \(String(first)): \(fmt.formatDate(range.start)) \u{2013} \(fmt.formatDate(range.end))")
             }
         }
     }
@@ -378,7 +383,7 @@ struct GrowthStageReportView: View {
                             .foregroundStyle(color)
                             .frame(width: 38, alignment: .leading)
 
-                        Text(pin.timestamp.formattedTZ(date: .abbreviated, time: .omitted, in: tz))
+                        Text(fmt.formatDate(pin.timestamp))
                             .font(.caption.monospacedDigit())
 
                         Spacer()
