@@ -27,21 +27,28 @@ struct EquipmentManagementView: View {
         return "\(count) machine\(count == 1 ? "" : "s")"
     }
 
+    private var tractorSubtitle: String {
+        let count = store.tractors.count
+        if count == 0 { return "Add tractors for fuel use and trip costing" }
+        return "\(count) tractor\(count == 1 ? "" : "s")"
+    }
+
+    private var sprayEquipmentSubtitle: String {
+        let count = store.sprayEquipment.count
+        if count == 0 { return "Add spray rigs and tanks" }
+        return "\(count) item\(count == 1 ? "" : "s")"
+    }
+
+    private var fuelSubtitle: String {
+        let fills = fuelLogCount
+        let purchases = store.fuelPurchases.count
+        if fills == 0 && purchases == 0 { return "Record purchases and fuel fills" }
+        return "\(purchases) purchase\(purchases == 1 ? "" : "s") · \(fills) fill\(fills == 1 ? "" : "s")"
+    }
+
     private var fuelLogCount: Int {
         guard let vid = store.selectedVineyardId else { return 0 }
         return store.tractorFuelLogs.filter { $0.vineyardId == vid }.count
-    }
-
-    private var fuelLogSubtitle: String {
-        let count = fuelLogCount
-        if count == 0 { return "Record diesel fills to track L/hr" }
-        return "\(count) fill\(count == 1 ? "" : "s") recorded"
-    }
-
-    private var fuelPurchaseSubtitle: String {
-        let count = store.fuelPurchases.count
-        if count == 0 { return "Track cost per litre for the season" }
-        return "\(count) purchase\(count == 1 ? "" : "s") recorded"
     }
 
     private func navCard(title: String, subtitle: String) -> some View {
@@ -61,6 +68,30 @@ struct EquipmentManagementView: View {
         List {
             Section {
                 NavigationLink {
+                    TractorManagementView()
+                } label: {
+                    navCard(title: "Manage Tractors", subtitle: tractorSubtitle)
+                }
+            } header: {
+                sectionHeader("Tractors", systemImage: "truck.pickup.side.fill")
+            } footer: {
+                Text("Tractors used for vineyard work. Used for Fuel Log and trip costing.")
+            }
+
+            Section {
+                NavigationLink {
+                    SprayEquipmentManagementView()
+                } label: {
+                    navCard(title: "Manage Spray Equipment", subtitle: sprayEquipmentSubtitle)
+                }
+            } header: {
+                sectionHeader("Spray Equipment", systemImage: "wrench.and.screwdriver.fill")
+            } footer: {
+                Text("Spray rigs and tanks used for spray applications. Not used for Fuel Log or machine fuel costing.")
+            }
+
+            Section {
+                NavigationLink {
                     VineyardMachineManagementView()
                 } label: {
                     navCard(title: "Manage Vineyard Machines", subtitle: machineSubtitle)
@@ -68,24 +99,7 @@ struct EquipmentManagementView: View {
             } header: {
                 sectionHeader("Vineyard Machines", systemImage: "gearshape.2.fill")
             } footer: {
-                Text("Tractors, ATVs, side-by-sides, harvesters, utility vehicles and other powered machines used directly for vineyard work.")
-            }
-
-            Section {
-                NavigationLink {
-                    FuelLogView()
-                } label: {
-                    navCard(title: "Fuel Log", subtitle: fuelLogSubtitle)
-                }
-                NavigationLink {
-                    FuelPurchasesView()
-                } label: {
-                    navCard(title: "Fuel Purchases", subtitle: fuelPurchaseSubtitle)
-                }
-            } header: {
-                sectionHeader("Fuel", systemImage: "fuelpump.fill")
-            } footer: {
-                Text("Record diesel fills against vineyard machines to calculate fuel use, and log fuel purchases to track cost per litre.")
+                Text("ATVs, side-by-sides, harvesters, utility vehicles and other powered machines used directly for vineyard work.")
             }
 
             Section {
@@ -98,6 +112,18 @@ struct EquipmentManagementView: View {
                 sectionHeader("Other Equipment & Assets", systemImage: "shippingbox.fill")
             } footer: {
                 Text("Trailers, implements, tools, irrigation parts, workshop gear and other non-fuel-tracked assets.")
+            }
+
+            Section {
+                NavigationLink {
+                    FuelView()
+                } label: {
+                    navCard(title: "Fuel", subtitle: fuelSubtitle)
+                }
+            } header: {
+                sectionHeader("Fuel", systemImage: "fuelpump.fill")
+            } footer: {
+                Text("Record fuel purchases for weighted cost per litre, and fuel fills to calculate machine usage over time.")
             }
         }
         .listStyle(.insetGrouped)
