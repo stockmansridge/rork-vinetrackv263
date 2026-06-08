@@ -31,6 +31,13 @@ struct AddEditMaintenanceLogView: View {
             .filter { $0.vineyardId == vid }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
+
+    /// Non-tractor vineyard machines (ATVs, side-by-sides, harvesters, etc.).
+    /// Tractor-backed machines are excluded because they already appear under
+    /// the Tractors group.
+    private var vineyardMachineItems: [VineyardMachine] {
+        store.machines().filter { $0.legacyTractorId == nil }
+    }
     private var canViewFinancials: Bool { accessControl?.canViewFinancials ?? false }
     private var canDelete: Bool { accessControl?.canDelete ?? false }
 
@@ -62,8 +69,17 @@ struct AddEditMaintenanceLogView: View {
                                     }
                                 }
                             }
+                            if !vineyardMachineItems.isEmpty {
+                                Section("Vineyard Machines") {
+                                    ForEach(vineyardMachineItems) { machine in
+                                        Button("\(machine.displayName) · \(machine.machineType.displayName)") {
+                                            itemName = machine.displayName
+                                        }
+                                    }
+                                }
+                            }
                             if !otherEquipmentItems.isEmpty {
-                                Section("Other") {
+                                Section("Other Equipment & Assets") {
                                     ForEach(otherEquipmentItems) { item in
                                         Button(item.displayName) {
                                             itemName = item.displayName
@@ -94,8 +110,8 @@ struct AddEditMaintenanceLogView: View {
                             .accessibilityLabel("Add item")
                         }
                     }
-                    if store.tractors.isEmpty && store.sprayEquipment.isEmpty && otherEquipmentItems.isEmpty {
-                        Text("No tractors, spray equipment, or Other items yet. Tap + to add an Other item, or visit Equipment in Settings.")
+                    if store.tractors.isEmpty && store.sprayEquipment.isEmpty && vineyardMachineItems.isEmpty && otherEquipmentItems.isEmpty {
+                        Text("No tractors, spray equipment, vineyard machines, or other items yet. Tap + to add an Other item, or visit Equipment in Settings.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
