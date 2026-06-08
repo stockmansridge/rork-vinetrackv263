@@ -14,6 +14,7 @@ struct VineyardDetailsView: View {
 
     private var vineyard: Vineyard? { store.selectedVineyard }
     private var paddocks: [Paddock] { store.orderedPaddocks }
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
 
     private var totalAreaHa: Double {
         paddocks.reduce(0) { $0 + $1.areaHectares }
@@ -123,7 +124,7 @@ struct VineyardDetailsView: View {
                 GridItem(.flexible()),
                 GridItem(.flexible())
             ], spacing: 12) {
-                statCard(label: "Total Area", value: String(format: "%.2f ha", totalAreaHa), icon: "map", color: VineyardTheme.leafGreen)
+                statCard(label: "Total Area", value: fmt.formatArea(hectares: totalAreaHa), icon: "map", color: VineyardTheme.leafGreen)
                 statCard(label: "Total Vines", value: formatLargeNumber(totalVines), icon: "leaf", color: VineyardTheme.olive)
                 statCard(label: "Trellis Length", value: formatDistance(totalTrellisLength), icon: "ruler", color: VineyardTheme.earthBrown)
                 statCard(label: "Total Rows", value: "\(totalRows)", icon: "line.3.horizontal", color: .blue)
@@ -157,11 +158,11 @@ struct VineyardDetailsView: View {
 
     private var blocksSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Blocks")
+            Text(fmt.blockTermPluralCapitalised)
                 .font(.headline)
 
             if paddocks.isEmpty {
-                emptyCard(icon: "square.grid.2x2", title: "No blocks configured", subtitle: "Set up blocks in Vineyard Setup.")
+                emptyCard(icon: "square.grid.2x2", title: "No \(fmt.blockTermPlural) configured", subtitle: "Set up \(fmt.blockTermPlural) in Vineyard Setup.")
             } else {
                 ForEach(paddocks) { paddock in
                     Button {
@@ -179,7 +180,7 @@ struct VineyardDetailsView: View {
 
     private var pinsOverviewSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Pins by Block")
+            Text("Pins by \(fmt.blockTermCapitalised)")
                 .font(.headline)
 
             if store.pins.isEmpty {
@@ -545,6 +546,7 @@ private struct BlockInfoCard: View {
     let paddock: Paddock
     let soilProfile: BackendSoilProfile?
     @Environment(MigratedDataStore.self) private var store
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
 
     private var rowNumbers: [Int] {
         paddock.rows.map { $0.number }.sorted()
@@ -581,7 +583,7 @@ private struct BlockInfoCard: View {
                 Text(paddock.name)
                     .font(.subheadline.weight(.bold))
                 Spacer()
-                Text(String(format: "%.2f ha", paddock.areaHectares))
+                Text(fmt.formatArea(hectares: paddock.areaHectares))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(VineyardTheme.leafGreen)
             }
@@ -747,6 +749,7 @@ private struct BlockDetailSheet: View {
     let paddock: Paddock
     @Environment(MigratedDataStore.self) private var store
     @Environment(\.dismiss) private var dismiss
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
 
     private var blockPins: [VinePin] {
         store.pins.filter { $0.paddockId == paddock.id }
@@ -767,7 +770,7 @@ private struct BlockDetailSheet: View {
         NavigationStack {
             List {
                 Section("Overview") {
-                    LabeledContent("Area", value: String(format: "%.2f ha", paddock.areaHectares))
+                    LabeledContent("Area", value: fmt.formatArea(hectares: paddock.areaHectares))
                     LabeledContent("Vines", value: "\(paddock.effectiveVineCount)")
                     LabeledContent("Trellis Length", value: String(format: "%.0f m", paddock.effectiveTotalRowLength))
                     LabeledContent("Rows", value: "\(paddock.rows.count)")

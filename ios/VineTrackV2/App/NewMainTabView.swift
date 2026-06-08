@@ -645,11 +645,19 @@ private struct NewHomeTabView: View {
         return "\(value)"
     }
 
-    private func formattedHectares(_ value: Double) -> String {
+    /// Region-aware area value (hectares → configured unit) for the compact
+    /// overview tile. Keeps the AU "%.0f / %.1f" rounding behaviour.
+    private func formattedHectares(_ hectares: Double) -> String {
+        let value = fmt.areaValue(hectares: hectares)
         if value >= 100 {
             return String(format: "%.0f", value)
         }
         return String(format: "%.1f", value)
+    }
+
+    /// Full-word label for the configured area unit (e.g. "Hectares" / "Acres").
+    private var areaUnitLabel: String {
+        fmt.settings.area == .hectares ? "Hectares" : "Acres"
     }
 
     // MARK: Today
@@ -714,6 +722,8 @@ private struct NewHomeTabView: View {
         store.paddocks.reduce(0.0) { $0 + $1.areaHectares }
     }
 
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
+
     private var totalVines: Int {
         store.paddocks.reduce(0) { $0 + $1.effectiveVineCount }
     }
@@ -758,9 +768,9 @@ private struct NewHomeTabView: View {
                         }
                         Divider()
                         HStack(spacing: 0) {
-                            overviewStat(icon: "square.grid.2x2.fill", iconColor: VineyardTheme.leafGreen, value: "\(store.paddocks.count)", label: "Blocks")
+                            overviewStat(icon: "square.grid.2x2.fill", iconColor: VineyardTheme.leafGreen, value: "\(store.paddocks.count)", label: fmt.blockTermPluralCapitalised)
                             Divider().frame(height: 44)
-                            overviewStat(icon: "square.dashed", iconColor: .orange, value: formattedHectares(totalHectares), label: "Hectares")
+                            overviewStat(icon: "square.dashed", iconColor: .orange, value: formattedHectares(totalHectares), label: areaUnitLabel)
                             Divider().frame(height: 44)
                             overviewStatCustom(value: formattedNumber(totalVines), label: "Vines") {
                                 GrapeLeafIcon(size: 14, color: VineyardTheme.darkGreen)
