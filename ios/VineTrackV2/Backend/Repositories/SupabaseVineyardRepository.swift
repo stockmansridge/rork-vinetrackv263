@@ -139,6 +139,41 @@ final class SupabaseVineyardRepository: VineyardRepositoryProtocol {
         guard let row = rows.first else { throw BackendRepositoryError.emptyResponse }
         return row
     }
+
+    func getVineyardRegionSettings(vineyardId: UUID) async throws -> BackendVineyardRegionSettings? {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let rows: [BackendVineyardRegionSettings] = try await provider.client
+            .rpc("get_vineyard_region_settings", params: GetVineyardRegionSettingsRequest(vineyardId: vineyardId))
+            .execute()
+            .value
+        return rows.first
+    }
+
+    @discardableResult
+    func setVineyardRegionSettings(
+        _ settings: BackendVineyardRegionSettings
+    ) async throws -> BackendVineyardRegionSettings {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let params = SetVineyardRegionSettingsRequest(
+            vineyardId: settings.vineyardId,
+            countryCode: settings.countryCode,
+            currencyCode: settings.currencyCode,
+            timezone: settings.timezone,
+            areaUnit: settings.areaUnit,
+            volumeUnit: settings.volumeUnit,
+            distanceUnit: settings.distanceUnit,
+            fuelUnit: settings.fuelUnit,
+            sprayRateAreaUnit: settings.sprayRateAreaUnit,
+            dateFormat: settings.dateFormat,
+            terminologyRegion: settings.terminologyRegion
+        )
+        let rows: [BackendVineyardRegionSettings] = try await provider.client
+            .rpc("set_vineyard_region_settings", params: params)
+            .execute()
+            .value
+        guard let row = rows.first else { throw BackendRepositoryError.emptyResponse }
+        return row
+    }
 }
 
 nonisolated private struct GetVineyardLocationRequest: Encodable, Sendable {
@@ -174,6 +209,60 @@ nonisolated private struct SetVineyardLocationRequest: Encodable, Sendable {
         try c.encode(longitude, forKey: .longitude)
         try c.encode(elevationMetres, forKey: .elevationMetres)
         try c.encode(timezone, forKey: .timezone)
+    }
+}
+
+nonisolated private struct GetVineyardRegionSettingsRequest: Encodable, Sendable {
+    let vineyardId: UUID
+
+    enum CodingKeys: String, CodingKey {
+        case vineyardId = "p_vineyard_id"
+    }
+}
+
+/// Custom `encode(to:)` so `nil` values are sent as JSON `null` rather than
+/// being omitted (PostgREST overload resolution needs every named param
+/// present — same reason as `SetVineyardLocationRequest`).
+nonisolated private struct SetVineyardRegionSettingsRequest: Encodable, Sendable {
+    let vineyardId: UUID
+    let countryCode: String?
+    let currencyCode: String?
+    let timezone: String?
+    let areaUnit: String?
+    let volumeUnit: String?
+    let distanceUnit: String?
+    let fuelUnit: String?
+    let sprayRateAreaUnit: String?
+    let dateFormat: String?
+    let terminologyRegion: String?
+
+    enum CodingKeys: String, CodingKey {
+        case vineyardId = "p_vineyard_id"
+        case countryCode = "p_country_code"
+        case currencyCode = "p_currency_code"
+        case timezone = "p_timezone"
+        case areaUnit = "p_area_unit"
+        case volumeUnit = "p_volume_unit"
+        case distanceUnit = "p_distance_unit"
+        case fuelUnit = "p_fuel_unit"
+        case sprayRateAreaUnit = "p_spray_rate_area_unit"
+        case dateFormat = "p_date_format"
+        case terminologyRegion = "p_terminology_region"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(vineyardId, forKey: .vineyardId)
+        try c.encode(countryCode, forKey: .countryCode)
+        try c.encode(currencyCode, forKey: .currencyCode)
+        try c.encode(timezone, forKey: .timezone)
+        try c.encode(areaUnit, forKey: .areaUnit)
+        try c.encode(volumeUnit, forKey: .volumeUnit)
+        try c.encode(distanceUnit, forKey: .distanceUnit)
+        try c.encode(fuelUnit, forKey: .fuelUnit)
+        try c.encode(sprayRateAreaUnit, forKey: .sprayRateAreaUnit)
+        try c.encode(dateFormat, forKey: .dateFormat)
+        try c.encode(terminologyRegion, forKey: .terminologyRegion)
     }
 }
 

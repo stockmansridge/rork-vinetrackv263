@@ -810,6 +810,83 @@ extension MigratedDataStore {
         )
     }
 
+    // MARK: - Vineyard Region Settings (country/units/date format/terminology)
+
+    /// Result of merging server-side vineyard region settings into the local
+    /// `AppSettings.regionSettings`. `needsBackfill` is true only when the
+    /// server has *no* region values AND the local copy diverges from the
+    /// Australian defaults — i.e. there is something worth pushing up once.
+    /// `settingsToBackfill` is the resolved local region contract to push.
+    nonisolated struct VineyardRegionSettingsMergeResult: Sendable {
+        let needsBackfill: Bool
+        let settingsToBackfill: OrganizationRegionSettings
+    }
+
+    /// Merge the server-side region settings into the local
+    /// `AppSettings.regionSettings`.
+    ///
+    /// Conflict handling:
+    ///   1. Server value exists (non-nil/non-empty) → server wins.
+    ///   2. Server value missing/null → preserve the local fallback (which is
+    ///      itself the AU default unless an owner/manager changed it).
+    ///   3. Server all-null + local non-default → flag `needsBackfill` so the
+    ///      caller can push local up *once* (caller gates this on role).
+    ///
+    /// Existing AU organisations have all-null servers and AU-default locals,
+    /// so nothing changes and `needsBackfill` stays false.
+    @discardableResult
+    func applyRemoteVineyardRegionSettings(
+        _ remote: BackendVineyardRegionSettings,
+        vineyardId: UUID
+    ) -> VineyardRegionSettingsMergeResult {
+        guard selectedVineyardId == vineyardId else {
+            return VineyardRegionSettingsMergeResult(
+                needsBackfill: false,
+                settingsToBackfill: settings.regionSettings
+            )
+        }
+
+        var s = settings
+        s.vineyardId = vineyardId
+        var region = s.regionSettings
+        var changed = false
+
+        func apply(_ value: String?, to keyPath: WritableKeyPath<OrganizationRegionSettings, String>) {
+            guard let value, !value.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+            if region[keyPath: keyPath] != value {
+                region[keyPath: keyPath] = value
+                changed = true
+            }
+        }
+
+        apply(remote.countryCode, to: \.countryCode)
+        apply(remote.currencyCode, to: \.currencyCode)
+        apply(remote.timezone, to: \.timezone)
+        apply(remote.areaUnit, to: \.areaUnit)
+        apply(remote.volumeUnit, to: \.volumeUnit)
+        apply(remote.distanceUnit, to: \.distanceUnit)
+        apply(remote.fuelUnit, to: \.fuelUnit)
+        apply(remote.sprayRateAreaUnit, to: \.sprayRateAreaUnit)
+        apply(remote.dateFormat, to: \.dateFormat)
+        apply(remote.terminologyRegion, to: \.terminologyRegion)
+
+        if changed {
+            s.regionSettings = region
+            saveSettings(s)
+        }
+
+        // Backfill only when the server is entirely empty AND our local region
+        // contract diverges from AU defaults. Otherwise there is nothing new
+        // to push, and existing AU vineyards stay untouched.
+        let needsBackfill = remote.isAllNull
+            && region != OrganizationRegionSettings.australianDefaults
+
+        return VineyardRegionSettingsMergeResult(
+            needsBackfill: needsBackfill,
+            settingsToBackfill: region
+        )
+    }
+
     // MARK: - Button Templates
 
     private func saveButtonTemplatesToDisk() {

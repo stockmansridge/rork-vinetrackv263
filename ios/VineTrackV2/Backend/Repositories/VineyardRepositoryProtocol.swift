@@ -28,6 +28,20 @@ protocol VineyardRepositoryProtocol: Sendable {
         elevationMetres: Double?,
         timezone: String?
     ) async throws -> BackendVineyardLocation
+
+    /// Fetch the vineyard-scoped organisation region settings (country/units/
+    /// date format/terminology + shared timezone) from `public.vineyards` via
+    /// `get_vineyard_region_settings`. Returns nil if the caller is not a
+    /// member (RPC throws) or the vineyard has no row. Any NULL field is left
+    /// nil so the client can fall back to Australian defaults.
+    func getVineyardRegionSettings(vineyardId: UUID) async throws -> BackendVineyardRegionSettings?
+
+    /// Owner/manager only. Writes all region fields atomically.
+    /// Passing `nil`/empty for a field clears it server-side.
+    @discardableResult
+    func setVineyardRegionSettings(
+        _ settings: BackendVineyardRegionSettings
+    ) async throws -> BackendVineyardRegionSettings
 }
 
 nonisolated struct BackendVineyardLocation: Decodable, Sendable {
@@ -43,6 +57,46 @@ nonisolated struct BackendVineyardLocation: Decodable, Sendable {
         case longitude
         case elevationMetres = "elevation_metres"
         case timezone
+    }
+}
+
+/// Server-side organisation region settings for a vineyard. Mirrors the nine
+/// additive columns from sql/099 plus the shared `timezone` (sql/080). Every
+/// field is optional because columns are nullable; nil means "use the local
+/// Australian default".
+nonisolated struct BackendVineyardRegionSettings: Codable, Sendable {
+    let vineyardId: UUID
+    let countryCode: String?
+    let currencyCode: String?
+    let timezone: String?
+    let areaUnit: String?
+    let volumeUnit: String?
+    let distanceUnit: String?
+    let fuelUnit: String?
+    let sprayRateAreaUnit: String?
+    let dateFormat: String?
+    let terminologyRegion: String?
+
+    enum CodingKeys: String, CodingKey {
+        case vineyardId = "vineyard_id"
+        case countryCode = "country_code"
+        case currencyCode = "currency_code"
+        case timezone
+        case areaUnit = "area_unit"
+        case volumeUnit = "volume_unit"
+        case distanceUnit = "distance_unit"
+        case fuelUnit = "fuel_unit"
+        case sprayRateAreaUnit = "spray_rate_area_unit"
+        case dateFormat = "date_format"
+        case terminologyRegion = "terminology_region"
+    }
+
+    /// True when the server has no region values at all — used to decide
+    /// whether a one-time local→server backfill is warranted.
+    var isAllNull: Bool {
+        [countryCode, currencyCode, timezone, areaUnit, volumeUnit, distanceUnit,
+         fuelUnit, sprayRateAreaUnit, dateFormat, terminologyRegion]
+            .allSatisfy { ($0 ?? "").trimmingCharacters(in: .whitespaces).isEmpty }
     }
 }
 

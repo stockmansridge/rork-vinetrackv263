@@ -31,6 +31,7 @@ struct NewBackendRootView: View {
     private let disclaimerRepository: any DisclaimerRepositoryProtocol = SupabaseDisclaimerRepository(currentVersion: DisclaimerInfo.version)
     private let vineyardRepository: any VineyardRepositoryProtocol = SupabaseVineyardRepository()
     private let grapeVarietyRepository = SupabaseGrapeVarietyCatalogRepository()
+    private let teamRepository: any TeamRepositoryProtocol = SupabaseTeamRepository()
 
     var body: some View {
         Group {
@@ -184,6 +185,7 @@ struct NewBackendRootView: View {
                 await SharedGrapeVarietyCatalogCache.shared.refresh()
                 await syncVineyardGrapeVarieties(vineyardId: vid)
                 await syncVineyardLocation(vineyardId: vid)
+                await syncVineyardRegionSettings(vineyardId: vid)
             }
         }
         .task(id: auth.isSignedIn) {
@@ -492,6 +494,60 @@ struct NewBackendRootView: View {
             }
         } catch {
             // Offline / RPC missing / not a member — keep existing local settings.
+        }
+    }
+
+    /// Pull the vineyard-scoped organisation region settings (country/units/
+    /// date format/terminology) from Supabase and merge them into local
+    /// `AppSettings.regionSettings`. Server values win; any null server field
+    /// keeps the local fallback (AU default unless changed by owner/manager).
+    ///
+    /// Backfill safety: if the server has *no* region values but the local
+    /// copy diverges from AU defaults, push the local copy up exactly once —
+    /// but ONLY if the current user is an owner or manager. Staff/operators
+    /// must never set organisation-level region settings by automatic
+    /// backfill (the server RPC also enforces this; this is the client guard).
+    private func syncVineyardRegionSettings(vineyardId: UUID) async {
+        do {
+            guard let remote = try await vineyardRepository.getVineyardRegionSettings(vineyardId: vineyardId) else {
+                return
+            }
+            let merged = store.applyRemoteVineyardRegionSettings(remote, vineyardId: vineyardId)
+            guard merged.needsBackfill else { return }
+
+            // Owner/manager-only backfill guard.
+            guard await currentUserCanManageSettings(vineyardId: vineyardId) else { return }
+
+            let region = merged.settingsToBackfill
+            _ = try? await vineyardRepository.setVineyardRegionSettings(
+                BackendVineyardRegionSettings(
+                    vineyardId: vineyardId,
+                    countryCode: region.countryCode,
+                    currencyCode: region.currencyCode,
+                    timezone: region.timezone,
+                    areaUnit: region.areaUnit,
+                    volumeUnit: region.volumeUnit,
+                    distanceUnit: region.distanceUnit,
+                    fuelUnit: region.fuelUnit,
+                    sprayRateAreaUnit: region.sprayRateAreaUnit,
+                    dateFormat: region.dateFormat,
+                    terminologyRegion: region.terminologyRegion
+                )
+            )
+        } catch {
+            // Offline / RPC missing / not a member — keep existing local settings.
+        }
+    }
+
+    /// Returns true only when the current signed-in user holds owner or manager
+    /// role for the vineyard. Used to gate organisation-level region backfill.
+    private func currentUserCanManageSettings(vineyardId: UUID) async -> Bool {
+        guard let userId = auth.userId else { return false }
+        do {
+            let members = try await teamRepository.listMembers(vineyardId: vineyardId)
+            return members.first { $0.userId == userId }?.role.canChangeSettings ?? false
+        } catch {
+            return false
         }
     }
 
