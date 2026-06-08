@@ -1040,7 +1040,7 @@ private struct NewHomeTabView: View {
                     Divider()
                     summaryRow("Spray records", value: store.sprayRecords.count, icon: "sprinkler.and.droplets.fill", tint: .purple)
                     Divider()
-                    summaryRow("Paddocks", value: store.paddocks.count, icon: "square.grid.2x2.fill", tint: VineyardTheme.leafGreen)
+                    summaryRow(fmt.blockTermPluralCapitalised, value: store.paddocks.count, icon: "square.grid.2x2.fill", tint: VineyardTheme.leafGreen)
                 }
             }
             .padding(.horizontal)
