@@ -29,7 +29,8 @@ struct TripPDFService {
         timeZone: TimeZone = .current,
         tripFunctionLabel: String? = nil,
         paddockGroups: [PaddockCoverage] = [],
-        tripCostResult: TripCostService.Result? = nil
+        tripCostResult: TripCostService.Result? = nil,
+        formatter: RegionFormatter = .australian
     ) -> Data {
         let pageWidth: CGFloat = 595.0
         let pageHeight: CGFloat = 842.0
@@ -153,9 +154,9 @@ struct TripPDFService {
                 return []
             }()
             if allPaddockNames.count > 1 {
-                drawWrappedRow(label: "Blocks", value: allPaddockNames.joined(separator: ", "))
+                drawWrappedRow(label: formatter.blockTermPluralCapitalised, value: allPaddockNames.joined(separator: ", "))
             } else if let only = allPaddockNames.first {
-                drawRow(label: "Block", value: only)
+                drawRow(label: formatter.blockTermCapitalised, value: only)
             }
 
             if let label = resolvedFunctionLabel, !label.isEmpty {
@@ -171,14 +172,16 @@ struct TripPDFService {
             }
 
             // Date / start time / finish time on separate lines (operator request).
-            drawRow(label: "Date", value: trip.startTime.formattedTZ(date: .long, time: .omitted, in: timeZone))
+            // Date uses the region date format; time-of-day presentation stays
+            // identical for AU (matching the SprayRecordPDFService reference).
+            drawRow(label: "Date", value: formatter.formatDate(trip.startTime))
             drawRow(label: "Start time", value: trip.startTime.formattedTZ(date: .omitted, time: .shortened, in: timeZone))
             if let endTime = trip.endTime {
                 drawRow(label: "Finish time", value: endTime.formattedTZ(date: .omitted, time: .shortened, in: timeZone))
             }
             drawRow(label: "Duration", value: formatDuration(trip))
-            drawRow(label: "Distance", value: formatDistance(trip.totalDistance))
-            drawRow(label: "Average speed", value: formatAverageSpeed(trip))
+            drawRow(label: "Distance", value: formatter.formatDistance(metres: trip.totalDistance))
+            drawRow(label: "Average speed", value: formatAverageSpeed(trip, formatter: formatter))
             drawRow(label: "Pattern", value: trip.trackingPattern.title)
             drawRow(label: "Pins logged", value: "\(pinCount)")
 
@@ -320,11 +323,11 @@ struct TripPDFService {
                 } else {
                     let detail: String = {
                         if let name = r.labour.categoryName, let rate = r.labour.costPerHour, rate > 0 {
-                            return "\(name) · $\(String(format: "%.2f", rate))/hr × \(String(format: "%.2f", r.labour.hours)) hr"
+                            return "\(name) · \(formatter.formatCurrency(rate))/hr × \(String(format: "%.2f", r.labour.hours)) hr"
                         }
                         return "\(String(format: "%.2f", r.labour.hours)) hr"
                     }()
-                    drawRow(label: "Labour", value: String(format: "$%.2f", r.labour.cost))
+                    drawRow(label: "Labour", value: formatter.formatCurrency(r.labour.cost))
                     drawRow(label: "  \(detail)", value: "", indent: 12)
                 }
 
@@ -333,11 +336,11 @@ struct TripPDFService {
                     drawRow(label: "Fuel", value: "—")
                     drawWrappedRow(label: "  Note", value: w, indent: 12)
                 } else {
-                    drawRow(label: "Fuel litres (est.)", value: String(format: "%.1f L", r.fuel.litres))
+                    drawRow(label: "Fuel used (est.)", value: formatter.formatFuel(litres: r.fuel.litres))
                     if let perL = r.fuel.costPerLitre {
-                        drawRow(label: "Fuel cost per litre", value: String(format: "$%.2f/L", perL))
+                        drawRow(label: "Fuel cost per \(formatter.fuelUnitAbbreviation)", value: "\(formatter.formatCurrency(perL))/\(formatter.fuelUnitAbbreviation)")
                     }
-                    drawRow(label: "Fuel cost", value: String(format: "$%.2f", r.fuel.cost))
+                    drawRow(label: "Fuel cost", value: formatter.formatCurrency(r.fuel.cost))
                 }
 
                 // Chemical
@@ -346,7 +349,7 @@ struct TripPDFService {
                         drawRow(label: "Chemical/Input", value: "—")
                         drawWrappedRow(label: "  Note", value: w, indent: 12)
                     } else {
-                        drawRow(label: "Chemical/Input", value: String(format: "$%.2f", chem.cost))
+                        drawRow(label: "Chemical/Input", value: formatter.formatCurrency(chem.cost))
                         if let w = chem.warning {
                             drawWrappedRow(label: "  Note", value: w, indent: 12)
                         }
@@ -356,7 +359,7 @@ struct TripPDFService {
                 // Seeding/Input cost or warning if relevant
                 if let s = r.seeding {
                     if s.cost > 0 {
-                        drawRow(label: "Seed/Input", value: String(format: "$%.2f", s.cost))
+                        drawRow(label: "Seed/Input", value: formatter.formatCurrency(s.cost))
                         if let w = s.warning {
                             drawWrappedRow(label: "  Note", value: w, indent: 12)
                         }
@@ -366,7 +369,7 @@ struct TripPDFService {
                 }
 
                 y += 4
-                drawRow(label: "Total estimated cost", value: String(format: "$%.2f", r.totalCost))
+                drawRow(label: "Total estimated cost", value: formatter.formatCurrency(r.totalCost))
 
                 let statusLabel: String = {
                     switch r.completeness {
@@ -379,14 +382,17 @@ struct TripPDFService {
 
                 // Treated area / cost per ha
                 if let ha = r.treatedAreaHa {
-                    drawRow(label: "Treated area", value: String(format: "%.2f ha", ha))
+                    drawRow(label: "Treated area", value: formatter.formatArea(hectares: ha))
                 } else {
                     drawRow(label: "Treated area", value: "—")
                 }
                 if let cph = r.costPerHa {
-                    drawRow(label: "Cost per ha", value: String(format: "$%.2f/ha", cph))
+                    // r.costPerHa is canonical cost-per-hectare; convert the area
+                    // denominator so US/CA reports read e.g. "$x.xx/ac".
+                    let perArea = cph / formatter.areaValue(hectares: 1)
+                    drawRow(label: "Cost per \(formatter.areaUnitAbbreviation)", value: "\(formatter.formatCurrency(perArea))/\(formatter.areaUnitAbbreviation)")
                 } else {
-                    drawRow(label: "Cost per ha", value: "—")
+                    drawRow(label: "Cost per \(formatter.areaUnitAbbreviation)", value: "—")
                     if let w = r.areaWarning {
                         drawWrappedRow(label: "  Note", value: w, indent: 12)
                     }
@@ -399,7 +405,7 @@ struct TripPDFService {
                     drawRow(label: "Yield", value: "—")
                 }
                 if let cpt = r.costPerTonne {
-                    drawRow(label: "Cost per tonne", value: String(format: "$%.2f/t", cpt))
+                    drawRow(label: "Cost per tonne", value: "\(formatter.formatCurrency(cpt))/t")
                 } else {
                     drawRow(label: "Cost per tonne", value: "—")
                     if let w = r.yieldWarning {
@@ -415,21 +421,21 @@ struct TripPDFService {
                     drawSectionHeader("Costs")
                     let totalChemCost = chemicalCosts.reduce(0.0) { $0 + $1.1 }
                     for (name, cost) in chemicalCosts {
-                        drawRow(label: name, value: String(format: "$%.2f", cost))
+                        drawRow(label: name, value: formatter.formatCurrency(cost))
                     }
                     if hasChemCosts {
                         y += 4
-                        drawRow(label: "Chemical Subtotal", value: String(format: "$%.2f", totalChemCost))
+                        drawRow(label: "Chemical Subtotal", value: formatter.formatCurrency(totalChemCost))
                     }
                     if fuelCost > 0 {
-                        drawRow(label: "Fuel Cost", value: String(format: "$%.2f", fuelCost))
+                        drawRow(label: "Fuel Cost", value: formatter.formatCurrency(fuelCost))
                     }
                     if operatorCost > 0 {
-                        drawRow(label: operatorCategoryName ?? "Operator", value: String(format: "$%.2f", operatorCost))
+                        drawRow(label: operatorCategoryName ?? "Operator", value: formatter.formatCurrency(operatorCost))
                     }
                     y += 4
                     let grandTotal = totalChemCost + fuelCost + operatorCost
-                    drawRow(label: "Total Cost", value: String(format: "$%.2f", grandTotal))
+                    drawRow(label: "Total Cost", value: formatter.formatCurrency(grandTotal))
                 }
             }
 
@@ -460,9 +466,9 @@ struct TripPDFService {
 
             y += 16
             checkPageBreak(needed: 30)
-            let footerDate = Date().formattedTZ(date: .abbreviated, time: .shortened, in: timeZone)
+            let footerTime = Date().formattedTZ(date: .omitted, time: .shortened, in: timeZone)
             let tzAbbrev = timeZone.abbreviation() ?? timeZone.identifier
-            drawText("Generated \(footerDate) (\(tzAbbrev)) • VineTrack", font: captionFont, color: .gray)
+            drawText("Generated \(formatter.formatDate(Date())) \(footerTime) (\(tzAbbrev)) • VineTrack", font: captionFont, color: .gray)
         }
 
         return data
@@ -717,18 +723,11 @@ struct TripPDFService {
         return "\(mins)m"
     }
 
-    private static func formatDistance(_ meters: Double) -> String {
-        if meters < 1000 {
-            return "\(Int(meters))m"
-        }
-        return String(format: "%.2f km", meters / 1000)
-    }
-
-    private static func formatAverageSpeed(_ trip: Trip) -> String {
+    private static func formatAverageSpeed(_ trip: Trip, formatter: RegionFormatter) -> String {
         let durationSeconds = trip.activeDuration
         guard durationSeconds > 0 && trip.totalDistance > 0 else { return "—" }
         let speedMps = trip.totalDistance / durationSeconds
         let speedKmh = speedMps * 3.6
-        return String(format: "%.1f km/h", speedKmh)
+        return formatter.formatSpeed(kmh: speedKmh)
     }
 }

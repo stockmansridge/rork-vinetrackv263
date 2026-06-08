@@ -961,6 +961,7 @@ struct TripDetailView: View {
         let fileName = "TripReport_\(vineyardName)\(fileNameSuffix)_\(trip.startTime.formattedTZ(date: .numeric, time: .omitted, in: exportTimeZone))"
         let includeCostings = accessControl.canViewCosting
         let costResult: TripCostService.Result? = includeCostings ? costResult : nil
+        let formatter = store.settings.regionFormatter
 
         Task {
             let snapshot = await TripPDFService.captureMapSnapshot(trip: tripCopy)
@@ -975,7 +976,8 @@ struct TripDetailView: View {
                 timeZone: exportTimeZone,
                 tripFunctionLabel: functionLabel,
                 paddockGroups: paddockGroups,
-                tripCostResult: costResult
+                tripCostResult: costResult,
+                formatter: formatter
             )
             let url = TripPDFService.savePDFToTemp(data: pdfData, fileName: fileName)
             isExporting = false
