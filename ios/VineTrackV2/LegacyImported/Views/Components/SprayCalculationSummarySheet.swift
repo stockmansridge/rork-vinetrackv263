@@ -8,6 +8,8 @@ enum SprayCalculationSummaryMode {
 
 struct SprayCalculationSummarySheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(MigratedDataStore.self) private var store
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
     let result: SprayCalculationResult
     let sprayName: String
     var mode: SprayCalculationSummaryMode = .savedForLater
@@ -158,7 +160,7 @@ struct SprayCalculationSummarySheet: View {
             }
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                overviewCell(label: "Total Area", value: "\(String(format: "%.2f", result.totalAreaHectares)) ha", icon: "square.dashed", color: VineyardTheme.olive)
+                overviewCell(label: "Total Area", value: fmt.formatArea(hectares: result.totalAreaHectares), icon: "square.dashed", color: VineyardTheme.olive)
                 overviewCell(label: "Total Water", value: "\(String(format: "%.0f", result.totalWaterLitres)) L", icon: "drop.fill", color: .blue)
                 overviewCell(label: "Full Tanks", value: "\(result.fullTankCount)", icon: "fuelpump.fill", color: VineyardTheme.earthBrown)
                 overviewCell(label: "Last Tank", value: "\(String(format: "%.0f", result.lastTankLitres)) L", icon: "drop.halffull", color: .orange)
@@ -291,7 +293,7 @@ struct SprayCalculationSummarySheet: View {
                     Text(cost.chemicalName)
                         .font(.subheadline)
                     Spacer()
-                    Text("$\(String(format: "%.2f", cost.totalCost))")
+                    Text(fmt.formatCurrency(cost.totalCost))
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(.secondary)
                 }
@@ -303,17 +305,17 @@ struct SprayCalculationSummarySheet: View {
                 Text("Total Cost")
                     .font(.subheadline.weight(.semibold))
                 Spacer()
-                Text("$\(String(format: "%.2f", costing.grandTotal))")
+                Text(fmt.formatCurrency(costing.grandTotal))
                     .font(.headline)
                     .foregroundStyle(VineyardTheme.vineRed)
             }
 
             HStack {
-                Text("Per Hectare")
+                Text("Per \(fmt.areaUnitAbbreviation)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text("$\(String(format: "%.2f", costing.grandTotalPerHectare))/ha")
+                Text("\(fmt.formatCurrency(fmt.perAreaValue(perHectare: costing.grandTotalPerHectare)))/\(fmt.areaUnitAbbreviation)")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(VineyardTheme.earthBrown)
             }

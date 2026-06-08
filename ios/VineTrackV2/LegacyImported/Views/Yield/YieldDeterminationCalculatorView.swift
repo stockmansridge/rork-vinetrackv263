@@ -172,8 +172,8 @@ struct YieldDeterminationCalculatorView: View {
                         .monospacedDigit()
                 }
 
-                LabeledContent("Yield / Ha (kg)") {
-                    Text(String(format: "%.1f kg/ha", yieldKgPerHa))
+                LabeledContent("Yield / \(fmt.areaUnitAbbreviation) (kg)") {
+                    Text(fmt.formatYieldPerArea(perHectare: yieldKgPerHa, unitLabel: "kg", fractionDigits: 1))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                 }
