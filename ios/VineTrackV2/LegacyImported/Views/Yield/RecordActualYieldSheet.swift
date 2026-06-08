@@ -5,6 +5,8 @@ struct RecordActualYieldSheet: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(HistoricalYieldRecordSyncService.self) private var historicalYieldSync
 
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
+
     @State private var year: Int = Calendar.current.component(.year, from: Date())
     @State private var season: String = ""
     @State private var selectedPaddockId: UUID?
@@ -68,7 +70,7 @@ struct RecordActualYieldSheet: View {
                     Text("Block & Variety")
                 } footer: {
                     if let p = selectedPaddock, p.areaHectares > 0 {
-                        Text(String(format: "Area: %.2f ha", p.areaHectares))
+                        Text("Area: \(fmt.formatArea(hectares: p.areaHectares))")
                     }
                 }
 
@@ -84,7 +86,7 @@ struct RecordActualYieldSheet: View {
                     Text("Actual Yield (tonnes)")
                 } footer: {
                     if let yield = parsedYield, let p = selectedPaddock, p.areaHectares > 0 {
-                        Text(String(format: "%.2f t/ha", yield / p.areaHectares))
+                        Text(fmt.formatYieldPerArea(perHectare: yield / p.areaHectares))
                     } else {
                         Text("Used by Cost Reports to calculate cost per tonne.")
                     }

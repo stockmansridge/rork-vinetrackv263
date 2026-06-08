@@ -5,6 +5,8 @@ struct YieldDeterminationCalculatorView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(NewBackendAuthService.self) private var authService
 
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
+
     enum PruneMethod: String, CaseIterable, Identifiable {
         case spur = "Spur"
         case cane = "Cane"
@@ -115,7 +117,7 @@ struct YieldDeterminationCalculatorView: View {
 
                     if let paddock = selectedPaddock {
                         LabeledContent("Area") {
-                            Text(String(format: "%.2f ha", paddock.areaHectares))
+                            Text(fmt.formatArea(hectares: paddock.areaHectares))
                                 .foregroundStyle(.secondary)
                         }
                         LabeledContent("Vines") {
@@ -176,8 +178,8 @@ struct YieldDeterminationCalculatorView: View {
                         .monospacedDigit()
                 }
 
-                LabeledContent("Yield / Ha (t)") {
-                    Text(String(format: "%.1f t/ha", yieldTonnesPerHa))
+                LabeledContent("Yield / \(fmt.areaUnitAbbreviation) (t)") {
+                    Text(fmt.formatYieldPerArea(perHectare: yieldTonnesPerHa, fractionDigits: 1))
                         .font(.headline.weight(.bold))
                         .foregroundStyle(VineyardTheme.leafGreen)
                         .monospacedDigit()

@@ -5,6 +5,8 @@ struct YieldReportView: View {
     @Environment(YieldEstimationSessionSyncService.self) private var yieldSessionSync
     let viewModel: YieldEstimationViewModel
 
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
+
     private var paddocks: [Paddock] {
         store.orderedPaddocks.filter { $0.polygonPoints.count >= 3 }
     }
@@ -61,8 +63,8 @@ struct YieldReportView: View {
                     color: VineyardTheme.leafGreen
                 )
                 reportCard(
-                    title: "Yield/Ha",
-                    value: totalArea > 0 ? String(format: "%.2f t/Ha", totalYieldTonnes / totalArea) : "—",
+                    title: "Yield/\(fmt.areaUnitAbbreviation)",
+                    value: totalArea > 0 ? fmt.formatYieldPerArea(perHectare: totalYieldTonnes / totalArea) : "—",
                     icon: "square.dashed",
                     color: .orange
                 )
@@ -153,7 +155,7 @@ struct YieldReportView: View {
             Divider()
 
             VStack(spacing: 6) {
-                estimateRow("Area", value: String(format: "%.2f Ha", est.areaHectares))
+                estimateRow("Area", value: fmt.formatArea(hectares: est.areaHectares))
                 estimateRow("Total Vines", value: "\(est.totalVines)")
                 estimateRow("Avg Bunches/Vine", value: String(format: "%.2f", est.averageBunchesPerVine))
                 estimateRow("Total Bunches", value: String(format: "%.0f", est.totalBunches))
@@ -164,11 +166,11 @@ struct YieldReportView: View {
 
             if est.areaHectares > 0 {
                 HStack {
-                    Text("Yield per Ha")
+                    Text("Yield per \(fmt.areaUnitAbbreviation)")
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text(String(format: "%.2f t/Ha", est.estimatedYieldTonnes / est.areaHectares))
+                    Text(fmt.formatYieldPerArea(perHectare: est.estimatedYieldTonnes / est.areaHectares))
                         .font(.caption.weight(.bold))
                         .foregroundStyle(.orange)
                 }

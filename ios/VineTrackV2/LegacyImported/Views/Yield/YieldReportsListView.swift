@@ -12,6 +12,7 @@ struct YieldReportsListView: View {
     @State private var showStartEstimateSheet: Bool = false
 
     private var canDelete: Bool { accessControl?.canDelete ?? false }
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
 
     private var paddocks: [Paddock] {
         store.orderedPaddocks.filter { $0.polygonPoints.count >= 3 }
@@ -200,8 +201,8 @@ struct YieldReportsListView: View {
                     color: .orange
                 )
                 overviewCard(
-                    title: "Avg Yield/Ha",
-                    value: totalArea > 0 ? String(format: "%.2f t/Ha", totalYieldTonnes / totalArea) : "—",
+                    title: "Avg Yield/\(fmt.areaUnitAbbreviation)",
+                    value: totalArea > 0 ? fmt.formatYieldPerArea(perHectare: totalYieldTonnes / totalArea) : "—",
                     icon: "square.dashed",
                     color: .teal
                 )
@@ -249,7 +250,7 @@ struct YieldReportsListView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(summary.paddockName)
                         .font(.subheadline.weight(.semibold))
-                    Text(String(format: "%.2f Ha", summary.areaHa))
+                    Text(fmt.formatArea(hectares: summary.areaHa))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -261,7 +262,7 @@ struct YieldReportsListView: View {
                         .font(.subheadline.weight(.bold))
                         .foregroundStyle(summary.yieldTonnes > 0 ? VineyardTheme.leafGreen : .secondary)
                     if summary.yieldPerHa > 0 {
-                        Text(String(format: "%.2f t/Ha", summary.yieldPerHa))
+                        Text(fmt.formatYieldPerArea(perHectare: summary.yieldPerHa))
                             .font(.caption2)
                             .foregroundStyle(.orange)
                     }
@@ -281,7 +282,7 @@ struct YieldReportsListView: View {
                 Spacer()
 
                 if summary.samplesRecorded > 0 {
-                    Text(summary.lastUpdated, format: .dateTime.day().month().year())
+                    Text(fmt.formatDate(summary.lastUpdated))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -292,7 +293,7 @@ struct YieldReportsListView: View {
                     Image(systemName: "scalemass.fill")
                         .font(.caption2)
                         .foregroundStyle(.purple)
-                    Text(String(format: "Determined %.2f t/ha", determination.yieldTonnesPerHa))
+                    Text("Determined \(fmt.formatYieldPerArea(perHectare: determination.yieldTonnesPerHa))")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                     if summary.yieldPerHa > 0, determination.yieldTonnesPerHa > 0 {
@@ -393,7 +394,7 @@ struct YieldReportsListView: View {
                                     .foregroundStyle(VineyardTheme.leafGreen)
                             }
                         }
-                        Text(session.createdAt, format: .dateTime.day().month().year().hour().minute())
+                        Text(fmt.formatDateTime(session.createdAt))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -574,7 +575,7 @@ struct YieldReportsListView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(record.season.isEmpty ? "\(record.year)" : record.season)
                         .font(.subheadline.weight(.semibold))
-                    Text(record.archivedAt, format: .dateTime.day().month().year())
+                    Text(fmt.formatDate(record.archivedAt))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -586,7 +587,7 @@ struct YieldReportsListView: View {
                         .font(.subheadline.weight(.bold))
                         .foregroundStyle(VineyardTheme.leafGreen)
                     if record.totalAreaHectares > 0 {
-                        Text(String(format: "%.2f t/Ha", record.yieldPerHectare))
+                        Text(fmt.formatYieldPerArea(perHectare: record.yieldPerHectare))
                             .font(.caption2)
                             .foregroundStyle(.orange)
                     }
@@ -607,7 +608,7 @@ struct YieldReportsListView: View {
                     Image(systemName: "ruler.fill")
                         .font(.caption2)
                         .foregroundStyle(.teal)
-                    Text(String(format: "%.2f Ha", record.totalAreaHectares))
+                    Text(fmt.formatArea(hectares: record.totalAreaHectares))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -739,6 +740,7 @@ private enum HistoricalSort: String, CaseIterable {
 private struct ArchiveYieldSheet: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(\.dismiss) private var dismiss
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
     @State private var season: String = ""
     @State private var year: Int = Calendar.current.component(.year, from: Date())
     @State private var notes: String = ""
@@ -790,7 +792,7 @@ private struct ArchiveYieldSheet: View {
                     HStack {
                         Text("Total Area")
                         Spacer()
-                        Text(String(format: "%.2f Ha", totalArea))
+                        Text(fmt.formatArea(hectares: totalArea))
                             .foregroundStyle(.secondary)
                     }
                     HStack {
@@ -906,6 +908,7 @@ private struct HistoricalYieldDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(MigratedDataStore.self) private var store
     @Environment(\.accessControl) private var accessControl
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
     let record: HistoricalYieldRecord
     @State private var editingBlock: HistoricalBlockResult?
     @State private var showDeleteConfirm: Bool = false
@@ -936,14 +939,14 @@ private struct HistoricalYieldDetailSheet: View {
 
                         HStack(spacing: 12) {
                             detailCard(
-                                title: "Est. Yield/Ha",
-                                value: currentRecord.totalAreaHectares > 0 ? String(format: "%.2f t/Ha", currentRecord.yieldPerHectare) : "—",
+                                title: "Est. Yield/\(fmt.areaUnitAbbreviation)",
+                                value: currentRecord.totalAreaHectares > 0 ? fmt.formatYieldPerArea(perHectare: currentRecord.yieldPerHectare) : "—",
                                 icon: "square.dashed",
                                 color: .orange
                             )
                             detailCard(
                                 title: "Total Area",
-                                value: String(format: "%.2f Ha", currentRecord.totalAreaHectares),
+                                value: fmt.formatArea(hectares: currentRecord.totalAreaHectares),
                                 icon: "ruler.fill",
                                 color: .teal
                             )
@@ -1068,7 +1071,7 @@ private struct HistoricalYieldDetailSheet: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(VineyardTheme.leafGreen)
                     if block.areaHectares > 0 {
-                        Text(String(format: "%.2f t/Ha", block.yieldPerHectare))
+                        Text(fmt.formatYieldPerArea(perHectare: block.yieldPerHectare))
                             .font(.caption2)
                             .foregroundStyle(.orange)
                     }
@@ -1086,7 +1089,7 @@ private struct HistoricalYieldDetailSheet: View {
                             .font(.subheadline.weight(.bold))
                             .foregroundStyle(VineyardTheme.info)
                         if let perHa = block.actualYieldPerHectare {
-                            Text(String(format: "%.2f t/Ha", perHa))
+                            Text(fmt.formatYieldPerArea(perHectare: perHa))
                                 .font(.caption2)
                                 .foregroundStyle(.blue.opacity(0.8))
                         }
@@ -1124,7 +1127,7 @@ private struct HistoricalYieldDetailSheet: View {
             }
 
             HStack {
-                Text(String(format: "%.2f Ha", block.areaHectares))
+                Text(fmt.formatArea(hectares: block.areaHectares))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -1175,6 +1178,7 @@ private struct HistoricalYieldDetailSheet: View {
 private struct EditActualYieldSheet: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(\.dismiss) private var dismiss
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
     let recordId: UUID
     let block: HistoricalBlockResult
     @State private var actualYieldText: String = ""
@@ -1193,7 +1197,7 @@ private struct EditActualYieldSheet: View {
                     HStack {
                         Text("Area")
                         Spacer()
-                        Text(String(format: "%.2f Ha", block.areaHectares))
+                        Text(fmt.formatArea(hectares: block.areaHectares))
                             .foregroundStyle(.secondary)
                     }
                     HStack {
@@ -1220,9 +1224,9 @@ private struct EditActualYieldSheet: View {
 
                     if let parsed = parsedActualYield, block.areaHectares > 0 {
                         HStack {
-                            Text("Yield / Ha")
+                            Text("Yield / \(fmt.areaUnitAbbreviation)")
                             Spacer()
-                            Text(String(format: "%.2f t/Ha", parsed / block.areaHectares))
+                            Text(fmt.formatYieldPerArea(perHectare: parsed / block.areaHectares))
                                 .foregroundStyle(VineyardTheme.info)
                         }
                         let variance = parsed - block.yieldTonnes

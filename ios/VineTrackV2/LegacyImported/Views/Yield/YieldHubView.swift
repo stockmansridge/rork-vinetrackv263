@@ -7,6 +7,8 @@ struct YieldHubView: View {
     @Environment(HistoricalYieldRecordSyncService.self) private var historicalYieldSync
     @State private var showRecordActualSheet: Bool = false
 
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
@@ -215,6 +217,6 @@ struct YieldHubView: View {
 
     private var determinationDetail: String? {
         guard let latest = store.latestDeterminationOverall else { return nil }
-        return String(format: "Latest: %.1f t/ha", latest.yieldTonnesPerHa)
+        return "Latest: \(fmt.formatYieldPerArea(perHectare: latest.yieldTonnesPerHa, fractionDigits: 1))"
     }
 }

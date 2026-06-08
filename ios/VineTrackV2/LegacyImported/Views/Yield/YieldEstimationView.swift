@@ -29,6 +29,8 @@ struct YieldEstimationView: View {
         store.settings.samplesPerHectare
     }
 
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
+
     private let blockColors: [Color] = [
         .blue, .green, .orange, .purple, .red, .cyan, .mint, .indigo, .pink, .teal, .yellow, .brown
     ]
@@ -595,7 +597,7 @@ struct YieldEstimationView: View {
                                         .font(.subheadline.weight(.medium))
                                         .foregroundStyle(.primary)
                                         .lineLimit(1)
-                                    Text(String(format: "%.2f Ha", paddock.areaHectares))
+                                    Text(fmt.formatArea(hectares: paddock.areaHectares))
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
                                 }
@@ -630,7 +632,7 @@ struct YieldEstimationView: View {
                 HStack(spacing: 0) {
                     summaryCard(
                         title: "Area",
-                        value: String(format: "%.2f Ha", totalArea),
+                        value: fmt.formatArea(hectares: totalArea),
                         icon: "square.dashed",
                         color: VineyardTheme.leafGreen
                     )
@@ -881,7 +883,7 @@ struct YieldEstimationView: View {
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(.white)
                 if let completedAt = viewModel.completedAt {
-                    Text(completedAt, format: .dateTime.day().month().year().hour().minute())
+                    Text(fmt.formatDateTime(completedAt))
                         .font(.caption)
                         .foregroundStyle(.white.opacity(0.8))
                 }
@@ -1064,7 +1066,7 @@ struct YieldEstimationView: View {
                             } label: {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text(record.date, format: .dateTime.day().month().year())
+                                        Text(fmt.formatDate(record.date))
                                             .font(.subheadline)
                                             .foregroundStyle(.primary)
                                         Text(String(format: "%.0f g", record.weightKg * 1000))
@@ -1134,7 +1136,7 @@ struct YieldEstimationView: View {
                         HStack {
                             Text("Selected Area")
                             Spacer()
-                            Text(String(format: "%.2f Ha", area)).foregroundStyle(.secondary)
+                            Text(fmt.formatArea(hectares: area)).foregroundStyle(.secondary)
                         }
                         HStack {
                             Text("Total Sites")

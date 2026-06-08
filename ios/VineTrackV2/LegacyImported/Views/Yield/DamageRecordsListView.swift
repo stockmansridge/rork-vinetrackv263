@@ -9,6 +9,8 @@ struct DamageRecordsListView: View {
     @State private var showReportSheet: Bool = false
     @State private var pendingPaddock: Paddock?
 
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
+
     private var canDelete: Bool { accessControl?.canDelete ?? false }
     private var canCreate: Bool { true }
 
@@ -108,7 +110,7 @@ struct DamageRecordsListView: View {
                 )
                 overviewCard(
                     title: "Effective Loss",
-                    value: String(format: "%.2f ha", effectiveLossHa),
+                    value: fmt.formatArea(hectares: effectiveLossHa),
                     icon: "leaf.fill",
                     color: .brown
                 )
@@ -294,14 +296,14 @@ struct DamageRecordsListView: View {
                     Image(systemName: "calendar")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                    Text(record.date, format: .dateTime.day().month().year())
+                    Text(fmt.formatDate(record.date))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
                 Spacer()
 
-                Text(String(format: "%.4f Ha", record.areaHectares))
+                Text(fmt.formatArea(hectares: record.areaHectares, fractionDigits: 4))
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.orange)
             }
@@ -394,7 +396,7 @@ struct DamageRecordsListView: View {
                             .font(.caption2)
                             .foregroundStyle(.orange)
                     } else {
-                        Text(String(format: "%.2f Ha", paddock.areaHectares))
+                        Text(fmt.formatArea(hectares: paddock.areaHectares))
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }

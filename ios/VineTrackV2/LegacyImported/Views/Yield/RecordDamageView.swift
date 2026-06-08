@@ -11,6 +11,7 @@ struct RecordDamageView: View {
     let editingRecord: DamageRecord?
 
     private var canDelete: Bool { accessControl?.canDelete ?? false }
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
 
     init(paddock: Paddock, editingRecord: DamageRecord? = nil) {
         self.paddock = paddock
@@ -492,7 +493,7 @@ struct RecordDamageView: View {
                         Text("Damage Zone")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
-                        Text(String(format: "%.4f Ha", damageAreaHa))
+                        Text(fmt.formatArea(hectares: damageAreaHa, fractionDigits: 4))
                             .font(.subheadline.weight(.bold))
                             .foregroundStyle(.orange)
                     }
@@ -503,7 +504,7 @@ struct RecordDamageView: View {
                         Text("Block Area")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
-                        Text(String(format: "%.2f Ha", paddock.areaHectares))
+                        Text(fmt.formatArea(hectares: paddock.areaHectares))
                             .font(.subheadline.weight(.bold))
                             .foregroundStyle(VineyardTheme.info)
                     }

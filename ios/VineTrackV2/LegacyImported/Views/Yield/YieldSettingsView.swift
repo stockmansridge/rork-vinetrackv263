@@ -34,6 +34,7 @@ struct YieldSettingsView: View {
 
 private struct BunchWeightRow: View {
     @Environment(MigratedDataStore.self) private var store
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
     let paddock: Paddock
     @State private var isEditing: Bool = false
     @State private var weightText: String = ""
@@ -54,7 +55,7 @@ private struct BunchWeightRow: View {
                         .foregroundStyle(.primary)
                     HStack(spacing: 4) {
                         if paddock.areaHectares > 0 {
-                            Text(String(format: "%.2f Ha", paddock.areaHectares))
+                            Text(fmt.formatArea(hectares: paddock.areaHectares))
                         }
                         if paddock.effectiveVineCount > 0 {
                             if paddock.areaHectares > 0 {

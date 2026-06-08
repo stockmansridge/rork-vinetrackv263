@@ -175,6 +175,29 @@ nonisolated struct RegionFormatter: Sendable {
         return "\(Self.number(value, fractionDigits: fractionDigits)) \(unitLabel)/\(sprayRateAreaAbbreviation)"
     }
 
+    // MARK: - Yield per area (input: per hectare)
+
+    /// Converts a per-hectare quantity into the configured display area unit.
+    /// e.g. tonnes/ha → tonnes/acre for the US.
+    func perAreaValue(perHectare: Double) -> Double {
+        switch settings.area {
+        case .hectares: perHectare
+        case .acres: perHectare / Self.acresPerHectare
+        }
+    }
+
+    /// Formats a yield-per-area value. `unitLabel` is the numerator unit such as
+    /// "t" or "kg". e.g. "12.50 t/ha" (AU) or "5.06 t/ac" (US).
+    func formatYieldPerArea(perHectare: Double, unitLabel: String = "t", fractionDigits: Int = 2) -> String {
+        let value = perAreaValue(perHectare: perHectare)
+        return "\(Self.number(value, fractionDigits: fractionDigits)) \(unitLabel)/\(areaUnitAbbreviation)"
+    }
+
+    /// The yield-per-area unit label only, e.g. "t/ha" (AU) or "t/ac" (US).
+    func yieldPerAreaUnit(unitLabel: String = "t") -> String {
+        "\(unitLabel)/\(areaUnitAbbreviation)"
+    }
+
     // MARK: - Date / DateTime
 
     func formatDate(_ date: Date) -> String {
