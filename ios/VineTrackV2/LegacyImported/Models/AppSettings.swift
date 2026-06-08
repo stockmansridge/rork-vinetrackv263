@@ -24,6 +24,12 @@ extension AppSettings {
     nonisolated var timezoneAbbreviation: String {
         resolvedTimeZone.abbreviation() ?? resolvedTimeZone.identifier
     }
+
+    /// Region-aware formatter derived from this org's international settings.
+    /// Falls back to Australian behaviour for legacy/unset organisations.
+    nonisolated var regionFormatter: RegionFormatter {
+        RegionFormatter(settings: regionSettings)
+    }
 }
 
 nonisolated enum AppAppearance: String, Codable, Sendable, CaseIterable {
@@ -105,6 +111,10 @@ nonisolated struct AppSettings: Codable, Sendable, Identifiable {
     /// 7 (7d), 14 (14d). 0 means "not configured" — defaults to 7.
     var irrigationRecentRainLookbackDays: Int
     var aiSuggestionsEnabled: Bool
+    /// Organisation-level international settings (country, currency, units,
+    /// date format, terminology). Defaults to Australian behaviour, so existing
+    /// organisations are unaffected.
+    var regionSettings: OrganizationRegionSettings
 
     init(
         id: UUID = UUID(),
@@ -148,7 +158,8 @@ nonisolated struct AppSettings: Codable, Sendable, Identifiable {
         irrigationForecastDays: Int = 5,
         irrigationDefaultApplicationRateMmPerHour: Double = 0,
         irrigationRecentRainLookbackDays: Int = 7,
-        aiSuggestionsEnabled: Bool = true
+        aiSuggestionsEnabled: Bool = true,
+        regionSettings: OrganizationRegionSettings = .australianDefaults
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -192,6 +203,7 @@ nonisolated struct AppSettings: Codable, Sendable, Identifiable {
         self.irrigationDefaultApplicationRateMmPerHour = irrigationDefaultApplicationRateMmPerHour
         self.irrigationRecentRainLookbackDays = irrigationRecentRainLookbackDays
         self.aiSuggestionsEnabled = aiSuggestionsEnabled
+        self.regionSettings = regionSettings
     }
 
     init(from decoder: Decoder) throws {
@@ -242,6 +254,15 @@ nonisolated struct AppSettings: Codable, Sendable, Identifiable {
         irrigationDefaultApplicationRateMmPerHour = try container.decodeIfPresent(Double.self, forKey: .irrigationDefaultApplicationRateMmPerHour) ?? 0
         irrigationRecentRainLookbackDays = try container.decodeIfPresent(Int.self, forKey: .irrigationRecentRainLookbackDays) ?? 7
         aiSuggestionsEnabled = try container.decodeIfPresent(Bool.self, forKey: .aiSuggestionsEnabled) ?? true
+        if let region = try container.decodeIfPresent(OrganizationRegionSettings.self, forKey: .regionSettings) {
+            regionSettings = region
+        } else {
+            // Legacy records have no region block. Fall back to Australian
+            // defaults but preserve the org's existing timezone selection.
+            var defaults = OrganizationRegionSettings.australianDefaults
+            defaults.timezone = timezone
+            regionSettings = defaults
+        }
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
@@ -257,5 +278,6 @@ nonisolated struct AppSettings: Codable, Sendable, Identifiable {
         case irrigationDefaultApplicationRateMmPerHour
         case irrigationRecentRainLookbackDays
         case aiSuggestionsEnabled
+        case regionSettings
     }
 }
