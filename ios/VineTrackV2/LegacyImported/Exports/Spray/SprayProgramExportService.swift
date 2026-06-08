@@ -2,6 +2,15 @@ import UIKit
 
 struct SprayProgramExportService {
 
+    /// Region-aware spray program exports, following the reference pattern
+    /// established in `SprayRecordPDFService`:
+    /// - Pass `store.settings.regionFormatter`; default `.australian` keeps every
+    ///   existing call site and AU/NZ user identical.
+    /// - Route dates, the spray-rate area denominator, water volume and currency
+    ///   through `formatter`. Records are never mutated.
+    /// - Chemical product amounts keep their native manufacturer unit (L/Kg/g/mL).
+    /// - Temperature (°C) and wind speed (km/h) stay as-is, matching the
+    ///   reference implementation.
     static func generateProgramPDF(
         records: [SprayRecord],
         trips: [Trip],
@@ -13,7 +22,8 @@ struct SprayProgramExportService {
         operatorCategories: [OperatorCategory] = [],
         vineyardUsers: [VineyardUser] = [],
         includeCostings: Bool = true,
-        timeZone: TimeZone = .current
+        timeZone: TimeZone = .current,
+        formatter: RegionFormatter = .australian
     ) -> URL {
         let pageWidth: CGFloat = 842.0
         let pageHeight: CGFloat = 595.0
@@ -53,7 +63,7 @@ struct SprayProgramExportService {
 
             let genAttrs: [NSAttributedString.Key: Any] = [.font: captionFont, .foregroundColor: UIColor.gray]
             let tzAbbrev = timeZone.abbreviation() ?? timeZone.identifier
-            let genText = "Generated: \(Date().formattedTZ(date: .abbreviated, time: .shortened, in: timeZone)) (\(tzAbbrev)) \u{2022} \(records.count) record\(records.count == 1 ? "" : "s")"
+            let genText = "Generated: \(formatter.formatDate(Date())) \(DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .short)) (\(tzAbbrev)) \u{2022} \(records.count) record\(records.count == 1 ? "" : "s")"
             (genText as NSString).draw(at: CGPoint(x: margin, y: y), withAttributes: genAttrs)
             y += 14
 
@@ -63,7 +73,7 @@ struct SprayProgramExportService {
                 ("BLOCK", margin + 148, 80),
                 ("CHEMICALS", margin + 228, 160),
                 ("TANKS", margin + 388, 40),
-                ("RATE (L/Ha)", margin + 428, 60),
+                ("RATE (L/\(formatter.sprayRateAreaAbbreviation.uppercased()))", margin + 428, 60),
                 ("TEMP", margin + 488, 42),
                 ("WIND", margin + 530, 50),
                 ("EQUIP.", margin + 580, 60),
@@ -81,10 +91,6 @@ struct SprayProgramExportService {
             }
             y += 18
 
-            let dateFormatter = DateFormatter()
-            dateFormatter.dateFormat = "dd/MM/yy"
-            dateFormatter.timeZone = timeZone
-
             for (index, record) in records.enumerated() {
                 checkPageBreak(needed: 22)
 
@@ -100,7 +106,7 @@ struct SprayProgramExportService {
                 let rowAttrs: [NSAttributedString.Key: Any] = [.font: bodyFont, .foregroundColor: UIColor.black]
                 let rowBoldAttrs: [NSAttributedString.Key: Any] = [.font: bodyBoldFont, .foregroundColor: UIColor.black]
 
-                let dateStr = dateFormatter.string(from: record.date)
+                let dateStr = formatter.formatDate(record.date)
                 (dateStr as NSString).draw(at: CGPoint(x: columns[0].1 + 3, y: rowY), withAttributes: rowAttrs)
 
                 let name = record.sprayReference.isEmpty ? "–" : record.sprayReference
@@ -116,7 +122,7 @@ struct SprayProgramExportService {
                 ("\(record.tanks.count)" as NSString).draw(at: CGPoint(x: columns[4].1 + 3, y: rowY), withAttributes: rowAttrs)
 
                 let avgRate = record.tanks.isEmpty ? 0.0 : record.tanks.map(\.sprayRatePerHa).reduce(0, +) / Double(record.tanks.count)
-                let rateStr = avgRate > 0 ? String(format: "%.0f", avgRate) : "–"
+                let rateStr = avgRate > 0 ? String(format: "%.0f", formatter.sprayRateValue(perHectare: avgRate)) : "–"
                 (rateStr as NSString).draw(at: CGPoint(x: columns[5].1 + 3, y: rowY), withAttributes: rowAttrs)
 
                 let tempStr = record.temperature.map { String(format: "%.0f°C", $0) } ?? "–"
@@ -226,25 +232,25 @@ struct SprayProgramExportService {
                 for (name, cost) in chemCosts {
                     checkPageBreak(needed: 14)
                     (name as NSString).draw(at: CGPoint(x: margin + 8, y: y), withAttributes: nameAttrs)
-                    (String(format: "$%.2f", cost) as NSString).draw(at: CGPoint(x: margin + 200, y: y), withAttributes: valAttrs)
+                    (formatter.formatCurrency(cost) as NSString).draw(at: CGPoint(x: margin + 200, y: y), withAttributes: valAttrs)
                     y += 14
                 }
                 if !chemCosts.isEmpty {
                     checkPageBreak(needed: 14)
                     ("Chemical Subtotal" as NSString).draw(at: CGPoint(x: margin + 8, y: y), withAttributes: nameAttrs)
-                    (String(format: "$%.2f", totalChemCost) as NSString).draw(at: CGPoint(x: margin + 200, y: y), withAttributes: valAttrs)
+                    (formatter.formatCurrency(totalChemCost) as NSString).draw(at: CGPoint(x: margin + 200, y: y), withAttributes: valAttrs)
                     y += 14
                 }
                 if totalFuelCost > 0 {
                     checkPageBreak(needed: 14)
                     ("Fuel Cost" as NSString).draw(at: CGPoint(x: margin + 8, y: y), withAttributes: nameAttrs)
-                    (String(format: "$%.2f", totalFuelCost) as NSString).draw(at: CGPoint(x: margin + 200, y: y), withAttributes: valAttrs)
+                    (formatter.formatCurrency(totalFuelCost) as NSString).draw(at: CGPoint(x: margin + 200, y: y), withAttributes: valAttrs)
                     y += 14
                 }
                 if totalOperatorCost > 0 {
                     checkPageBreak(needed: 14)
                     ("Operator Cost" as NSString).draw(at: CGPoint(x: margin + 8, y: y), withAttributes: nameAttrs)
-                    (String(format: "$%.2f", totalOperatorCost) as NSString).draw(at: CGPoint(x: margin + 200, y: y), withAttributes: valAttrs)
+                    (formatter.formatCurrency(totalOperatorCost) as NSString).draw(at: CGPoint(x: margin + 200, y: y), withAttributes: valAttrs)
                     y += 14
                 }
                 y += 4
@@ -252,7 +258,7 @@ struct SprayProgramExportService {
                 let grandTotal = totalChemCost + totalFuelCost + totalOperatorCost
                 let totalAttrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 9, weight: .bold), .foregroundColor: UIColor.black]
                 ("Total Cost" as NSString).draw(at: CGPoint(x: margin + 8, y: y), withAttributes: totalAttrs)
-                (String(format: "$%.2f", grandTotal) as NSString).draw(at: CGPoint(x: margin + 200, y: y), withAttributes: totalAttrs)
+                (formatter.formatCurrency(grandTotal) as NSString).draw(at: CGPoint(x: margin + 200, y: y), withAttributes: totalAttrs)
                 y += 16
             }
 
@@ -266,7 +272,7 @@ struct SprayProgramExportService {
             footerLine.stroke()
             y += 6
             let footerAttrs: [NSAttributedString.Key: Any] = [.font: captionFont, .foregroundColor: UIColor.gray]
-            let footerText = "Generated by VineTrack \u{2022} \(Date().formattedTZ(date: .abbreviated, time: .shortened, in: timeZone)) (\(tzAbbrev))"
+            let footerText = "Generated by VineTrack \u{2022} \(formatter.formatDate(Date())) (\(tzAbbrev))"
             (footerText as NSString).draw(at: CGPoint(x: margin, y: y), withAttributes: footerAttrs)
         }
 
@@ -277,28 +283,30 @@ struct SprayProgramExportService {
         return url
     }
 
+    /// Human-readable spray program CSV (a report, not the re-importable
+    /// template). Region-aware via `formatter` following the reference pattern;
+    /// product/chemical units stay native and temperature/wind keep °C / km/h.
     static func generateProgramCSV(
         records: [SprayRecord],
         trips: [Trip],
         vineyardName: String,
-        timeZone: TimeZone = .current
+        timeZone: TimeZone = .current,
+        formatter: RegionFormatter = .australian
     ) -> URL {
-        var csv = "Date,Name,Block,Chemicals,Tanks,Avg Rate (L/Ha),Water Vol (L),CF,Temp (°C),Wind (km/h),Wind Dir,Humidity (%),Equipment,Tractor,Gear,Operator,Notes,Status\n"
-
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "dd/MM/yyyy"
-        dateFormatter.timeZone = timeZone
+        let rateUnit = formatter.sprayRateAreaAbbreviation
+        let volumeUnit = formatter.volumeUnitAbbreviation
+        var csv = "Date,Name,Block,Chemicals,Tanks,Avg Rate (L/\(rateUnit)),Water Vol (\(volumeUnit)),CF,Temp (°C),Wind (km/h),Wind Dir,Humidity (%),Equipment,Tractor,Gear,Operator,Notes,Status\n"
 
         for record in records {
             let trip = trips.first { $0.id == record.tripId }
 
-            let date = dateFormatter.string(from: record.date)
+            let date = formatter.formatDate(record.date)
             let name = escapeCSV(record.sprayReference)
             let block = escapeCSV(trip?.paddockName ?? "")
-            let chemicals = escapeCSV(record.tanks.flatMap { $0.chemicals }.map { "\($0.name) (\(String(format: "%.2f", $0.displayRate)) \($0.unitLabel)/Ha)" }.filter { !$0.isEmpty }.joined(separator: "; "))
+            let chemicals = escapeCSV(record.tanks.flatMap { $0.chemicals }.map { "\($0.name) (\(String(format: "%.2f", $0.displayRate)) \($0.unitLabel)/\(rateUnit))" }.filter { !$0.isEmpty }.joined(separator: "; "))
             let tanks = "\(record.tanks.count)"
-            let avgRate = record.tanks.isEmpty ? "" : String(format: "%.1f", record.tanks.map(\.sprayRatePerHa).reduce(0, +) / Double(record.tanks.count))
-            let avgWater = record.tanks.isEmpty ? "" : String(format: "%.0f", record.tanks.map(\.waterVolume).reduce(0, +) / Double(record.tanks.count))
+            let avgRate = record.tanks.isEmpty ? "" : String(format: "%.1f", formatter.sprayRateValue(perHectare: record.tanks.map(\.sprayRatePerHa).reduce(0, +) / Double(record.tanks.count)))
+            let avgWater = record.tanks.isEmpty ? "" : String(format: "%.0f", formatter.volumeValue(litres: record.tanks.map(\.waterVolume).reduce(0, +) / Double(record.tanks.count)))
             let avgCF = record.tanks.isEmpty ? "" : String(format: "%.2f", record.tanks.map(\.concentrationFactor).reduce(0, +) / Double(record.tanks.count))
             let temp = record.temperature.map { String(format: "%.1f", $0) } ?? ""
             let wind = record.windSpeed.map { String(format: "%.1f", $0) } ?? ""

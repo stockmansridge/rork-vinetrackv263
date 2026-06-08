@@ -257,6 +257,7 @@ struct SprayProgramView: View {
         let users = store.selectedVineyard?.users ?? []
         let includeCostings = accessControl?.canViewFinancials ?? false
         let exportTimeZone = store.settings.resolvedTimeZone
+        let formatter = store.settings.regionFormatter
 
         Task.detached {
             let url = SprayProgramExportService.generateProgramPDF(
@@ -270,7 +271,8 @@ struct SprayProgramView: View {
                 operatorCategories: operatorCategories,
                 vineyardUsers: users,
                 includeCostings: includeCostings,
-                timeZone: exportTimeZone
+                timeZone: exportTimeZone,
+                formatter: formatter
             )
             await MainActor.run {
                 sharePDFURL = ShareURL(url: url)
