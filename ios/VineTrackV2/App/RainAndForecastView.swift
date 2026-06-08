@@ -34,6 +34,10 @@ struct RainAndForecastView: View {
 
     private var hasLocation: Bool { latitude != nil && longitude != nil }
 
+    /// Region-aware formatter for display dates. With AU defaults this
+    /// produces dd/MM/yyyy and is unit-agnostic for rainfall (kept in mm).
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -326,7 +330,7 @@ struct RainAndForecastView: View {
 
     private func rainDayRow(_ day: PersistedRainfallDay) -> some View {
         HStack {
-            Text(dateLabel(day.date))
+            Text(fmt.formatDate(day.date))
                 .font(.subheadline)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text(prettySource(day.source))

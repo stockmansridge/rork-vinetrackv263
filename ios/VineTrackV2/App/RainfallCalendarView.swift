@@ -27,6 +27,10 @@ struct RainfallCalendarView: View {
 
     private var currentYear: Int { Calendar.current.component(.year, from: Date()) }
 
+    /// Region-aware formatter for display dates. Rainfall amounts stay in mm;
+    /// only date formatting follows the configured region.
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -535,7 +539,7 @@ struct RainfallCalendarView: View {
         String(format: "%.1f", mm)
     }
     private func formattedDate(_ date: Date) -> String {
-        date.formatted(.dateTime.day().month(.abbreviated))
+        fmt.formatDate(date)
     }
 
     // MARK: - Reload
