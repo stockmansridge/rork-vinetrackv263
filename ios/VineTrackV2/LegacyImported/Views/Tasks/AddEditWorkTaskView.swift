@@ -7,6 +7,7 @@ struct AddEditWorkTaskView: View {
     @Environment(WorkTaskTypeSyncService.self) private var workTaskTypeSync
     @Environment(WorkTaskPaddockSyncService.self) private var workTaskPaddockSync
     @Environment(WorkTaskMachineLineSyncService.self) private var workTaskMachineLineSync
+    @Environment(TripSyncService.self) private var tripSync
     @Environment(PaddockSyncService.self) private var paddockSync
     @Environment(\.accessControl) private var accessControl
     @Environment(\.dismiss) private var dismiss
@@ -26,6 +27,8 @@ struct AddEditWorkTaskView: View {
     @State private var showWorkerTypes: Bool = false
     @State private var showAddMachineLine: Bool = false
     @State private var editingMachineLine: WorkTaskMachineLine?
+    @State private var showLinkTripPicker: Bool = false
+    @State private var tripToUnlink: Trip?
 
     init(existingTask: WorkTask? = nil) {
         self.existingTask = existingTask
@@ -35,6 +38,8 @@ struct AddEditWorkTaskView: View {
     private var canDelete: Bool { accessControl?.canDelete ?? false }
 
     private var fmt: RegionFormatter { store.settings.regionFormatter }
+    private var tz: TimeZone { store.settings.resolvedTimeZone }
+    private var canViewFinancials: Bool { accessControl?.canViewFinancials ?? false }
 
     private var durationHours: Double {
         Double(durationText.replacingOccurrences(of: ",", with: ".")) ?? 0
@@ -172,6 +177,32 @@ struct AddEditWorkTaskView: View {
     /// they sum without double-counting.
     private var combinedTotalCost: Double {
         totalCost + manualMachineCharge + manualMachineFuel + linkedTripCost
+    }
+
+    /// Successful GPS trips grouped under this task, newest first. Reads the
+    /// live store slice so the list refreshes as soon as a link/unlink applies.
+    private var linkedTrips: [Trip] {
+        guard let id = existingTask?.id else { return [] }
+        return store.trips
+            .filter { $0.workTaskId == id }
+            .sorted { $0.startTime > $1.startTime }
+    }
+
+    /// Completed trips in the selected vineyard not yet linked to any Work Task.
+    /// `store.trips` is already scoped to the selected vineyard.
+    private var eligibleTripsForLinking: [Trip] {
+        store.trips
+            .filter { $0.workTaskId == nil && !$0.isActive }
+            .sorted { $0.startTime > $1.startTime }
+    }
+
+    /// Estimated cost for a linked trip, summed from already-synced
+    /// `trip_cost_allocations`. Returns nil when no allocation data exists
+    /// client-side (never invents a cost).
+    private func allocatedCost(for trip: Trip) -> Double? {
+        let allocs = store.tripCostAllocations.filter { $0.tripId == trip.id }
+        guard !allocs.isEmpty else { return nil }
+        return allocs.reduce(0.0) { $0 + ($1.totalCost ?? 0) }
     }
 
     private func entrySourceLabel(_ raw: String) -> String {
@@ -342,6 +373,8 @@ struct AddEditWorkTaskView: View {
 
                 operationalSummarySection
 
+                linkedTripsSection
+
                 machineWorkSection
 
                 Section("Notes") {
@@ -393,6 +426,30 @@ struct AddEditWorkTaskView: View {
             .onAppear(perform: loadIfEditing)
             .sheet(isPresented: $showBlockPicker) {
                 BlockMultiSelectSheet(blocks: assignableBlocks, selected: $selectedBlockIds)
+            }
+            .sheet(isPresented: $showLinkTripPicker) {
+                LinkTripPickerSheet(
+                    trips: eligibleTripsForLinking,
+                    tz: tz,
+                    store: store,
+                    onSelect: { link($0) }
+                )
+            }
+            .confirmationDialog(
+                "Unlink this trip from the task?",
+                isPresented: Binding(
+                    get: { tripToUnlink != nil },
+                    set: { if !$0 { tripToUnlink = nil } }
+                ),
+                presenting: tripToUnlink
+            ) { trip in
+                Button("Unlink Trip", role: .destructive) {
+                    unlink(trip)
+                    tripToUnlink = nil
+                }
+                Button("Cancel", role: .cancel) { tripToUnlink = nil }
+            } message: { _ in
+                Text("The trip is kept. Only its link to this task is removed.")
             }
             .sheet(isPresented: $showAddMachineLine) {
                 if let id = existingTask?.id, let vid = store.selectedVineyardId {
@@ -467,6 +524,79 @@ struct AddEditWorkTaskView: View {
         } footer: {
             Text("Manual entries are shown separately from linked GPS trip costs.")
         }
+    }
+
+    @ViewBuilder
+    private var linkedTripsSection: some View {
+        Section {
+            if !isEditing {
+                Text("Save this task first to link GPS trips.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                if linkedTrips.isEmpty {
+                    Text("No GPS trips linked.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(linkedTrips) { trip in
+                        linkedTripRow(trip)
+                            .swipeActions(edge: .trailing) {
+                                Button(role: .destructive) {
+                                    tripToUnlink = trip
+                                } label: {
+                                    Label("Unlink", systemImage: "link.badge.minus")
+                                }
+                            }
+                    }
+                }
+                Button {
+                    showLinkTripPicker = true
+                } label: {
+                    Label("Link Trip", systemImage: "link")
+                }
+            }
+        } header: {
+            Text("Linked GPS Trips")
+        } footer: {
+            Text("Group successful GPS trips under this task. Linking does not change trip paths or costs.")
+        }
+    }
+
+    @ViewBuilder
+    private func linkedTripRow(_ trip: Trip) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(trip.displayFunctionLabel)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Spacer()
+                Text(trip.startTime.formattedTZ(date: .abbreviated, time: .shortened, in: tz))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            HStack(spacing: 10) {
+                Label(WorkTaskTripFormat.duration(trip.activeDuration), systemImage: "clock")
+                Label(WorkTaskTripFormat.machineName(trip, store: store), systemImage: "gearshape")
+                    .lineLimit(1)
+                if canViewFinancials, let cost = allocatedCost(for: trip) {
+                    Text(fmt.formatCurrency(cost))
+                }
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func link(_ trip: Trip) {
+        guard let taskId = existingTask?.id else { return }
+        Task { await tripSync.setWorkTaskLink(tripId: trip.id, workTaskId: taskId) }
+    }
+
+    private func unlink(_ trip: Trip) {
+        Task { await tripSync.setWorkTaskLink(tripId: trip.id, workTaskId: nil) }
     }
 
     @ViewBuilder
@@ -872,5 +1002,118 @@ private struct BlockMultiSelectSheet: View {
         } else {
             selected.insert(id)
         }
+    }
+}
+
+/// Shared formatting helpers for the linked-trip rows in the Work Task editor
+/// and the link picker, so both surfaces resolve names/durations identically.
+enum WorkTaskTripFormat {
+    /// Friendly duration using "min" (never "m") per the regional convention.
+    static func duration(_ seconds: TimeInterval) -> String {
+        let safe = seconds.isFinite && seconds > 0 ? seconds : 0
+        let totalMinutes = Int((safe / 60).rounded())
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+        if hours > 0 && minutes > 0 { return "\(hours)h \(minutes)min" }
+        if hours > 0 { return "\(hours)h" }
+        return "\(minutes)min"
+    }
+
+    /// Resolve a trip's machine/tractor display name, preferring the linked
+    /// vineyard machine, then the legacy tractor, with a safe fallback.
+    static func machineName(_ trip: Trip, store: MigratedDataStore) -> String {
+        if let mid = trip.machineId,
+           let m = store.vineyardMachines.first(where: { $0.id == mid }) {
+            return m.displayName
+        }
+        if let tid = trip.tractorId {
+            if let m = store.vineyardMachines.first(where: { $0.legacyTractorId == tid && $0.vineyardId == trip.vineyardId }) {
+                return m.displayName
+            }
+            if let t = store.tractors.first(where: { $0.id == tid }) {
+                return t.displayName
+            }
+        }
+        return "No machine linked"
+    }
+}
+
+/// Lightweight picker listing completed, unlinked GPS trips for the selected
+/// vineyard so the user can attach one to the current Work Task.
+private struct LinkTripPickerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let trips: [Trip]
+    let tz: TimeZone
+    let store: MigratedDataStore
+    let onSelect: (Trip) -> Void
+    @State private var search: String = ""
+
+    private var filtered: [Trip] {
+        let query = search.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !query.isEmpty else { return trips }
+        return trips.filter {
+            $0.displayFunctionLabel.lowercased().contains(query)
+            || $0.paddockName.lowercased().contains(query)
+            || WorkTaskTripFormat.machineName($0, store: store).lowercased().contains(query)
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if trips.isEmpty {
+                    Text("No eligible trips. Active trips and trips already linked to another task are not shown.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(filtered) { trip in
+                        Button {
+                            onSelect(trip)
+                            dismiss()
+                        } label: {
+                            tripRow(trip)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .searchable(text: $search, prompt: "Search trips")
+            .navigationTitle("Link Trip")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func tripRow(_ trip: Trip) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(trip.displayFunctionLabel)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Spacer()
+                Text(trip.startTime.formattedTZ(date: .abbreviated, time: .shortened, in: tz))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            HStack(spacing: 10) {
+                Label(WorkTaskTripFormat.duration(trip.activeDuration), systemImage: "clock")
+                Label(WorkTaskTripFormat.machineName(trip, store: store), systemImage: "gearshape")
+                    .lineLimit(1)
+                if !trip.paddockName.isEmpty {
+                    Label(trip.paddockName, systemImage: "leaf")
+                        .lineLimit(1)
+                }
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
     }
 }

@@ -74,6 +74,18 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
             .execute()
     }
 
+    func updateTripWorkTaskLink(id: UUID, workTaskId: UUID?) async throws {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        try await provider.client
+            .from("trips")
+            .update(TripWorkTaskLinkUpdate(
+                workTaskId: workTaskId,
+                clientUpdatedAt: Date()
+            ))
+            .eq("id", value: id.uuidString)
+            .execute()
+    }
+
     func softDeleteTrip(id: UUID) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         try await provider.client
@@ -91,6 +103,25 @@ nonisolated private struct TripVineyardAssignmentUpdate: Encodable, Sendable {
         case vineyardId = "vineyard_id"
         case paddockId = "paddock_id"
         case clientUpdatedAt = "client_updated_at"
+    }
+}
+
+/// Explicit `work_task_id` patch. Unlike the synthesized bulk upsert, this
+/// forces `encode` (not `encodeIfPresent`) so a nil `workTaskId` is written as
+/// an explicit SQL null — required to actually unlink a trip on the server.
+nonisolated private struct TripWorkTaskLinkUpdate: Encodable, Sendable {
+    let workTaskId: UUID?
+    let clientUpdatedAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case workTaskId = "work_task_id"
+        case clientUpdatedAt = "client_updated_at"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(workTaskId, forKey: .workTaskId)
+        try container.encode(clientUpdatedAt, forKey: .clientUpdatedAt)
     }
 }
 

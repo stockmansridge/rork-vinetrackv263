@@ -84,6 +84,32 @@ final class TripSyncService {
         metadata.markDeleted(id, at: Date())
     }
 
+    // MARK: - Work Task link
+
+    /// Link or unlink a trip to a Work Task. Updates the local store immediately
+    /// (so the UI reflects the change at once) and propagates the change to the
+    /// server via an explicit `work_task_id` patch. The explicit patch is needed
+    /// for unlinking because the bulk upsert omits nil optionals and would never
+    /// clear the server value. On success the pending dirty flag is cleared so a
+    /// later bulk upsert does not re-process the record. If the network call
+    /// fails the trip stays dirty; a later online sync re-propagates a link
+    /// (non-nil), while a full unlink requires connectivity to clear.
+    func setWorkTaskLink(tripId: UUID, workTaskId: UUID?) async {
+        guard let store else { return }
+        guard var trip = store.trips.first(where: { $0.id == tripId }) else { return }
+        trip.workTaskId = workTaskId
+        store.updateTrip(trip)
+        guard SupabaseClientProvider.shared.isConfigured else { return }
+        do {
+            try await repository.updateTripWorkTaskLink(id: tripId, workTaskId: workTaskId)
+            metadata.clearDirty([tripId])
+        } catch {
+            #if DEBUG
+            print("[TripSync] setWorkTaskLink failed for \(tripId): \(error.localizedDescription)")
+            #endif
+        }
+    }
+
     // MARK: - Public sync entry points
 
     func syncTripsForSelectedVineyard() async {
