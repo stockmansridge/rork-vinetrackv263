@@ -366,6 +366,262 @@ extension BackendWorkTaskLabourLine {
     }
 }
 
+// MARK: - Work Task Machine Lines (Step 1C)
+
+nonisolated struct BackendWorkTaskMachineLine: Codable, Sendable, Identifiable {
+    let id: UUID
+    let workTaskId: UUID
+    let vineyardId: UUID
+    let workDate: Date?
+    let equipmentSource: String?
+    let equipmentRefId: UUID?
+    let equipmentNameSnapshot: String?
+    let operatorUserId: UUID?
+    let operatorCategoryId: UUID?
+    let durationHours: Double?
+    let startTime: Date?
+    let endTime: Date?
+    let startEngineHours: Double?
+    let endEngineHours: Double?
+    let engineHoursUsed: Double?
+    let fuelLitres: Double?
+    let fuelCost: Double?
+    let hourlyMachineRate: Double?
+    let totalMachineCost: Double?
+    let entrySource: String?
+    let notes: String?
+    let createdBy: UUID?
+    let updatedBy: UUID?
+    let createdAt: Date?
+    let updatedAt: Date?
+    let deletedAt: Date?
+    let clientUpdatedAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case workTaskId = "work_task_id"
+        case vineyardId = "vineyard_id"
+        case workDate = "work_date"
+        case equipmentSource = "equipment_source"
+        case equipmentRefId = "equipment_ref_id"
+        case equipmentNameSnapshot = "equipment_name_snapshot"
+        case operatorUserId = "operator_user_id"
+        case operatorCategoryId = "operator_category_id"
+        case durationHours = "duration_hours"
+        case startTime = "start_time"
+        case endTime = "end_time"
+        case startEngineHours = "start_engine_hours"
+        case endEngineHours = "end_engine_hours"
+        case engineHoursUsed = "engine_hours_used"
+        case fuelLitres = "fuel_litres"
+        case fuelCost = "fuel_cost"
+        case hourlyMachineRate = "hourly_machine_rate"
+        case totalMachineCost = "total_machine_cost"
+        case entrySource = "entry_source"
+        case notes
+        case createdBy = "created_by"
+        case updatedBy = "updated_by"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+        case deletedAt = "deleted_at"
+        case clientUpdatedAt = "client_updated_at"
+    }
+
+    // Per-row resilient decode: tolerate missing optional fields and
+    // string-encoded dates so one malformed row does not break sync for the
+    // rest of the vineyard's machine lines.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(UUID.self, forKey: .id)
+        self.workTaskId = try c.decode(UUID.self, forKey: .workTaskId)
+        self.vineyardId = try c.decode(UUID.self, forKey: .vineyardId)
+        self.workDate = Self.flexibleDate(c, .workDate)
+        self.equipmentSource = try c.decodeIfPresent(String.self, forKey: .equipmentSource)
+        self.equipmentRefId = try c.decodeIfPresent(UUID.self, forKey: .equipmentRefId)
+        self.equipmentNameSnapshot = try c.decodeIfPresent(String.self, forKey: .equipmentNameSnapshot)
+        self.operatorUserId = try c.decodeIfPresent(UUID.self, forKey: .operatorUserId)
+        self.operatorCategoryId = try c.decodeIfPresent(UUID.self, forKey: .operatorCategoryId)
+        self.durationHours = try c.decodeIfPresent(Double.self, forKey: .durationHours)
+        self.startTime = Self.flexibleDate(c, .startTime)
+        self.endTime = Self.flexibleDate(c, .endTime)
+        self.startEngineHours = try c.decodeIfPresent(Double.self, forKey: .startEngineHours)
+        self.endEngineHours = try c.decodeIfPresent(Double.self, forKey: .endEngineHours)
+        self.engineHoursUsed = try c.decodeIfPresent(Double.self, forKey: .engineHoursUsed)
+        self.fuelLitres = try c.decodeIfPresent(Double.self, forKey: .fuelLitres)
+        self.fuelCost = try c.decodeIfPresent(Double.self, forKey: .fuelCost)
+        self.hourlyMachineRate = try c.decodeIfPresent(Double.self, forKey: .hourlyMachineRate)
+        self.totalMachineCost = try c.decodeIfPresent(Double.self, forKey: .totalMachineCost)
+        self.entrySource = try c.decodeIfPresent(String.self, forKey: .entrySource)
+        self.notes = try c.decodeIfPresent(String.self, forKey: .notes)
+        self.createdBy = try c.decodeIfPresent(UUID.self, forKey: .createdBy)
+        self.updatedBy = try c.decodeIfPresent(UUID.self, forKey: .updatedBy)
+        self.createdAt = Self.flexibleDate(c, .createdAt)
+        self.updatedAt = Self.flexibleDate(c, .updatedAt)
+        self.deletedAt = Self.flexibleDate(c, .deletedAt)
+        self.clientUpdatedAt = Self.flexibleDate(c, .clientUpdatedAt)
+    }
+
+    private static func flexibleDate(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> Date? {
+        if let d = try? c.decodeIfPresent(Date.self, forKey: key) { return d }
+        guard let s = try? c.decodeIfPresent(String.self, forKey: key), !s.isEmpty else { return nil }
+        return BackendDamageRecordDateParser.parse(s)
+    }
+}
+
+nonisolated struct BackendWorkTaskMachineLineUpsert: Encodable, Sendable {
+    let id: UUID
+    let workTaskId: UUID
+    let vineyardId: UUID
+    let workDate: Date
+    let equipmentSource: String?
+    let equipmentRefId: UUID?
+    let equipmentNameSnapshot: String
+    let operatorUserId: UUID?
+    let operatorCategoryId: UUID?
+    let durationHours: Double?
+    let startTime: Date?
+    let endTime: Date?
+    let startEngineHours: Double?
+    let endEngineHours: Double?
+    let engineHoursUsed: Double?
+    let fuelLitres: Double?
+    let fuelCost: Double?
+    let hourlyMachineRate: Double?
+    let totalMachineCost: Double?
+    let entrySource: String
+    let notes: String
+    let createdBy: UUID?
+    let updatedBy: UUID?
+    let clientUpdatedAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case workTaskId = "work_task_id"
+        case vineyardId = "vineyard_id"
+        case workDate = "work_date"
+        case equipmentSource = "equipment_source"
+        case equipmentRefId = "equipment_ref_id"
+        case equipmentNameSnapshot = "equipment_name_snapshot"
+        case operatorUserId = "operator_user_id"
+        case operatorCategoryId = "operator_category_id"
+        case durationHours = "duration_hours"
+        case startTime = "start_time"
+        case endTime = "end_time"
+        case startEngineHours = "start_engine_hours"
+        case endEngineHours = "end_engine_hours"
+        case engineHoursUsed = "engine_hours_used"
+        case fuelLitres = "fuel_litres"
+        case fuelCost = "fuel_cost"
+        case hourlyMachineRate = "hourly_machine_rate"
+        case totalMachineCost = "total_machine_cost"
+        case entrySource = "entry_source"
+        case notes
+        case createdBy = "created_by"
+        case updatedBy = "updated_by"
+        case clientUpdatedAt = "client_updated_at"
+    }
+
+    // work_date is encoded as `yyyy-MM-dd` to match the SQL `date` column.
+    private static let workDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .iso8601)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(secondsFromGMT: 0)
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(workTaskId, forKey: .workTaskId)
+        try c.encode(vineyardId, forKey: .vineyardId)
+        try c.encode(Self.workDateFormatter.string(from: workDate), forKey: .workDate)
+        try c.encodeIfPresent(equipmentSource, forKey: .equipmentSource)
+        try c.encodeIfPresent(equipmentRefId, forKey: .equipmentRefId)
+        try c.encode(equipmentNameSnapshot, forKey: .equipmentNameSnapshot)
+        try c.encodeIfPresent(operatorUserId, forKey: .operatorUserId)
+        try c.encodeIfPresent(operatorCategoryId, forKey: .operatorCategoryId)
+        try c.encodeIfPresent(durationHours, forKey: .durationHours)
+        try c.encodeIfPresent(startTime, forKey: .startTime)
+        try c.encodeIfPresent(endTime, forKey: .endTime)
+        try c.encodeIfPresent(startEngineHours, forKey: .startEngineHours)
+        try c.encodeIfPresent(endEngineHours, forKey: .endEngineHours)
+        try c.encodeIfPresent(engineHoursUsed, forKey: .engineHoursUsed)
+        try c.encodeIfPresent(fuelLitres, forKey: .fuelLitres)
+        try c.encodeIfPresent(fuelCost, forKey: .fuelCost)
+        try c.encodeIfPresent(hourlyMachineRate, forKey: .hourlyMachineRate)
+        try c.encodeIfPresent(totalMachineCost, forKey: .totalMachineCost)
+        try c.encode(entrySource, forKey: .entrySource)
+        try c.encode(notes, forKey: .notes)
+        try c.encodeIfPresent(createdBy, forKey: .createdBy)
+        try c.encodeIfPresent(updatedBy, forKey: .updatedBy)
+        try c.encode(clientUpdatedAt, forKey: .clientUpdatedAt)
+    }
+}
+
+extension BackendWorkTaskMachineLine {
+    static func upsert(
+        from l: WorkTaskMachineLine,
+        createdBy: UUID?,
+        updatedBy: UUID?,
+        clientUpdatedAt: Date
+    ) -> BackendWorkTaskMachineLineUpsert {
+        BackendWorkTaskMachineLineUpsert(
+            id: l.id,
+            workTaskId: l.workTaskId,
+            vineyardId: l.vineyardId,
+            workDate: l.workDate,
+            equipmentSource: l.equipmentSource,
+            equipmentRefId: l.equipmentRefId,
+            equipmentNameSnapshot: l.equipmentNameSnapshot,
+            operatorUserId: l.operatorUserId,
+            operatorCategoryId: l.operatorCategoryId,
+            durationHours: l.durationHours,
+            startTime: l.startTime,
+            endTime: l.endTime,
+            startEngineHours: l.startEngineHours,
+            endEngineHours: l.endEngineHours,
+            engineHoursUsed: l.engineHoursUsed,
+            fuelLitres: l.fuelLitres,
+            fuelCost: l.fuelCost,
+            hourlyMachineRate: l.hourlyMachineRate,
+            totalMachineCost: l.totalMachineCost,
+            entrySource: l.entrySource,
+            notes: l.notes,
+            createdBy: createdBy,
+            updatedBy: updatedBy,
+            clientUpdatedAt: clientUpdatedAt
+        )
+    }
+
+    func toWorkTaskMachineLine() -> WorkTaskMachineLine {
+        WorkTaskMachineLine(
+            id: id,
+            workTaskId: workTaskId,
+            vineyardId: vineyardId,
+            workDate: workDate ?? Date(),
+            equipmentSource: equipmentSource,
+            equipmentRefId: equipmentRefId,
+            equipmentNameSnapshot: equipmentNameSnapshot ?? "",
+            operatorUserId: operatorUserId,
+            operatorCategoryId: operatorCategoryId,
+            durationHours: durationHours,
+            startTime: startTime,
+            endTime: endTime,
+            startEngineHours: startEngineHours,
+            endEngineHours: endEngineHours,
+            engineHoursUsed: engineHoursUsed,
+            fuelLitres: fuelLitres,
+            fuelCost: fuelCost,
+            hourlyMachineRate: hourlyMachineRate,
+            totalMachineCost: totalMachineCost,
+            entrySource: entrySource ?? "manual",
+            notes: notes ?? ""
+        )
+    }
+}
+
 // MARK: - Work Task Paddocks (Phase 17)
 
 nonisolated struct BackendWorkTaskPaddock: Codable, Sendable, Identifiable {

@@ -49,6 +49,7 @@ final class MigratedDataStore {
     var maintenanceLogs: [MaintenanceLog] = []
     var workTasks: [WorkTask] = []
     var workTaskLabourLines: [WorkTaskLabourLine] = []
+    var workTaskMachineLines: [WorkTaskMachineLine] = []
     var workTaskPaddocks: [WorkTaskPaddock] = []
 
     var grapeVarieties: [GrapeVariety] = []
@@ -147,6 +148,8 @@ final class MigratedDataStore {
     var onWorkTaskDeleted: ((UUID) -> Void)?
     var onWorkTaskLabourLineChanged: ((UUID) -> Void)?
     var onWorkTaskLabourLineDeleted: ((UUID) -> Void)?
+    var onWorkTaskMachineLineChanged: ((UUID) -> Void)?
+    var onWorkTaskMachineLineDeleted: ((UUID) -> Void)?
     var onWorkTaskPaddockChanged: ((UUID) -> Void)?
     var onWorkTaskPaddockDeleted: ((UUID) -> Void)?
     var onMaintenanceLogChanged: ((UUID) -> Void)?
@@ -172,6 +175,7 @@ final class MigratedDataStore {
     let tripRepo: TripRepository
     let workTaskRepo: WorkTaskRepository
     let workTaskLabourLineRepo: WorkTaskLabourLineRepository
+    let workTaskMachineLineRepo: WorkTaskMachineLineRepository
     let workTaskPaddockRepo: WorkTaskPaddockRepository
     let workTaskTypeRepo: WorkTaskTypeRepository
     let equipmentItemRepo: EquipmentItemRepository
@@ -213,6 +217,7 @@ final class MigratedDataStore {
         self.tripRepo = TripRepository(persistence: persistence)
         self.workTaskRepo = WorkTaskRepository(persistence: persistence)
         self.workTaskLabourLineRepo = WorkTaskLabourLineRepository(persistence: persistence)
+        self.workTaskMachineLineRepo = WorkTaskMachineLineRepository(persistence: persistence)
         self.workTaskPaddockRepo = WorkTaskPaddockRepository(persistence: persistence)
         self.workTaskTypeRepo = WorkTaskTypeRepository(persistence: persistence)
         self.equipmentItemRepo = EquipmentItemRepository(persistence: persistence)
@@ -392,6 +397,7 @@ final class MigratedDataStore {
             maintenanceLogs = []
             workTasks = []
             workTaskLabourLines = []
+            workTaskMachineLines = []
             workTaskPaddocks = []
             workTaskTypes = []
             equipmentItems = []
@@ -403,6 +409,7 @@ final class MigratedDataStore {
         trips = tripRepo.load(for: vineyardId)
         workTasks = workTaskRepo.load(for: vineyardId)
         workTaskLabourLines = workTaskLabourLineRepo.load(for: vineyardId)
+        workTaskMachineLines = workTaskMachineLineRepo.load(for: vineyardId)
         workTaskPaddocks = workTaskPaddockRepo.load(for: vineyardId)
         workTaskTypes = workTaskTypeRepo.load(for: vineyardId)
         equipmentItems = equipmentItemRepo.load(for: vineyardId)
@@ -465,6 +472,7 @@ final class MigratedDataStore {
         maintenanceLogs = []
         workTasks = []
         workTaskLabourLines = []
+        workTaskMachineLines = []
         workTaskPaddocks = []
         workTaskTypes = []
         equipmentItems = []
@@ -485,6 +493,7 @@ final class MigratedDataStore {
             TripRepository.storageKey,
             WorkTaskRepository.storageKey,
             WorkTaskLabourLineRepository.storageKey,
+            WorkTaskMachineLineRepository.storageKey,
             WorkTaskPaddockRepository.storageKey,
             WorkTaskTypeRepository.storageKey,
             EquipmentItemRepository.storageKey,
@@ -1116,6 +1125,32 @@ final class MigratedDataStore {
         workTaskLabourLines.removeAll { $0.id == lineId }
         workTaskLabourLineRepo.saveSlice(workTaskLabourLines, for: vineyardId)
         onWorkTaskLabourLineDeleted?(lineId)
+    }
+
+    // MARK: - WorkTaskMachineLine CRUD
+
+    func addWorkTaskMachineLine(_ line: WorkTaskMachineLine) {
+        guard let vineyardId = selectedVineyardId else { return }
+        var item = line
+        item.vineyardId = vineyardId
+        workTaskMachineLines.append(item)
+        workTaskMachineLineRepo.saveSlice(workTaskMachineLines, for: vineyardId)
+        onWorkTaskMachineLineChanged?(item.id)
+    }
+
+    func updateWorkTaskMachineLine(_ line: WorkTaskMachineLine) {
+        guard let vineyardId = selectedVineyardId else { return }
+        guard let index = workTaskMachineLines.firstIndex(where: { $0.id == line.id }) else { return }
+        workTaskMachineLines[index] = line
+        workTaskMachineLineRepo.saveSlice(workTaskMachineLines, for: vineyardId)
+        onWorkTaskMachineLineChanged?(line.id)
+    }
+
+    func deleteWorkTaskMachineLine(_ lineId: UUID) {
+        guard let vineyardId = selectedVineyardId else { return }
+        workTaskMachineLines.removeAll { $0.id == lineId }
+        workTaskMachineLineRepo.saveSlice(workTaskMachineLines, for: vineyardId)
+        onWorkTaskMachineLineDeleted?(lineId)
     }
 
     // MARK: - WorkTaskPaddock CRUD

@@ -12,6 +12,12 @@ protocol WorkTaskLabourLineSyncRepositoryProtocol: Sendable {
     func softDelete(id: UUID) async throws
 }
 
+protocol WorkTaskMachineLineSyncRepositoryProtocol: Sendable {
+    func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendWorkTaskMachineLine]
+    func upsertMany(_ items: [BackendWorkTaskMachineLineUpsert]) async throws
+    func softDelete(id: UUID) async throws
+}
+
 protocol WorkTaskPaddockSyncRepositoryProtocol: Sendable {
     func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendWorkTaskPaddock]
     func upsertMany(_ items: [BackendWorkTaskPaddockUpsert]) async throws

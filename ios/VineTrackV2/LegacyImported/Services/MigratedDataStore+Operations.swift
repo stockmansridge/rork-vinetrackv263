@@ -73,6 +73,62 @@ extension MigratedDataStore {
         }
     }
 
+    // MARK: - Work Task Machine Lines
+
+    func applyRemoteWorkTaskMachineLineUpsert(_ line: WorkTaskMachineLine) {
+        if selectedVineyardId == line.vineyardId {
+            if let idx = workTaskMachineLines.firstIndex(where: { $0.id == line.id }) {
+                workTaskMachineLines[idx] = line
+            } else {
+                workTaskMachineLines.append(line)
+            }
+            workTaskMachineLineRepo.saveSlice(workTaskMachineLines, for: line.vineyardId)
+        } else {
+            var all = workTaskMachineLineRepo.loadAll()
+            if let idx = all.firstIndex(where: { $0.id == line.id }) {
+                all[idx] = line
+            } else {
+                all.append(line)
+            }
+            workTaskMachineLineRepo.replace(all.filter { $0.vineyardId == line.vineyardId }, for: line.vineyardId)
+        }
+    }
+
+    func applyRemoteWorkTaskMachineLineDelete(_ id: UUID) {
+        if let vineyardId = selectedVineyardId {
+            workTaskMachineLines.removeAll { $0.id == id }
+            workTaskMachineLineRepo.saveSlice(workTaskMachineLines, for: vineyardId)
+        }
+        var all = workTaskMachineLineRepo.loadAll()
+        if let removed = all.first(where: { $0.id == id }) {
+            all.removeAll { $0.id == id }
+            workTaskMachineLineRepo.replace(all.filter { $0.vineyardId == removed.vineyardId }, for: removed.vineyardId)
+        }
+    }
+
+    /// Resolves the display name for a manual machine line, preferring the
+    /// stable equipment link (equipmentSource + equipmentRefId) when present so
+    /// the shown name reflects the current asset, and falling back to the
+    /// stored equipmentNameSnapshot otherwise. The snapshot is never mutated.
+    func resolvedMachineLineEquipmentName(_ line: WorkTaskMachineLine) -> String {
+        guard let source = line.equipmentSource, let refId = line.equipmentRefId else {
+            return line.equipmentNameSnapshot
+        }
+        switch source {
+        case "vineyard_machine":
+            if let m = vineyardMachines.first(where: { $0.id == refId }) { return m.displayName }
+        case "tractor":
+            if let t = tractors.first(where: { $0.id == refId }) { return t.displayName }
+        case "spray_equipment":
+            if let e = sprayEquipment.first(where: { $0.id == refId }) { return e.name }
+        case "equipment_item":
+            if let i = equipmentItems.first(where: { $0.id == refId }) { return i.displayName }
+        default:
+            break
+        }
+        return line.equipmentNameSnapshot
+    }
+
     // MARK: - Work Task Paddocks
 
     func applyRemoteWorkTaskPaddockUpsert(_ paddock: WorkTaskPaddock) {

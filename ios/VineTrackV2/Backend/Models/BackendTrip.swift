@@ -52,6 +52,9 @@ nonisolated struct BackendTrip: Codable, Sendable, Identifiable {
     /// Optional free-text notes captured at trip completion (End Trip
     /// Review). See `sql/040_trips_completion_notes.sql`.
     let completionNotes: String?
+    /// Optional grouping link to the parent Work Task (see
+    /// sql/102_trips_work_task_link.sql). NULL = ungrouped standalone trip.
+    let workTaskId: UUID?
 
     let createdBy: UUID?
     let updatedBy: UUID?
@@ -101,6 +104,7 @@ nonisolated struct BackendTrip: Codable, Sendable, Identifiable {
         case seedingDetails = "seeding_details"
         case manualCorrectionEvents = "manual_correction_events"
         case completionNotes = "completion_notes"
+        case workTaskId = "work_task_id"
         case createdBy = "created_by"
         case updatedBy = "updated_by"
         case createdAt = "created_at"
@@ -166,6 +170,11 @@ nonisolated struct BackendTripUpsert: Encodable, Sendable {
     /// Review). Encoded only when non-nil so older clients don't clobber
     /// existing server values.
     let completionNotes: String?
+    /// Optional grouping link to the parent Work Task. Encoded only when
+    /// non-nil (synthesized Codable omits nil optionals), so a client that
+    /// has no link does NOT overwrite an existing server work_task_id back to
+    /// null on re-upsert. See sql/102_trips_work_task_link.sql.
+    let workTaskId: UUID?
     let createdBy: UUID?
     let clientUpdatedAt: Date
 
@@ -209,6 +218,7 @@ nonisolated struct BackendTripUpsert: Encodable, Sendable {
         case seedingDetails = "seeding_details"
         case manualCorrectionEvents = "manual_correction_events"
         case completionNotes = "completion_notes"
+        case workTaskId = "work_task_id"
         case createdBy = "created_by"
         case clientUpdatedAt = "client_updated_at"
     }
@@ -267,6 +277,7 @@ extension BackendTrip {
             completionNotes: trip.completionNotes?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true
                 ? nil
                 : trip.completionNotes,
+            workTaskId: trip.workTaskId,
             createdBy: createdBy,
             clientUpdatedAt: clientUpdatedAt
         )
@@ -313,7 +324,8 @@ extension BackendTrip {
             endEngineHours: endEngineHours,
             seedingDetails: seedingDetails,
             manualCorrectionEvents: manualCorrectionEvents ?? [],
-            completionNotes: completionNotes
+            completionNotes: completionNotes,
+            workTaskId: workTaskId
         )
     }
 }

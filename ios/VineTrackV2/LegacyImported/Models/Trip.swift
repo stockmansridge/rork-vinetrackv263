@@ -137,6 +137,12 @@ nonisolated struct Trip: Codable, Identifiable, Sendable, Hashable {
     /// `sql/040_trips_completion_notes.sql`).
     var completionNotes: String?
 
+    /// Optional grouping link: the Work Task this successful GPS trip belongs
+    /// to. NULL = ungrouped standalone trip. One Work Task can have many trips;
+    /// a trip belongs to zero or one Work Task. Synced as `trips.work_task_id`
+    /// (see sql/102_trips_work_task_link.sql). No costing/reporting impact.
+    var workTaskId: UUID?
+
     /// Convenience: returns a short label suitable for the active trip header.
     /// Prefers an explicit user-entered title, then the friendly label for the
     /// selected `tripFunction` (built-in or `custom:<slug>`), then "Trip".
@@ -213,7 +219,8 @@ nonisolated struct Trip: Codable, Identifiable, Sendable, Hashable {
         endEngineHours: Double? = nil,
         seedingDetails: SeedingDetails? = nil,
         manualCorrectionEvents: [String] = [],
-        completionNotes: String? = nil
+        completionNotes: String? = nil,
+        workTaskId: UUID? = nil
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -254,6 +261,7 @@ nonisolated struct Trip: Codable, Identifiable, Sendable, Hashable {
         self.seedingDetails = seedingDetails
         self.manualCorrectionEvents = manualCorrectionEvents
         self.completionNotes = completionNotes
+        self.workTaskId = workTaskId
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
@@ -271,6 +279,7 @@ nonisolated struct Trip: Codable, Identifiable, Sendable, Hashable {
         case seedingDetails
         case manualCorrectionEvents
         case completionNotes
+        case workTaskId
     }
 
     init(from decoder: Decoder) throws {
@@ -311,6 +320,7 @@ nonisolated struct Trip: Codable, Identifiable, Sendable, Hashable {
         seedingDetails = try container.decodeIfPresent(SeedingDetails.self, forKey: .seedingDetails)
         manualCorrectionEvents = try container.decodeIfPresent([String].self, forKey: .manualCorrectionEvents) ?? []
         completionNotes = try container.decodeIfPresent(String.self, forKey: .completionNotes)
+        workTaskId = try container.decodeIfPresent(UUID.self, forKey: .workTaskId)
 
         if let doubleRow = try? container.decode(Double.self, forKey: .currentRowNumber) {
             currentRowNumber = doubleRow

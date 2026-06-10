@@ -41,6 +41,19 @@ struct TripDetailView: View {
         store.pins.filter { $0.tripId == trip.id }
     }
 
+    /// Read-only label for the Work Task this trip is grouped under, if any.
+    /// Prefers the task description, then the task type. Returns nil when the
+    /// trip is ungrouped or the linked task is not available locally.
+    private var linkedWorkTaskLabel: String? {
+        guard let workTaskId = currentTrip.workTaskId,
+              let task = store.workTasks.first(where: { $0.id == workTaskId }) else { return nil }
+        if let desc = task.taskDescription?.trimmingCharacters(in: .whitespacesAndNewlines), !desc.isEmpty {
+            return desc
+        }
+        let type = task.taskType.trimmingCharacters(in: .whitespacesAndNewlines)
+        return type.isEmpty ? nil : type
+    }
+
     private var tz: TimeZone { store.settings.resolvedTimeZone }
     private var fmt: RegionFormatter { store.settings.regionFormatter }
 
@@ -100,6 +113,9 @@ struct TripDetailView: View {
                 }
                 if !trip.personName.isEmpty {
                     statRow("Operator", value: trip.personName, icon: "person")
+                }
+                if let workTaskLabel = linkedWorkTaskLabel {
+                    statRow("Work Task", value: workTaskLabel, icon: "checklist")
                 }
                 if !trip.rowSequence.isEmpty {
                     statRow("Pattern", value: trip.trackingPattern.title, icon: trip.trackingPattern.icon)

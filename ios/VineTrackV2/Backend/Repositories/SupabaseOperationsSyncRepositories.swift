@@ -91,6 +91,62 @@ final class SupabaseWorkTaskLabourLineSyncRepository: WorkTaskLabourLineSyncRepo
     }
 }
 
+// MARK: - Work Task Machine Lines
+
+final class SupabaseWorkTaskMachineLineSyncRepository: WorkTaskMachineLineSyncRepositoryProtocol {
+    private let provider: SupabaseClientProvider
+    init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
+
+    func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendWorkTaskMachineLine] {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let q = provider.client.from("work_task_machine_lines").select().eq("vineyard_id", value: vineyardId.uuidString)
+        let data: Data
+        if let since {
+            data = try await q.gte("updated_at", value: opsIso(since)).order("updated_at", ascending: true).execute().data
+        } else {
+            data = try await q.order("updated_at", ascending: true).execute().data
+        }
+        // Per-row resilient decode — a single malformed row must not break
+        // sync for the rest of the vineyard's machine lines.
+        let decoder = JSONDecoder()
+        guard let array = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            if let since {
+                return try await q.gte("updated_at", value: opsIso(since)).order("updated_at", ascending: true).execute().value
+            }
+            return try await q.order("updated_at", ascending: true).execute().value
+        }
+        var rows: [BackendWorkTaskMachineLine] = []
+        rows.reserveCapacity(array.count)
+        for row in array {
+            let id = (row["id"] as? String) ?? "<unknown-id>"
+            do {
+                let rowData = try JSONSerialization.data(withJSONObject: row)
+                let decoded = try decoder.decode(BackendWorkTaskMachineLine.self, from: rowData)
+                rows.append(decoded)
+            } catch {
+                #if DEBUG
+                print("[WorkTaskMachineLineSync] decode failed id=\(id) error=\(error)")
+                #endif
+            }
+        }
+        #if DEBUG
+        print("[WorkTaskMachineLineSync] fetched \(array.count) row(s), decoded \(rows.count) for vineyard \(vineyardId.uuidString)")
+        #endif
+        return rows
+    }
+
+    func upsertMany(_ items: [BackendWorkTaskMachineLineUpsert]) async throws {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        guard !items.isEmpty else { return }
+        try await provider.client.from("work_task_machine_lines").upsert(items, onConflict: "id").execute()
+    }
+
+    func softDelete(id: UUID) async throws {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        try await provider.client.rpc("soft_delete_work_task_machine_line", params: OpsSoftDeleteByIdRequest(id: id)).execute()
+    }
+}
+
 // MARK: - Work Task Paddocks
 
 final class SupabaseWorkTaskPaddockSyncRepository: WorkTaskPaddockSyncRepositoryProtocol {

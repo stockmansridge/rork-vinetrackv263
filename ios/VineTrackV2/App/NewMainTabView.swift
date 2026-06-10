@@ -29,6 +29,7 @@ struct NewMainTabView: View {
     @Environment(GrowthStageRecordSyncService.self) private var growthStageRecordSync
     @Environment(WorkTaskSyncService.self) private var workTaskSync
     @Environment(WorkTaskLabourLineSyncService.self) private var workTaskLabourLineSync
+    @Environment(WorkTaskMachineLineSyncService.self) private var workTaskMachineLineSync
     @Environment(WorkTaskPaddockSyncService.self) private var workTaskPaddockSync
     @Environment(MaintenanceLogSyncService.self) private var maintenanceLogSync
     @Environment(YieldEstimationSessionSyncService.self) private var yieldSessionSync
@@ -114,6 +115,7 @@ struct NewMainTabView: View {
             growthStageRecordSync.configure(store: store, auth: auth)
             workTaskSync.configure(store: store, auth: auth)
             workTaskLabourLineSync.configure(store: store, auth: auth)
+            workTaskMachineLineSync.configure(store: store, auth: auth)
             workTaskPaddockSync.configure(store: store, auth: auth)
             maintenanceLogSync.configure(store: store, auth: auth)
             yieldSessionSync.configure(store: store, auth: auth)
@@ -239,6 +241,7 @@ struct NewMainTabView: View {
         await growthStageRecordSync.syncForSelectedVineyard()
         await workTaskSync.syncForSelectedVineyard()
         await workTaskLabourLineSync.syncForSelectedVineyard()
+        await workTaskMachineLineSync.syncForSelectedVineyard()
         await workTaskPaddockSync.syncForSelectedVineyard()
         await maintenanceLogSync.syncForSelectedVineyard()
         await yieldSessionSync.syncForSelectedVineyard()
@@ -353,6 +356,7 @@ struct NewMainTabView: View {
             + growthStageRecordSync.pendingUpsertCount
             + workTaskSync.pendingUpsertCount
             + workTaskLabourLineSync.pendingUpsertCount
+            + workTaskMachineLineSync.pendingUpsertCount
             + workTaskPaddockSync.pendingUpsertCount
             + maintenanceLogSync.pendingUpsertCount
             + yieldSessionSync.pendingUpsertCount
@@ -381,6 +385,7 @@ struct NewMainTabView: View {
             + growthStageRecordSync.pendingDeleteCount
             + workTaskSync.pendingDeleteCount
             + workTaskLabourLineSync.pendingDeleteCount
+            + workTaskMachineLineSync.pendingDeleteCount
             + workTaskPaddockSync.pendingDeleteCount
             + maintenanceLogSync.pendingDeleteCount
             + yieldSessionSync.pendingDeleteCount
