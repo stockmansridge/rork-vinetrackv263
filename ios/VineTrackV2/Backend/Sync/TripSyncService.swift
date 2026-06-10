@@ -22,6 +22,9 @@ final class TripSyncService {
 
     var pendingUpsertCount: Int { metadata.pendingUpserts.count }
     var pendingDeleteCount: Int { metadata.pendingDeletes.count }
+    /// Number of trips with a queued explicit `work_task_id = null` clear that
+    /// has not yet been confirmed by the server.
+    var pendingWorkTaskClearCount: Int { metadata.pendingWorkTaskClears.count }
 
     /// Whether a specific trip has local changes queued for upload.
     func isPendingUpsert(_ id: UUID) -> Bool { metadata.pendingUpserts[id] != nil }
@@ -99,11 +102,35 @@ final class TripSyncService {
         guard var trip = store.trips.first(where: { $0.id == tripId }) else { return }
         trip.workTaskId = workTaskId
         store.updateTrip(trip)
-        guard SupabaseClientProvider.shared.isConfigured else { return }
+
+        // A non-nil link supersedes any queued clear: the newer link wins and the
+        // bulk upsert (marked dirty by store.updateTrip) carries it to the server.
+        if workTaskId != nil {
+            metadata.clearWorkTaskClears([tripId])
+        }
+
+        guard SupabaseClientProvider.shared.isConfigured else {
+            // Offline. An unlink cannot reach the server now and the bulk upsert
+            // omits nil optionals, so persist a pending clear to retry the
+            // explicit null patch on the next successful sync.
+            if workTaskId == nil {
+                metadata.markWorkTaskClearPending(tripId, at: Date())
+            }
+            return
+        }
         do {
             try await repository.updateTripWorkTaskLink(id: tripId, workTaskId: workTaskId)
             metadata.clearDirty([tripId])
+            if workTaskId == nil {
+                metadata.clearWorkTaskClears([tripId])
+            }
         } catch {
+            // Network/server unavailable — durably queue the explicit clear so a
+            // later sync re-sends the null patch. A failed link stays dirty and
+            // re-propagates its non-nil value through the normal upsert path.
+            if workTaskId == nil {
+                metadata.markWorkTaskClearPending(tripId, at: Date())
+            }
             #if DEBUG
             print("[TripSync] setWorkTaskLink failed for \(tripId): \(error.localizedDescription)")
             #endif
@@ -542,6 +569,36 @@ final class TripSyncService {
             #endif
         }
 
+        // Pending explicit work-task-link clears (offline/failed unlinks). The
+        // bulk upsert above omits nil optionals (partial-sync guardrail), so an
+        // unlink only reaches the server through this dedicated null patch.
+        let clears = metadata.pendingWorkTaskClears
+        if !clears.isEmpty {
+            let byIdNow = Dictionary(store.trips.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+            for (tripId, _) in clears {
+                // Conflict guard: if the user re-linked this trip locally before
+                // the sync, the newer link wins — drop the stale clear and let the
+                // upsert carry the link instead of wiping it.
+                if let current = byIdNow[tripId], current.workTaskId != nil {
+                    metadata.clearWorkTaskClears([tripId])
+                    continue
+                }
+                do {
+                    try await repository.updateTripWorkTaskLink(id: tripId, workTaskId: nil)
+                    metadata.clearWorkTaskClears([tripId])
+                } catch {
+                    if Self.isMissingRowError(error) {
+                        // Row no longer exists remotely — nothing left to clear.
+                        metadata.clearWorkTaskClears([tripId])
+                    }
+                    #if DEBUG
+                    print("[TripSync] work-task clear failed for \(tripId): \(error.localizedDescription)")
+                    #endif
+                    // Otherwise keep the pending clear for the next sync.
+                }
+            }
+        }
+
         let deletes = metadata.pendingDeletes
         var deleteFailures: [String] = []
         for (tripId, _) in deletes {
@@ -634,6 +691,7 @@ final class TripSyncService {
             store.applyRemoteTripDelete(backendTrip.id)
             metadata.clearDirty([backendTrip.id])
             metadata.clearDeleted([backendTrip.id])
+            metadata.clearWorkTaskClears([backendTrip.id])
             return
         }
 
@@ -664,6 +722,28 @@ final class TripSyncMetadata {
         /// Records whose last upsert/delete push failed while still pending.
         var failedUpserts: Set<UUID> = []
         var failedDeletes: Set<UUID> = []
+        /// Trips needing an explicit `work_task_id = null` patch (offline/failed
+        /// unlinks). Keyed by trip id with the time the clear was enqueued.
+        var pendingWorkTaskClears: [UUID: Date] = [:]
+
+        init() {}
+
+        enum CodingKeys: String, CodingKey {
+            case lastSyncByVineyard, pendingUpserts, pendingDeletes
+            case failedUpserts, failedDeletes, pendingWorkTaskClears
+        }
+
+        // Lenient decode so newly added fields don't wipe persisted pending
+        // state when upgrading from an older on-disk format.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            lastSyncByVineyard = try c.decodeIfPresent([UUID: Date].self, forKey: .lastSyncByVineyard) ?? [:]
+            pendingUpserts = try c.decodeIfPresent([UUID: Date].self, forKey: .pendingUpserts) ?? [:]
+            pendingDeletes = try c.decodeIfPresent([UUID: Date].self, forKey: .pendingDeletes) ?? [:]
+            failedUpserts = try c.decodeIfPresent(Set<UUID>.self, forKey: .failedUpserts) ?? []
+            failedDeletes = try c.decodeIfPresent(Set<UUID>.self, forKey: .failedDeletes) ?? []
+            pendingWorkTaskClears = try c.decodeIfPresent([UUID: Date].self, forKey: .pendingWorkTaskClears) ?? [:]
+        }
     }
 
     init(persistence: PersistenceStore = .shared) {
@@ -673,6 +753,7 @@ final class TripSyncMetadata {
 
     var pendingUpserts: [UUID: Date] { state.pendingUpserts }
     var pendingDeletes: [UUID: Date] { state.pendingDeletes }
+    var pendingWorkTaskClears: [UUID: Date] { state.pendingWorkTaskClears }
 
     var failedUpsertIds: Set<UUID> { state.failedUpserts }
     var failedDeleteIds: Set<UUID> { state.failedDeletes }
@@ -721,6 +802,8 @@ final class TripSyncMetadata {
     func markDeleted(_ id: UUID, at date: Date) {
         state.pendingUpserts.removeValue(forKey: id)
         state.failedUpserts.remove(id)
+        // A deleted trip needs no link clear — the soft-delete subsumes it.
+        state.pendingWorkTaskClears.removeValue(forKey: id)
         state.pendingDeletes[id] = date
         save()
     }
@@ -735,6 +818,22 @@ final class TripSyncMetadata {
         guard !ids.isEmpty else { return }
         for id in ids { state.pendingDeletes.removeValue(forKey: id); state.failedDeletes.remove(id) }
         save()
+    }
+
+    /// Queue an explicit `work_task_id = null` clear for a trip (offline/failed
+    /// unlink). Idempotent — keeps the earliest enqueue time.
+    func markWorkTaskClearPending(_ id: UUID, at date: Date) {
+        if state.pendingWorkTaskClears[id] == nil {
+            state.pendingWorkTaskClears[id] = date
+            save()
+        }
+    }
+
+    func clearWorkTaskClears(_ ids: [UUID]) {
+        guard !ids.isEmpty else { return }
+        let before = state.pendingWorkTaskClears.count
+        for id in ids { state.pendingWorkTaskClears.removeValue(forKey: id) }
+        if state.pendingWorkTaskClears.count != before { save() }
     }
 
     private func save() {
