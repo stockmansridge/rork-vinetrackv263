@@ -205,6 +205,55 @@ struct AddEditWorkTaskView: View {
         return allocs.reduce(0.0) { $0 + ($1.totalCost ?? 0) }
     }
 
+    // MARK: - Duplicate-risk detection (operational data-quality warning)
+
+    /// Manual entry sources that describe machine work which may also have been
+    /// captured as a GPS trip (missed/failed tracking, or a manual correction).
+    private static let overlapEntrySources: Set<String> = [
+        "missed_trip", "trip_failed", "correction"
+    ]
+
+    /// Non-deleted manual machine lines whose entry source indicates they may
+    /// overlap with a linked GPS trip. `machineLines` already excludes deleted.
+    private var overlapCandidateLines: [WorkTaskMachineLine] {
+        machineLines.filter { Self.overlapEntrySources.contains($0.entrySource) }
+    }
+
+    /// v1: the task has at least one linked GPS trip AND at least one manual
+    /// correction/missed/failed machine line — they may describe the same work.
+    private var hasDuplicateRisk: Bool {
+        linkedTripCount > 0 && !overlapCandidateLines.isEmpty
+    }
+
+    /// Stronger signal: a candidate line shares its work date with a linked
+    /// trip AND the equipment appears to match (same ref id, same legacy
+    /// tractor) or neither side has a reliable equipment link.
+    private var hasStrongDuplicateRisk: Bool {
+        guard hasDuplicateRisk else { return false }
+        let cal = Calendar.current
+        for line in overlapCandidateLines {
+            for trip in linkedTrips where cal.isDate(line.workDate, inSameDayAs: trip.startTime) {
+                if equipmentLikelyMatches(line: line, trip: trip) { return true }
+            }
+        }
+        return false
+    }
+
+    /// Conservative equipment match: identical stable ref, the line's ref maps
+    /// to the trip's machine/legacy tractor, or both sides lack any reliable
+    /// equipment link (so we cannot rule the overlap out).
+    private func equipmentLikelyMatches(line: WorkTaskMachineLine, trip: Trip) -> Bool {
+        let lineRef = line.equipmentRefId
+        let tripHasEquipment = trip.machineId != nil || trip.tractorId != nil
+        if let lineRef {
+            if lineRef == trip.machineId || lineRef == trip.tractorId { return true }
+            return false
+        }
+        // Line has no stable equipment link; treat as a possible match only when
+        // the trip also lacks one (otherwise we can rule the overlap out).
+        return !tripHasEquipment
+    }
+
     private func entrySourceLabel(_ raw: String) -> String {
         switch raw {
         case "missed_trip": return "Missed trip"
@@ -519,11 +568,31 @@ struct AddEditWorkTaskView: View {
                 }
                 .padding(.vertical, 4)
             }
+            if hasDuplicateRisk {
+                duplicateRiskNotice
+            }
         } header: {
             Text("Work Task Summary")
         } footer: {
             Text("Manual entries are shown separately from linked GPS trip costs.")
         }
+    }
+
+    /// Soft, non-blocking operational warning shown to all users when linked
+    /// GPS trips and manual correction/missed machine entries may overlap.
+    @ViewBuilder
+    private var duplicateRiskNotice: some View {
+        Label {
+            Text(hasStrongDuplicateRisk
+                 ? "Review: a linked GPS trip and a manual correction/missed machine entry share the same date and equipment — they may double-count the same work."
+                 : "Review: linked GPS trips and manual correction/missed machine entries may overlap.")
+                .font(.caption)
+                .foregroundStyle(.primary)
+        } icon: {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+        }
+        .padding(.vertical, 2)
     }
 
     @ViewBuilder
