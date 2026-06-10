@@ -251,7 +251,7 @@ struct AddEditWorkTaskMachineLineView: View {
             }
 
             HStack {
-                Text("Fuel (litres)")
+                Text("Fuel (\(fmt.fuelUnitAbbreviation))")
                 Spacer()
                 TextField("Optional", text: $fuelLitresText)
                     .keyboardType(.decimalPad)

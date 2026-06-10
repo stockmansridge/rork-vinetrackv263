@@ -58,9 +58,9 @@ struct AddEditWorkTaskView: View {
     /// Collapsed picker label per the multi-select rules.
     private var blockCollapsedLabel: String {
         let selected = selectedBlocksOrdered
-        if selected.isEmpty { return "Does not apply to a block" }
+        if selected.isEmpty { return "Does not apply to a \(fmt.blockTerm)" }
         if selected.count == 1 { return selected[0].name }
-        return "\(selected.count) blocks selected"
+        return "\(selected.count) \(fmt.blockTermPlural) selected"
     }
 
     /// Block area (ha) only when known/positive; nil otherwise.
@@ -125,6 +125,55 @@ struct AddEditWorkTaskView: View {
             .sorted { $0.workDate > $1.workDate }
     }
 
+    // MARK: - Operational summary (read-only)
+
+    /// Labour hours = the task duration entered on this form.
+    private var labourHours: Double { durationHours }
+
+    /// Manual machine entries recorded under this task (non-deleted lines are
+    /// already the only ones kept in the store).
+    private var manualMachineCount: Int { machineLines.count }
+
+    /// Manual machine hours, mirroring Lovable's formula: prefer the explicit
+    /// duration, otherwise fall back to engine hours used.
+    private var manualMachineHours: Double {
+        machineLines.reduce(0.0) { $0 + ($1.durationHours ?? $1.engineHoursUsed ?? 0) }
+    }
+
+    /// Successful GPS trips grouped under this task via `trips.work_task_id`.
+    private var linkedTripCount: Int {
+        guard let id = existingTask?.id else { return 0 }
+        return store.trips.filter { $0.workTaskId == id }.count
+    }
+
+    /// Manual machine charge = sum of explicit total machine cost where present.
+    private var manualMachineCharge: Double {
+        machineLines.reduce(0.0) { $0 + ($1.totalMachineCost ?? 0) }
+    }
+
+    /// Manual machine fuel cost = sum of explicit fuel cost where present.
+    private var manualMachineFuel: Double {
+        machineLines.reduce(0.0) { $0 + ($1.fuelCost ?? 0) }
+    }
+
+    /// Estimated cost of linked GPS trips, summed from already-synced
+    /// `trip_cost_allocations`. Available client-side, so no deferral needed.
+    private var linkedTripCost: Double {
+        guard let id = existingTask?.id else { return 0 }
+        let linkedTripIds = Set(store.trips.filter { $0.workTaskId == id }.map { $0.id })
+        guard !linkedTripIds.isEmpty else { return 0 }
+        return store.tripCostAllocations
+            .filter { linkedTripIds.contains($0.tripId) }
+            .reduce(0.0) { $0 + ($1.totalCost ?? 0) }
+    }
+
+    /// Combined total across manual labour, manual machine charge + fuel, and
+    /// linked GPS trip cost. Manual entries and trips are distinct sources, so
+    /// they sum without double-counting.
+    private var combinedTotalCost: Double {
+        totalCost + manualMachineCharge + manualMachineFuel + linkedTripCost
+    }
+
     private func entrySourceLabel(_ raw: String) -> String {
         switch raw {
         case "missed_trip": return "Missed trip"
@@ -174,7 +223,7 @@ struct AddEditWorkTaskView: View {
                         showBlockPicker = true
                     } label: {
                         HStack {
-                            Text("Block")
+                            Text(fmt.blockTermCapitalised)
                                 .foregroundStyle(.primary)
                             Spacer()
                             Text(blockCollapsedLabel)
@@ -250,7 +299,7 @@ struct AddEditWorkTaskView: View {
                                 .foregroundStyle(.secondary)
                         }
                         HStack {
-                            Text("Block Total")
+                            Text("\(fmt.blockTermCapitalised) Total")
                                 .font(.headline)
                             Spacer()
                             Text(fmt.formatCurrency(totalCost))
@@ -269,7 +318,7 @@ struct AddEditWorkTaskView: View {
                 }
 
                 if selectedBlockIds.count > 1 {
-                    Section("Block Breakdown") {
+                    Section("\(fmt.blockTermCapitalised) Breakdown") {
                         if hasMissingArea {
                             Label("One or more selected blocks are missing area, so the cost per hectare breakdown may be incomplete.", systemImage: "exclamationmark.triangle.fill")
                                 .font(.caption)
@@ -290,6 +339,8 @@ struct AddEditWorkTaskView: View {
                         }
                     }
                 }
+
+                operationalSummarySection
 
                 machineWorkSection
 
@@ -361,6 +412,60 @@ struct AddEditWorkTaskView: View {
                         }
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var operationalSummarySection: some View {
+        Section {
+            LabeledContent("Labour Hours") {
+                Text(String(format: "%.1fh", labourHours))
+                    .foregroundStyle(.secondary)
+            }
+            LabeledContent("Manual Machine Entries") {
+                Text("\(manualMachineCount)")
+                    .foregroundStyle(.secondary)
+            }
+            LabeledContent("Manual Machine Hours") {
+                Text(String(format: "%.1fh", manualMachineHours))
+                    .foregroundStyle(.secondary)
+            }
+            LabeledContent("Linked GPS Trips") {
+                Text("\(linkedTripCount)")
+                    .foregroundStyle(.secondary)
+            }
+
+            if accessControl?.canViewFinancials ?? false {
+                LabeledContent("Manual Labour Cost") {
+                    Text(fmt.formatCurrency(totalCost))
+                        .foregroundStyle(.secondary)
+                }
+                LabeledContent("Manual Machine Charge") {
+                    Text(fmt.formatCurrency(manualMachineCharge))
+                        .foregroundStyle(.secondary)
+                }
+                LabeledContent("Manual Machine Fuel") {
+                    Text(fmt.formatCurrency(manualMachineFuel))
+                        .foregroundStyle(.secondary)
+                }
+                LabeledContent("Linked GPS Trip Cost") {
+                    Text(fmt.formatCurrency(linkedTripCost))
+                        .foregroundStyle(.secondary)
+                }
+                HStack {
+                    Text("Combined Total")
+                        .font(.headline)
+                    Spacer()
+                    Text(fmt.formatCurrency(combinedTotalCost))
+                        .font(.title3.weight(.bold))
+                        .foregroundStyle(VineyardTheme.leafGreen)
+                }
+                .padding(.vertical, 4)
+            }
+        } header: {
+            Text("Work Task Summary")
+        } footer: {
+            Text("Manual entries are shown separately from linked GPS trip costs.")
         }
     }
 
