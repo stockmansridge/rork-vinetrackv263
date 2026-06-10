@@ -6,6 +6,7 @@ struct AddEditWorkTaskView: View {
     @Environment(WorkTaskSyncService.self) private var workTaskSync
     @Environment(WorkTaskTypeSyncService.self) private var workTaskTypeSync
     @Environment(WorkTaskPaddockSyncService.self) private var workTaskPaddockSync
+    @Environment(WorkTaskMachineLineSyncService.self) private var workTaskMachineLineSync
     @Environment(PaddockSyncService.self) private var paddockSync
     @Environment(\.accessControl) private var accessControl
     @Environment(\.dismiss) private var dismiss
@@ -23,6 +24,8 @@ struct AddEditWorkTaskView: View {
     @State private var resources: [WorkTaskResource] = []
     @State private var showDelete: Bool = false
     @State private var showWorkerTypes: Bool = false
+    @State private var showAddMachineLine: Bool = false
+    @State private var editingMachineLine: WorkTaskMachineLine?
 
     init(existingTask: WorkTask? = nil) {
         self.existingTask = existingTask
@@ -111,6 +114,24 @@ struct AddEditWorkTaskView: View {
     private var costPerPerson: Double {
         guard totalPeople > 0 else { return 0 }
         return totalCost / Double(totalPeople)
+    }
+
+    /// Manual machine/tractor work lines recorded under this task (when no GPS
+    /// trip exists). Only available once the task has been saved.
+    private var machineLines: [WorkTaskMachineLine] {
+        guard let id = existingTask?.id else { return [] }
+        return store.workTaskMachineLines
+            .filter { $0.workTaskId == id }
+            .sorted { $0.workDate > $1.workDate }
+    }
+
+    private func entrySourceLabel(_ raw: String) -> String {
+        switch raw {
+        case "missed_trip": return "Missed trip"
+        case "trip_failed": return "Trip failed"
+        case "correction": return "Correction"
+        default: return "Manual entry"
+        }
     }
 
     var body: some View {
@@ -270,6 +291,8 @@ struct AddEditWorkTaskView: View {
                     }
                 }
 
+                machineWorkSection
+
                 Section("Notes") {
                     TextField("Optional notes…", text: $notes, axis: .vertical)
                         .lineLimit(2...5)
@@ -320,6 +343,14 @@ struct AddEditWorkTaskView: View {
             .sheet(isPresented: $showBlockPicker) {
                 BlockMultiSelectSheet(blocks: assignableBlocks, selected: $selectedBlockIds)
             }
+            .sheet(isPresented: $showAddMachineLine) {
+                if let id = existingTask?.id, let vid = store.selectedVineyardId {
+                    AddEditWorkTaskMachineLineView(workTaskId: id, vineyardId: vid)
+                }
+            }
+            .sheet(item: $editingMachineLine) { line in
+                AddEditWorkTaskMachineLineView(workTaskId: line.workTaskId, vineyardId: line.vineyardId, existingLine: line)
+            }
             .sheet(isPresented: $showWorkerTypes) {
                 NavigationStack {
                     OperatorCategoriesView()
@@ -331,6 +362,91 @@ struct AddEditWorkTaskView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var machineWorkSection: some View {
+        Section {
+            if !isEditing {
+                Text("Save this task first to add manual machine or tractor work.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                if machineLines.isEmpty {
+                    Text("No machine work recorded.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(machineLines) { line in
+                        Button {
+                            editingMachineLine = line
+                        } label: {
+                            machineLineRow(line)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .onDelete(perform: deleteMachineLines)
+                }
+                Button {
+                    showAddMachineLine = true
+                } label: {
+                    Label("Add Machine Work", systemImage: "plus.circle.fill")
+                }
+            }
+        } header: {
+            Text("Manual Machine Work")
+        } footer: {
+            Text("Record machine or tractor work entered manually when no GPS trip exists, or when tracking was missed or failed.")
+        }
+    }
+
+    @ViewBuilder
+    private func machineLineRow(_ line: WorkTaskMachineLine) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(machineLineName(line))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Spacer()
+                Text(fmt.formatDate(line.workDate))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            HStack(spacing: 8) {
+                Text(entrySourceLabel(line.entrySource))
+                    .font(.caption2.weight(.medium))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(Color.accentColor.opacity(0.15), in: Capsule())
+                    .foregroundStyle(Color.accentColor)
+                if let d = line.durationHours, d > 0 {
+                    Label(String(format: "%.1fh", d), systemImage: "clock")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                if let e = line.engineHoursUsed, e > 0 {
+                    Label(String(format: "%.1f", e), systemImage: "gauge.with.dots.needle.bottom.50percent")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func machineLineName(_ line: WorkTaskMachineLine) -> String {
+        let resolved = store.resolvedMachineLineEquipmentName(line)
+        return resolved.isEmpty ? "Unknown equipment" : resolved
+    }
+
+    private func deleteMachineLines(at offsets: IndexSet) {
+        let lines = machineLines
+        for index in offsets {
+            guard lines.indices.contains(index) else { continue }
+            store.deleteWorkTaskMachineLine(lines[index].id)
+        }
+        Task { await workTaskMachineLineSync.syncForSelectedVineyard() }
     }
 
     @ViewBuilder
