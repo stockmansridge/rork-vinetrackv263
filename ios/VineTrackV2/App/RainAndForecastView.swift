@@ -238,14 +238,19 @@ struct RainAndForecastView: View {
             Spacer(minLength: 0)
 
             if let wind = day.forecastWindKmhMax {
-                HStack(spacing: 4) {
-                    Image(systemName: "wind")
+                VStack(alignment: .trailing, spacing: 1) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "wind")
+                            .font(.caption2)
+                            .foregroundStyle(windTint(kmh: wind))
+                        Text(fmt.formatSpeed(kmh: wind, fractionDigits: 0))
+                            .font(.subheadline)
+                            .monospacedDigit()
+                            .foregroundStyle(windTint(kmh: wind))
+                    }
+                    Text("Forecast wind")
                         .font(.caption2)
-                        .foregroundStyle(windTint(kmh: wind))
-                    Text(String(format: "%.0f km/h", wind))
-                        .font(.subheadline)
-                        .monospacedDigit()
-                        .foregroundStyle(windTint(kmh: wind))
+                        .foregroundStyle(.secondary)
                 }
                 .frame(minWidth: 70, alignment: .trailing)
             }
