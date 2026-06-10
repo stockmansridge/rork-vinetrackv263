@@ -111,22 +111,22 @@ extension MigratedDataStore {
     /// the shown name reflects the current asset, and falling back to the
     /// stored equipmentNameSnapshot otherwise. The snapshot is never mutated.
     func resolvedMachineLineEquipmentName(_ line: WorkTaskMachineLine) -> String {
-        guard let source = line.equipmentSource, let refId = line.equipmentRefId else {
-            return line.equipmentNameSnapshot
-        }
-        switch source {
-        case "vineyard_machine":
-            if let m = vineyardMachines.first(where: { $0.id == refId }) { return m.displayName }
-        case "tractor":
-            if let t = tractors.first(where: { $0.id == refId }) { return t.displayName }
-        case "spray_equipment":
-            if let e = sprayEquipment.first(where: { $0.id == refId }) { return e.name }
-        case "equipment_item":
-            if let i = equipmentItems.first(where: { $0.id == refId }) { return i.displayName }
-        default:
-            break
-        }
-        return line.equipmentNameSnapshot
+        equipmentResolver.sourceRefName(
+            source: line.equipmentSource,
+            refId: line.equipmentRefId,
+            snapshot: line.equipmentNameSnapshot
+        )
+    }
+
+    /// Shared display-only equipment resolver built from the store's current
+    /// equipment collections. Read-only; never mutates or backfills.
+    var equipmentResolver: EquipmentResolver {
+        EquipmentResolver(
+            vineyardMachines: vineyardMachines,
+            tractors: tractors,
+            sprayEquipment: sprayEquipment,
+            equipmentItems: equipmentItems
+        )
     }
 
     // MARK: - Work Task Paddocks
@@ -188,22 +188,11 @@ extension MigratedDataStore {
     /// shown name reflects the current asset, and falling back to the stored
     /// item_name snapshot when there is no link or the asset is unavailable.
     func resolvedMaintenanceItemName(_ log: MaintenanceLog) -> String {
-        guard let source = log.equipmentSource, let refId = log.equipmentRefId else {
-            return log.itemName
-        }
-        switch source {
-        case "vineyard_machine":
-            if let m = vineyardMachines.first(where: { $0.id == refId }) { return m.displayName }
-        case "tractor":
-            if let t = tractors.first(where: { $0.id == refId }) { return t.displayName }
-        case "spray_equipment":
-            if let e = sprayEquipment.first(where: { $0.id == refId }) { return e.name }
-        case "equipment_item":
-            if let i = equipmentItems.first(where: { $0.id == refId }) { return i.displayName }
-        default:
-            break
-        }
-        return log.itemName
+        equipmentResolver.sourceRefName(
+            source: log.equipmentSource,
+            refId: log.equipmentRefId,
+            snapshot: log.itemName
+        )
     }
 
     /// Resolves the display name for a spray record's tractor/machine field,
@@ -211,26 +200,14 @@ extension MigratedDataStore {
     /// shown name reflects the current asset, and falling back to the stored
     /// `tractor` text snapshot otherwise. The text snapshot is never mutated.
     func resolvedSprayTractorName(_ record: SprayRecord) -> String {
-        if let mid = record.machineId,
-           let m = vineyardMachines.first(where: { $0.id == mid }) {
-            return m.displayName
-        }
-        if let tid = record.tractorId,
-           let t = tractors.first(where: { $0.id == tid }) {
-            return t.displayName
-        }
-        return record.tractor
+        equipmentResolver.sprayTractorName(record)
     }
 
     /// Resolves the display name for a spray record's equipment-type field,
     /// preferring the stable `sprayEquipmentId` link when present and falling
     /// back to the stored `equipmentType` text snapshot otherwise.
     func resolvedSprayEquipmentName(_ record: SprayRecord) -> String {
-        if let eid = record.sprayEquipmentId,
-           let e = sprayEquipment.first(where: { $0.id == eid }) {
-            return e.name
-        }
-        return record.equipmentType
+        equipmentResolver.sprayEquipmentName(record)
     }
 
     func applyRemoteMaintenanceLogDelete(_ id: UUID) {

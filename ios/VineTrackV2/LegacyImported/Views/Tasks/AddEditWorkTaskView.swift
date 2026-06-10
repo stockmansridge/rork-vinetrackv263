@@ -1086,19 +1086,7 @@ enum WorkTaskTripFormat {
     /// Resolve a trip's machine/tractor display name, preferring the linked
     /// vineyard machine, then the legacy tractor, with a safe fallback.
     static func machineName(_ trip: Trip, store: MigratedDataStore) -> String {
-        if let mid = trip.machineId,
-           let m = store.vineyardMachines.first(where: { $0.id == mid }) {
-            return m.displayName
-        }
-        if let tid = trip.tractorId {
-            if let m = store.vineyardMachines.first(where: { $0.legacyTractorId == tid && $0.vineyardId == trip.vineyardId }) {
-                return m.displayName
-            }
-            if let t = store.tractors.first(where: { $0.id == tid }) {
-                return t.displayName
-            }
-        }
-        return "No machine linked"
+        store.equipmentResolver.tripMachineName(trip)
     }
 }
 
