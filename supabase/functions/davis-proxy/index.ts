@@ -137,6 +137,7 @@ function parseDavisCurrent(body: any): {
   humidity_pct: number | null;
   wind_speed_kmh: number | null;
   wind_direction_deg: number | null;
+  wind_gust_kmh: number | null;
   rain_today_mm: number | null;
   rain_rate_mm_per_hr: number | null;
   leaf_wetness: number | null;
@@ -149,6 +150,7 @@ function parseDavisCurrent(body: any): {
     humidity_pct: null as number | null,
     wind_speed_kmh: null as number | null,
     wind_direction_deg: null as number | null,
+    wind_gust_kmh: null as number | null,
     rain_today_mm: null as number | null,
     rain_rate_mm_per_hr: null as number | null,
     leaf_wetness: null as number | null,
@@ -193,6 +195,18 @@ function parseDavisCurrent(body: any): {
       }
       const wd = num(r.wind_dir_last) ?? num(r.wind_dir) ?? num(r.wind_dir_scalar_avg_last_2_min);
       if (wd != null) out.wind_direction_deg = wd;
+
+      // Wind gust (current/recent observed high). Prefer the last-10-min
+      // high in km/h, then mph, then other Davis high-wind variants.
+      // NOTE: never fall back to 0 — absence stays null.
+      const gustKmh = num(r.wind_speed_hi_last_10_min_kmh) ?? num(r.wind_speed_hi_kmh);
+      if (gustKmh != null) out.wind_gust_kmh = Math.round(gustKmh * 10) / 10;
+      else if (out.wind_gust_kmh == null) {
+        const gustMph = num(r.wind_speed_hi_last_10_min)
+          ?? num(r.wind_speed_hi)
+          ?? num(r.wind_gust_10_min);
+        if (gustMph != null) out.wind_gust_kmh = mphToKmh(gustMph);
+      }
 
       // Rain today
       const rTodayMm = num(r.rainfall_daily_mm) ?? num(r.rain_daily_mm);
@@ -473,6 +487,7 @@ Deno.serve(async (req: Request) => {
                 humidity_pct: parsed.humidity_pct,
                 wind_speed_kmh: parsed.wind_speed_kmh,
                 wind_direction_deg: parsed.wind_direction_deg,
+                wind_gust_kmh: parsed.wind_gust_kmh,
                 rain_today_mm: parsed.rain_today_mm,
                 rain_rate_mm_per_hr: parsed.rain_rate_mm_per_hr,
                 leaf_wetness: parsed.leaf_wetness,
