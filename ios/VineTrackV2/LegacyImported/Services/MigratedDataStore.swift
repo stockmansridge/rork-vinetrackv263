@@ -860,9 +860,69 @@ final class MigratedDataStore {
     }
 
     func deletePaddock(_ paddockId: UUID) {
+        // Clean up local references that depend on this paddock BEFORE removing
+        // it so nothing is left pointing at a missing paddock. Each helper marks
+        // the affected record dirty so the cleared link propagates. Rows live
+        // inside `paddock.rows`, so they are removed with the paddock itself.
+        clearPaddockLinkOnPins(paddockId: paddockId, propagate: true)
+        clearPaddockLinkOnTrips(paddockId: paddockId, propagate: true)
+        removeWorkTaskPaddockLinks(paddockId: paddockId, propagate: true)
         paddocks.removeAll { $0.id == paddockId }
         savePaddocksToDisk()
         onPaddockDeleted?(paddockId)
+    }
+
+    /// Clear the `paddockId` link on any pins attached to `paddockId`. Keeps the
+    /// pin/observation and preserves its `rowNumber`/`alongRowDistanceM` as
+    /// historical context. When `propagate` is true the cleared link is pushed
+    /// via the normal dirty path; when false (remote delete) the change is
+    /// applied locally only.
+    private func clearPaddockLinkOnPins(paddockId: UUID, propagate: Bool) {
+        let owned = pins.filter { $0.paddockId == paddockId }
+        guard !owned.isEmpty else { return }
+        for var pin in owned {
+            pin.paddockId = nil
+            if propagate {
+                updatePin(pin)
+            } else {
+                applyRemotePinUpsert(pin)
+            }
+        }
+    }
+
+    /// Clear the `paddockId`/`paddockIds` links on any trips that reference the
+    /// deleted paddock. The trip itself (path, duration, cost, machine,
+    /// operator, Work Task link) is untouched. When `propagate` is true the
+    /// change is pushed via the normal dirty path; when false (remote delete)
+    /// it is applied locally only.
+    private func clearPaddockLinkOnTrips(paddockId: UUID, propagate: Bool) {
+        let affected = trips.filter { $0.paddockId == paddockId || $0.paddockIds.contains(paddockId) }
+        guard !affected.isEmpty else { return }
+        for var trip in affected {
+            if trip.paddockId == paddockId { trip.paddockId = nil }
+            trip.paddockIds.removeAll { $0 == paddockId }
+            if propagate {
+                updateTrip(trip)
+            } else {
+                applyRemoteTripUpsert(trip)
+            }
+        }
+    }
+
+    /// Remove any `WorkTaskPaddock` join records that reference the deleted
+    /// paddock so Work Task summaries stop counting it. The Work Task and its
+    /// labour/machine lines are untouched. When `propagate` is true the join
+    /// removal is synced; when false (remote delete) it is purged locally only.
+    private func removeWorkTaskPaddockLinks(paddockId: UUID, propagate: Bool) {
+        let links = workTaskPaddocks.filter { $0.paddockId == paddockId }
+        guard !links.isEmpty else { return }
+        for link in links {
+            if propagate {
+                deleteWorkTaskPaddock(link.id)
+            } else {
+                applyRemoteWorkTaskPaddockDelete(link.id)
+            }
+        }
     }
 
     /// Apply a paddock upsert that originated from a remote sync pull. Does NOT
@@ -889,6 +949,12 @@ final class MigratedDataStore {
 
     /// Apply a paddock deletion that originated from a remote sync pull.
     func applyRemotePaddockDelete(_ paddockId: UUID) {
+        // Repair local orphaned links even when the delete came from another
+        // device. The server cascade/constraint already handled the remote
+        // rows, so apply the cleanup locally without re-propagating.
+        clearPaddockLinkOnPins(paddockId: paddockId, propagate: false)
+        clearPaddockLinkOnTrips(paddockId: paddockId, propagate: false)
+        removeWorkTaskPaddockLinks(paddockId: paddockId, propagate: false)
         paddocks.removeAll { $0.id == paddockId }
         if selectedVineyardId != nil {
             savePaddocksToDisk()

@@ -11,7 +11,7 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
     let buttonColor: String
     let side: PinSide
     let mode: PinMode
-    let paddockId: UUID?
+    var paddockId: UUID?
     /// Legacy field. Stores the integer floor of the driving path/mid-row
     /// the tractor was on (e.g. 14 for path 14.5). Kept for backward
     /// compatibility — new code should prefer `drivingRowNumber` and

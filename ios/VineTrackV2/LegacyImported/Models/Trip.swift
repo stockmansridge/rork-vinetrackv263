@@ -56,7 +56,7 @@ nonisolated struct TankSession: Codable, Identifiable, Sendable, Hashable {
 nonisolated struct Trip: Codable, Identifiable, Sendable, Hashable {
     let id: UUID
     var vineyardId: UUID
-    let paddockId: UUID?
+    var paddockId: UUID?
     let paddockName: String
     var paddockIds: [UUID]
     let startTime: Date
