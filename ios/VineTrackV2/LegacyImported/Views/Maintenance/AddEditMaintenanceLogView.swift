@@ -9,6 +9,10 @@ struct AddEditMaintenanceLogView: View {
     let existingLog: MaintenanceLog?
 
     @State private var itemName: String = ""
+    /// Stable equipment link captured when the user selects an existing asset.
+    /// Nil source/ref means the saved row is treated as free_text.
+    @State private var equipmentSource: String?
+    @State private var equipmentRefId: UUID?
     @State private var activeAddSheet: AddSheet?
     @State private var hours: String = ""
     @State private var machineHours: String = ""
@@ -66,6 +70,8 @@ struct AddEditMaintenanceLogView: View {
                                     ForEach(store.tractors) { tractor in
                                         Button(tractor.displayName) {
                                             itemName = tractor.displayName
+                                            equipmentSource = "tractor"
+                                            equipmentRefId = tractor.id
                                         }
                                     }
                                 }
@@ -75,6 +81,8 @@ struct AddEditMaintenanceLogView: View {
                                     ForEach(store.sprayEquipment) { eq in
                                         Button(eq.name) {
                                             itemName = eq.name
+                                            equipmentSource = "spray_equipment"
+                                            equipmentRefId = eq.id
                                         }
                                     }
                                 }
@@ -84,6 +92,8 @@ struct AddEditMaintenanceLogView: View {
                                     ForEach(vineyardMachineItems) { machine in
                                         Button("\(machine.displayName) · \(machine.machineType.displayName)") {
                                             itemName = machine.displayName
+                                            equipmentSource = "vineyard_machine"
+                                            equipmentRefId = machine.id
                                         }
                                     }
                                 }
@@ -93,6 +103,8 @@ struct AddEditMaintenanceLogView: View {
                                     ForEach(otherEquipmentItems) { item in
                                         Button(item.displayName) {
                                             itemName = item.displayName
+                                            equipmentSource = "equipment_item"
+                                            equipmentRefId = item.id
                                         }
                                     }
                                 }
@@ -337,12 +349,16 @@ struct AddEditMaintenanceLogView: View {
                 case .otherEquipment:
                     OtherEquipmentFormSheet(item: nil) { saved in
                         itemName = saved.displayName
+                        equipmentSource = "equipment_item"
+                        equipmentRefId = saved.id
                     }
                 }
             }
             .onAppear {
                 if let log = existingLog {
                     itemName = log.itemName
+                    equipmentSource = log.equipmentSource
+                    equipmentRefId = log.equipmentRefId
                     hours = log.hours > 0 ? String(format: "%.1f", log.hours) : ""
                     if let mh = log.machineHours {
                         machineHours = String(format: "%.1f", mh)
@@ -376,6 +392,15 @@ struct AddEditMaintenanceLogView: View {
 
         var log = existingLog ?? MaintenanceLog()
         log.itemName = trimmedName
+        // Persist the stable equipment link when an asset was selected;
+        // otherwise classify as free text. item_name is always preserved.
+        if let refId = equipmentRefId, let source = equipmentSource, source != "free_text" {
+            log.equipmentSource = source
+            log.equipmentRefId = refId
+        } else {
+            log.equipmentSource = "free_text"
+            log.equipmentRefId = nil
+        }
         log.hours = Double(hours) ?? 0
         let trimmedMH = machineHours.trimmingCharacters(in: .whitespaces)
         log.machineHours = trimmedMH.isEmpty ? nil : Double(trimmedMH)

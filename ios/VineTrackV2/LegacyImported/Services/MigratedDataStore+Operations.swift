@@ -127,6 +127,29 @@ extension MigratedDataStore {
         }
     }
 
+    /// Resolves the display name for a maintenance log, preferring the stable
+    /// equipment link (equipmentSource + equipmentRefId) when present so the
+    /// shown name reflects the current asset, and falling back to the stored
+    /// item_name snapshot when there is no link or the asset is unavailable.
+    func resolvedMaintenanceItemName(_ log: MaintenanceLog) -> String {
+        guard let source = log.equipmentSource, let refId = log.equipmentRefId else {
+            return log.itemName
+        }
+        switch source {
+        case "vineyard_machine":
+            if let m = vineyardMachines.first(where: { $0.id == refId }) { return m.displayName }
+        case "tractor":
+            if let t = tractors.first(where: { $0.id == refId }) { return t.displayName }
+        case "spray_equipment":
+            if let e = sprayEquipment.first(where: { $0.id == refId }) { return e.name }
+        case "equipment_item":
+            if let i = equipmentItems.first(where: { $0.id == refId }) { return i.displayName }
+        default:
+            break
+        }
+        return log.itemName
+    }
+
     func applyRemoteMaintenanceLogDelete(_ id: UUID) {
         if let vineyardId = selectedVineyardId {
             maintenanceLogs.removeAll { $0.id == id }

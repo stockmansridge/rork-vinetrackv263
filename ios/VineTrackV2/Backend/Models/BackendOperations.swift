@@ -490,6 +490,8 @@ nonisolated struct BackendMaintenanceLog: Codable, Sendable, Identifiable {
     let id: UUID
     let vineyardId: UUID
     let itemName: String?
+    let equipmentSource: String?
+    let equipmentRefId: UUID?
     let hours: Double?
     let machineHours: Double?
     let workCompleted: String?
@@ -514,6 +516,8 @@ nonisolated struct BackendMaintenanceLog: Codable, Sendable, Identifiable {
         case id
         case vineyardId = "vineyard_id"
         case itemName = "item_name"
+        case equipmentSource = "equipment_source"
+        case equipmentRefId = "equipment_ref_id"
         case hours
         case machineHours = "machine_hours"
         case workCompleted = "work_completed"
@@ -540,6 +544,8 @@ nonisolated struct BackendMaintenanceLogUpsert: Encodable, Sendable {
     let id: UUID
     let vineyardId: UUID
     let itemName: String
+    let equipmentSource: String?
+    let equipmentRefId: UUID?
     let hours: Double
     let machineHours: Double?
     let workCompleted: String
@@ -561,6 +567,8 @@ nonisolated struct BackendMaintenanceLogUpsert: Encodable, Sendable {
         case id
         case vineyardId = "vineyard_id"
         case itemName = "item_name"
+        case equipmentSource = "equipment_source"
+        case equipmentRefId = "equipment_ref_id"
         case hours
         case machineHours = "machine_hours"
         case workCompleted = "work_completed"
@@ -584,6 +592,8 @@ nonisolated struct BackendMaintenanceLogUpsert: Encodable, Sendable {
         try c.encode(id, forKey: .id)
         try c.encode(vineyardId, forKey: .vineyardId)
         try c.encode(itemName, forKey: .itemName)
+        try c.encodeIfPresent(equipmentSource, forKey: .equipmentSource)
+        try c.encodeIfPresent(equipmentRefId, forKey: .equipmentRefId)
         try c.encode(hours, forKey: .hours)
         try c.encodeIfPresent(machineHours, forKey: .machineHours)
         try c.encode(workCompleted, forKey: .workCompleted)
@@ -609,6 +619,8 @@ extension BackendMaintenanceLog {
             id: m.id,
             vineyardId: m.vineyardId,
             itemName: m.itemName,
+            equipmentSource: m.equipmentSource,
+            equipmentRefId: m.equipmentRefId,
             hours: m.hours,
             machineHours: m.machineHours,
             workCompleted: m.workCompleted,
@@ -633,6 +645,8 @@ extension BackendMaintenanceLog {
             id: id,
             vineyardId: vineyardId,
             itemName: itemName ?? "",
+            equipmentSource: equipmentSource,
+            equipmentRefId: equipmentRefId,
             hours: hours ?? 0,
             machineHours: machineHours,
             workCompleted: workCompleted ?? "",

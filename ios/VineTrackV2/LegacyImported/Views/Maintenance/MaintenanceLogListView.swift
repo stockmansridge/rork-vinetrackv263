@@ -13,6 +13,7 @@ struct MaintenanceLogListView: View {
         let sorted = store.maintenanceLogs.sorted { $0.date > $1.date }
         guard !searchText.isEmpty else { return sorted }
         return sorted.filter {
+            store.resolvedMaintenanceItemName($0).localizedStandardContains(searchText) ||
             $0.itemName.localizedStandardContains(searchText) ||
             $0.workCompleted.localizedStandardContains(searchText) ||
             $0.partsUsed.localizedStandardContains(searchText)
@@ -195,7 +196,7 @@ struct MaintenanceLogListView: View {
                 .background(VineyardTheme.earthBrown.gradient, in: .rect(cornerRadius: 12))
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(log.itemName)
+                    Text(store.resolvedMaintenanceItemName(log))
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(1)

@@ -4,6 +4,12 @@ nonisolated struct MaintenanceLog: Codable, Identifiable, Sendable {
     var id: UUID
     var vineyardId: UUID
     var itemName: String
+    /// Optional stable equipment link source: vineyard_machine | tractor |
+    /// spray_equipment | equipment_item | free_text. item_name remains the
+    /// authoritative display snapshot; this enables stable linking going forward.
+    var equipmentSource: String?
+    /// Id of the linked equipment row in the table named by equipmentSource.
+    var equipmentRefId: UUID?
     var hours: Double
     var machineHours: Double?
     var workCompleted: String
@@ -25,6 +31,8 @@ nonisolated struct MaintenanceLog: Codable, Identifiable, Sendable {
         id: UUID = UUID(),
         vineyardId: UUID = UUID(),
         itemName: String = "",
+        equipmentSource: String? = nil,
+        equipmentRefId: UUID? = nil,
         hours: Double = 0,
         machineHours: Double? = nil,
         workCompleted: String = "",
@@ -45,6 +53,8 @@ nonisolated struct MaintenanceLog: Codable, Identifiable, Sendable {
         self.id = id
         self.vineyardId = vineyardId
         self.itemName = itemName
+        self.equipmentSource = equipmentSource
+        self.equipmentRefId = equipmentRefId
         self.hours = hours
         self.machineHours = machineHours
         self.workCompleted = workCompleted
@@ -66,7 +76,7 @@ nonisolated struct MaintenanceLog: Codable, Identifiable, Sendable {
     var totalCost: Double { partsCost + labourCost }
 
     nonisolated enum CodingKeys: String, CodingKey {
-        case id, vineyardId, itemName, hours, machineHours, workCompleted, partsUsed, partsCost, labourCost, date, invoicePhotoData, photoPath, createdBy
+        case id, vineyardId, itemName, equipmentSource, equipmentRefId, hours, machineHours, workCompleted, partsUsed, partsCost, labourCost, date, invoicePhotoData, photoPath, createdBy
         case isArchived, archivedAt, archivedBy, isFinalized, finalizedAt, finalizedBy
     }
 
@@ -75,6 +85,8 @@ nonisolated struct MaintenanceLog: Codable, Identifiable, Sendable {
         id = try container.decode(UUID.self, forKey: .id)
         vineyardId = try container.decode(UUID.self, forKey: .vineyardId)
         itemName = try container.decodeIfPresent(String.self, forKey: .itemName) ?? ""
+        equipmentSource = try container.decodeIfPresent(String.self, forKey: .equipmentSource)
+        equipmentRefId = try container.decodeIfPresent(UUID.self, forKey: .equipmentRefId)
         hours = try container.decodeIfPresent(Double.self, forKey: .hours) ?? 0
         machineHours = try container.decodeIfPresent(Double.self, forKey: .machineHours)
         workCompleted = try container.decodeIfPresent(String.self, forKey: .workCompleted) ?? ""

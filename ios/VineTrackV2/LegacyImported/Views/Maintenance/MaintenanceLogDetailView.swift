@@ -59,7 +59,7 @@ struct MaintenanceLogDetailView: View {
                 .background(VineyardTheme.earthBrown.gradient, in: .rect(cornerRadius: 14))
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(currentLog.itemName)
+                Text(store.resolvedMaintenanceItemName(currentLog))
                     .font(.title3.weight(.bold))
                 Text(fmt.formatDate(currentLog.date))
                     .font(.subheadline)
