@@ -198,20 +198,22 @@ struct SprayRecordDetailView: View {
                     Divider()
                     detailRow("Paddock / Block", value: trip.paddockName)
                 }
-                if !record.tractor.isEmpty {
+                let tractorName = store.resolvedSprayTractorName(record)
+                if !tractorName.isEmpty {
                     Divider()
                     HStack {
                         Label("Tractor", systemImage: "steeringwheel")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                         Spacer()
-                        Text(record.tractor)
+                        Text(tractorName)
                             .font(.subheadline)
                     }
                 }
-                if !record.equipmentType.isEmpty {
+                let equipmentName = store.resolvedSprayEquipmentName(record)
+                if !equipmentName.isEmpty {
                     Divider()
-                    detailRow("Equipment", value: record.equipmentType)
+                    detailRow("Equipment", value: equipmentName)
                 }
                 if let trip = tripForRecord, !trip.personName.isEmpty {
                     Divider()
@@ -755,6 +757,8 @@ extension SprayRecordDetailView {
         let operatorCatName = operatorCategoryNameForTrip
         let includeCostings = canViewFinancials && includeCostingsInExport
         let recordCopy = record
+        let resolvedTractorName = store.resolvedSprayTractorName(record)
+        let resolvedEquipmentName = store.resolvedSprayEquipmentName(record)
         let exportTimeZone = store.settings.resolvedTimeZone
 
         // Build TripCostService.Result for owner/manager exports so we render
@@ -817,6 +821,8 @@ extension SprayRecordDetailView {
                 includeCostings: includeCostings,
                 timeZone: exportTimeZone,
                 formatter: store.settings.regionFormatter,
+                resolvedTractorName: resolvedTractorName,
+                resolvedEquipmentName: resolvedEquipmentName,
                 tripCostResult: costResult
             )
             let fileName = "SprayRecord_\(recordCopy.sprayReference.isEmpty ? "Record" : recordCopy.sprayReference)_\(recordCopy.date.formatted(.iso8601.year().month().day()))"

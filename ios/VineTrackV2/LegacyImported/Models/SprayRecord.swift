@@ -19,6 +19,15 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
     var equipmentType: String
     var tractor: String
     var tractorGear: String
+    /// Optional stable link to a `VineyardMachine` derived from the `tractor`
+    /// text snapshot. The text fields remain the authoritative display
+    /// snapshots; these enable stable linking going forward.
+    var machineId: UUID?
+    /// Optional stable link to a `Tractor` derived from the `tractor` text.
+    var tractorId: UUID?
+    /// Optional stable link to a `SprayEquipmentItem` derived from the
+    /// `equipmentType` text.
+    var sprayEquipmentId: UUID?
     var isTemplate: Bool
     var operationType: OperationType
 
@@ -41,6 +50,9 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         equipmentType: String = "",
         tractor: String = "",
         tractorGear: String = "",
+        machineId: UUID? = nil,
+        tractorId: UUID? = nil,
+        sprayEquipmentId: UUID? = nil,
         isTemplate: Bool = false,
         operationType: OperationType = .foliarSpray
     ) {
@@ -62,6 +74,9 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         self.equipmentType = equipmentType
         self.tractor = tractor
         self.tractorGear = tractorGear
+        self.machineId = machineId
+        self.tractorId = tractorId
+        self.sprayEquipmentId = sprayEquipmentId
         self.isTemplate = isTemplate
         self.operationType = operationType
     }
@@ -70,7 +85,8 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         case id, tripId, vineyardId, date, startTime, endTime
         case temperature, windSpeed, windDirection, humidity
         case sprayReference, tanks, notes, numberOfFansJets
-        case averageSpeed, equipmentType, tractor, tractorGear, isTemplate, operationType
+        case averageSpeed, equipmentType, tractor, tractorGear
+        case machineId, tractorId, sprayEquipmentId, isTemplate, operationType
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -93,6 +109,9 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         equipmentType = try container.decodeIfPresent(String.self, forKey: .equipmentType) ?? ""
         tractor = try container.decodeIfPresent(String.self, forKey: .tractor) ?? ""
         tractorGear = try container.decodeIfPresent(String.self, forKey: .tractorGear) ?? ""
+        machineId = try container.decodeIfPresent(UUID.self, forKey: .machineId)
+        tractorId = try container.decodeIfPresent(UUID.self, forKey: .tractorId)
+        sprayEquipmentId = try container.decodeIfPresent(UUID.self, forKey: .sprayEquipmentId)
         isTemplate = try container.decodeIfPresent(Bool.self, forKey: .isTemplate) ?? false
         operationType = try container.decodeIfPresent(OperationType.self, forKey: .operationType) ?? .foliarSpray
     }

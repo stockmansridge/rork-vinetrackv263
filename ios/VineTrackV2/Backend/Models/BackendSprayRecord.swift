@@ -18,6 +18,9 @@ nonisolated struct BackendSprayRecord: Codable, Sendable, Identifiable {
     let equipmentType: String?
     let tractor: String?
     let tractorGear: String?
+    let machineId: UUID?
+    let tractorId: UUID?
+    let sprayEquipmentId: UUID?
     let isTemplate: Bool?
     let operationType: String?
     let tanks: [SprayTank]?
@@ -47,6 +50,9 @@ nonisolated struct BackendSprayRecord: Codable, Sendable, Identifiable {
         case equipmentType = "equipment_type"
         case tractor
         case tractorGear = "tractor_gear"
+        case machineId = "machine_id"
+        case tractorId = "tractor_id"
+        case sprayEquipmentId = "spray_equipment_id"
         case isTemplate = "is_template"
         case operationType = "operation_type"
         case tanks
@@ -81,6 +87,9 @@ nonisolated struct BackendSprayRecordUpsert: Encodable, Sendable {
     let equipmentType: String
     let tractor: String
     let tractorGear: String
+    let machineId: UUID?
+    let tractorId: UUID?
+    let sprayEquipmentId: UUID?
     let isTemplate: Bool
     let operationType: String
     let tanks: [SprayTank]
@@ -105,6 +114,9 @@ nonisolated struct BackendSprayRecordUpsert: Encodable, Sendable {
         case equipmentType = "equipment_type"
         case tractor
         case tractorGear = "tractor_gear"
+        case machineId = "machine_id"
+        case tractorId = "tractor_id"
+        case sprayEquipmentId = "spray_equipment_id"
         case isTemplate = "is_template"
         case operationType = "operation_type"
         case tanks
@@ -134,6 +146,9 @@ extension BackendSprayRecord {
             equipmentType: record.equipmentType,
             tractor: record.tractor,
             tractorGear: record.tractorGear,
+            machineId: record.machineId,
+            tractorId: record.tractorId,
+            sprayEquipmentId: record.sprayEquipmentId,
             isTemplate: record.isTemplate,
             operationType: record.operationType.rawValue,
             tanks: record.tanks,
@@ -163,6 +178,9 @@ extension BackendSprayRecord {
             equipmentType: equipmentType ?? "",
             tractor: tractor ?? "",
             tractorGear: tractorGear ?? "",
+            machineId: machineId,
+            tractorId: tractorId,
+            sprayEquipmentId: sprayEquipmentId,
             isTemplate: isTemplate ?? false,
             operationType: operationType.flatMap { OperationType(rawValue: $0) } ?? .foliarSpray
         )

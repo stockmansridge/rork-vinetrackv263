@@ -252,6 +252,8 @@ struct SprayProgramView: View {
         let trips = store.trips
         let paddocks = store.paddocks
         let tractors = store.tractors
+        let machines = store.vineyardMachines
+        let sprayEquipment = store.sprayEquipment
         let fuelCost = store.seasonFuelCostPerLitre
         let operatorCategories = store.operatorCategories
         let users = store.selectedVineyard?.users ?? []
@@ -267,6 +269,8 @@ struct SprayProgramView: View {
                 vineyardName: vineyardName,
                 logoData: logoData,
                 tractors: tractors,
+                machines: machines,
+                sprayEquipment: sprayEquipment,
                 seasonFuelCostPerLitre: fuelCost,
                 operatorCategories: operatorCategories,
                 vineyardUsers: users,

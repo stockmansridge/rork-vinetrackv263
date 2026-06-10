@@ -150,6 +150,33 @@ extension MigratedDataStore {
         return log.itemName
     }
 
+    /// Resolves the display name for a spray record's tractor/machine field,
+    /// preferring the stable link (machineId → tractorId) when present so the
+    /// shown name reflects the current asset, and falling back to the stored
+    /// `tractor` text snapshot otherwise. The text snapshot is never mutated.
+    func resolvedSprayTractorName(_ record: SprayRecord) -> String {
+        if let mid = record.machineId,
+           let m = vineyardMachines.first(where: { $0.id == mid }) {
+            return m.displayName
+        }
+        if let tid = record.tractorId,
+           let t = tractors.first(where: { $0.id == tid }) {
+            return t.displayName
+        }
+        return record.tractor
+    }
+
+    /// Resolves the display name for a spray record's equipment-type field,
+    /// preferring the stable `sprayEquipmentId` link when present and falling
+    /// back to the stored `equipmentType` text snapshot otherwise.
+    func resolvedSprayEquipmentName(_ record: SprayRecord) -> String {
+        if let eid = record.sprayEquipmentId,
+           let e = sprayEquipment.first(where: { $0.id == eid }) {
+            return e.name
+        }
+        return record.equipmentType
+    }
+
     func applyRemoteMaintenanceLogDelete(_ id: UUID) {
         if let vineyardId = selectedVineyardId {
             maintenanceLogs.removeAll { $0.id == id }

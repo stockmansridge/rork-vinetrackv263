@@ -18,6 +18,8 @@ struct SprayProgramExportService {
         vineyardName: String,
         logoData: Data? = nil,
         tractors: [Tractor] = [],
+        machines: [VineyardMachine] = [],
+        sprayEquipment: [SprayEquipmentItem] = [],
         seasonFuelCostPerLitre: Double = 0,
         operatorCategories: [OperatorCategory] = [],
         vineyardUsers: [VineyardUser] = [],
@@ -25,6 +27,14 @@ struct SprayProgramExportService {
         timeZone: TimeZone = .current,
         formatter: RegionFormatter = .australian
     ) -> URL {
+        // Prefer stable equipment links when present; fall back to text snapshots.
+        func resolvedEquipmentName(_ record: SprayRecord) -> String {
+            if let eid = record.sprayEquipmentId,
+               let e = sprayEquipment.first(where: { $0.id == eid }) {
+                return e.name
+            }
+            return record.equipmentType
+        }
         let pageWidth: CGFloat = 842.0
         let pageHeight: CGFloat = 595.0
         let margin: CGFloat = 36.0
@@ -131,7 +141,8 @@ struct SprayProgramExportService {
                 let windStr = record.windSpeed.map { String(format: "%.0f km/h", $0) } ?? "–"
                 (windStr as NSString).draw(at: CGPoint(x: columns[7].1 + 3, y: rowY), withAttributes: rowAttrs)
 
-                let equipStr = record.equipmentType.isEmpty ? "–" : record.equipmentType
+                let equipName = resolvedEquipmentName(record)
+                let equipStr = equipName.isEmpty ? "–" : equipName
                 (equipStr as NSString).draw(in: CGRect(x: columns[8].1 + 3, y: rowY, width: columns[8].2 - 6, height: 14), withAttributes: rowAttrs)
 
                 let operator_ = trip?.personName ?? "–"

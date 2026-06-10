@@ -18,7 +18,11 @@ struct SprayRecordPDFService {
     /// With Australian defaults the numeric values are identical to before;
     /// only unit-label casing is normalised (e.g. "Ha" → "ha"), currency gains
     /// locale grouping, and dates render in the configured DD/MM/YYYY order.
-    static func generatePDF(record: SprayRecord, trip: Trip?, vineyardName: String, paddockName: String, personName: String, paddocks: [Paddock] = [], mapSnapshot: UIImage? = nil, logoData: Data? = nil, fuelCost: Double = 0, operatorCost: Double = 0, operatorCategoryName: String? = nil, includeCostings: Bool = true, timeZone: TimeZone = .current, formatter: RegionFormatter = .australian, tripCostResult: TripCostService.Result? = nil) -> Data {
+    static func generatePDF(record: SprayRecord, trip: Trip?, vineyardName: String, paddockName: String, personName: String, paddocks: [Paddock] = [], mapSnapshot: UIImage? = nil, logoData: Data? = nil, fuelCost: Double = 0, operatorCost: Double = 0, operatorCategoryName: String? = nil, includeCostings: Bool = true, timeZone: TimeZone = .current, formatter: RegionFormatter = .australian, resolvedTractorName: String? = nil, resolvedEquipmentName: String? = nil, tripCostResult: TripCostService.Result? = nil) -> Data {
+        // Prefer stable-link resolved names when provided; fall back to the
+        // record's text snapshots so old records still render unchanged.
+        let tractorName = (resolvedTractorName?.isEmpty == false) ? resolvedTractorName! : record.tractor
+        let equipmentName = (resolvedEquipmentName?.isEmpty == false) ? resolvedEquipmentName! : record.equipmentType
         let pageWidth: CGFloat = 595.0
         let pageHeight: CGFloat = 842.0
         let margin: CGFloat = 40.0
@@ -207,14 +211,14 @@ struct SprayRecordPDFService {
             }
 
             // Equipment
-            let hasEquipment = !record.tractor.isEmpty || !record.equipmentType.isEmpty || !record.tractorGear.isEmpty || !record.numberOfFansJets.isEmpty || record.averageSpeed != nil
+            let hasEquipment = !tractorName.isEmpty || !equipmentName.isEmpty || !record.tractorGear.isEmpty || !record.numberOfFansJets.isEmpty || record.averageSpeed != nil
             if hasEquipment {
                 drawSectionHeader("Equipment")
-                if !record.tractor.isEmpty {
-                    drawRow(label: "Tractor", value: record.tractor)
+                if !tractorName.isEmpty {
+                    drawRow(label: "Tractor", value: tractorName)
                 }
-                if !record.equipmentType.isEmpty {
-                    drawRow(label: "Equipment Type", value: record.equipmentType)
+                if !equipmentName.isEmpty {
+                    drawRow(label: "Equipment Type", value: equipmentName)
                 }
                 if !record.tractorGear.isEmpty {
                     drawRow(label: "Tractor Gear", value: record.tractorGear)

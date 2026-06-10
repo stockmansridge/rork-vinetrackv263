@@ -22,6 +22,11 @@ struct SprayRecordFormView: View {
     @State private var equipmentType: String
     @State private var tractor: String
     @State private var tractorGear: String
+    /// Stable equipment links, populated when a catalog asset is picked.
+    /// Cleared back to nil whenever the user types free text into the field.
+    @State private var machineId: UUID?
+    @State private var tractorId: UUID?
+    @State private var sprayEquipmentId: UUID?
     @State private var numberOfFansJets: String
     @State private var averageSpeedText: String
     @State private var tanks: [SprayTank]
@@ -43,6 +48,9 @@ struct SprayRecordFormView: View {
         _equipmentType = State(initialValue: r?.equipmentType ?? "")
         _tractor = State(initialValue: r?.tractor ?? "")
         _tractorGear = State(initialValue: r?.tractorGear ?? "")
+        _machineId = State(initialValue: r?.machineId)
+        _tractorId = State(initialValue: r?.tractorId)
+        _sprayEquipmentId = State(initialValue: r?.sprayEquipmentId)
         _numberOfFansJets = State(initialValue: r?.numberOfFansJets ?? "")
         _averageSpeedText = State(initialValue: r?.averageSpeed.map { String(format: "%.1f", $0) } ?? "")
         _tanks = State(initialValue: r?.tanks ?? [SprayTank(tankNumber: 1)])
@@ -265,13 +273,104 @@ struct SprayRecordFormView: View {
         }
     }
 
+    /// Non-tractor vineyard machines plus tractor-backed machines, used to
+    /// offer a stable pick for the "Tractor" field.
+    private var machineOptions: [VineyardMachine] {
+        guard let vid = store.selectedVineyardId else { return [] }
+        return store.vineyardMachines
+            .filter { $0.vineyardId == vid }
+            .sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+    }
+
+    private var tractorOptions: [Tractor] {
+        guard let vid = store.selectedVineyardId else { return [] }
+        return store.tractors
+            .filter { $0.vineyardId == vid }
+            .sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+    }
+
+    private var sprayEquipmentOptions: [SprayEquipmentItem] {
+        guard let vid = store.selectedVineyardId else { return [] }
+        return store.sprayEquipment
+            .filter { $0.vineyardId == vid }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
     private var equipmentSection: some View {
         Section("Equipment") {
             LabeledContent {
-                TextField("Type", text: $equipmentType).multilineTextAlignment(.trailing)
+                HStack(spacing: 8) {
+                    if !sprayEquipmentOptions.isEmpty {
+                        Menu {
+                            ForEach(sprayEquipmentOptions) { eq in
+                                Button(eq.name) {
+                                    equipmentType = eq.name
+                                    sprayEquipmentId = eq.id
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "list.bullet")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    TextField("Type", text: $equipmentType)
+                        .multilineTextAlignment(.trailing)
+                        .onChange(of: equipmentType) { _, newValue in
+                            // Free text typed: drop the stable link unless it
+                            // still exactly matches the linked asset's name.
+                            if let id = sprayEquipmentId,
+                               sprayEquipmentOptions.first(where: { $0.id == id })?.name != newValue {
+                                sprayEquipmentId = nil
+                            }
+                        }
+                }
             } label: { Label("Equipment Type", systemImage: "wrench.and.screwdriver") }
             LabeledContent {
-                TextField("Tractor", text: $tractor).multilineTextAlignment(.trailing)
+                HStack(spacing: 8) {
+                    if !machineOptions.isEmpty || !tractorOptions.isEmpty {
+                        Menu {
+                            if !machineOptions.isEmpty {
+                                Section("Vineyard Machines") {
+                                    ForEach(machineOptions) { m in
+                                        Button(m.displayName) {
+                                            tractor = m.displayName
+                                            machineId = m.id
+                                            tractorId = nil
+                                        }
+                                    }
+                                }
+                            }
+                            if !tractorOptions.isEmpty {
+                                Section("Tractors") {
+                                    ForEach(tractorOptions) { t in
+                                        Button(t.displayName) {
+                                            tractor = t.displayName
+                                            tractorId = t.id
+                                            machineId = nil
+                                        }
+                                    }
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "list.bullet")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    TextField("Tractor", text: $tractor)
+                        .multilineTextAlignment(.trailing)
+                        .onChange(of: tractor) { _, newValue in
+                            if let id = machineId,
+                               machineOptions.first(where: { $0.id == id })?.displayName != newValue {
+                                machineId = nil
+                            }
+                            if let id = tractorId,
+                               tractorOptions.first(where: { $0.id == id })?.displayName != newValue {
+                                tractorId = nil
+                            }
+                        }
+                }
             } label: { Label("Tractor", systemImage: "steeringwheel") }
             LabeledContent {
                 TextField("Gear", text: $tractorGear).multilineTextAlignment(.trailing)
@@ -314,6 +413,9 @@ struct SprayRecordFormView: View {
             equipmentType: equipmentType,
             tractor: tractor,
             tractorGear: tractorGear,
+            machineId: machineId,
+            tractorId: tractorId,
+            sprayEquipmentId: sprayEquipmentId,
             isTemplate: existingRecord?.isTemplate ?? false
         )
         if existingRecord != nil {
