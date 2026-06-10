@@ -305,7 +305,7 @@ final class PaddockSyncService {
             }
         }
         if !deleteFailures.isEmpty {
-            errorMessage = "Some paddock deletes failed: \(deleteFailures.first ?? "unknown")"
+            errorMessage = "Some block deletes failed: \(deleteFailures.first ?? "unknown")"
         }
     }
 

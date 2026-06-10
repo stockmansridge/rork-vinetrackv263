@@ -97,7 +97,7 @@ struct QuickPinSheet: View {
                 }
 
                 Section("Location") {
-                    Picker("Paddock", selection: $selectedPaddockId) {
+                    Picker("Block", selection: $selectedPaddockId) {
                         Text("None").tag(UUID?.none)
                         ForEach(store.paddocks) { paddock in
                             Text(paddock.name).tag(UUID?.some(paddock.id))

@@ -351,7 +351,7 @@ struct BackendSettingsView: View {
                 parent: "Vineyard Setup"
             ),
             SettingsSearchItem(
-                title: "Paddocks / Blocks",
+                title: "Blocks",
                 subtitle: "Map, rows & vine counts",
                 keywords: ["blocks", "paddocks", "rows", "vines", "map"],
                 symbol: "square.grid.2x2.fill",

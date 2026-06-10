@@ -52,7 +52,7 @@ struct BlocksHubView: View {
                 isPresented: permanentDeleteDialogBinding,
                 presenting: permanentDeleteCandidate,
                 actions: { paddock in permanentDeleteDialogActions(for: paddock) },
-                message: { _ in Text("This paddock has no linked records. Permanent deletion cannot be undone.") }
+                message: { _ in Text("This block has no linked records. Permanent deletion cannot be undone.") }
             )
             .alert("Action Failed", isPresented: actionErrorBinding, presenting: actionError) { _ in
                 Button("OK", role: .cancel) { actionError = nil }
@@ -67,9 +67,9 @@ struct BlocksHubView: View {
             if store.paddocks.isEmpty {
                 VineyardEmptyStateView(
                     icon: "square.grid.2x2",
-                    title: "No paddocks yet",
+                    title: "No blocks yet",
                     message: "Create your first block to start mapping rows.",
-                    actionTitle: accessControl.canCreateOperationalRecords ? "Add Paddock" : nil,
+                    actionTitle: accessControl.canCreateOperationalRecords ? "Add Block" : nil,
                     action: accessControl.canCreateOperationalRecords ? { showAddPaddock = true } : nil as (() -> Void)?
                 )
             } else {
@@ -80,7 +80,7 @@ struct BlocksHubView: View {
 
     @ViewBuilder
     private func archiveDialogActions(for paddock: Paddock) -> some View {
-        Button("Archive paddock", role: .destructive) {
+        Button("Archive block", role: .destructive) {
             archive(paddock)
         }
         if case .loaded(let id, let counts) = referenceCheck,
@@ -131,7 +131,7 @@ struct BlocksHubView: View {
         if let name = archiveCandidate?.name {
             return "Archive \(name)?"
         }
-        return "Archive paddock?"
+        return "Archive block?"
     }
 
     private var permanentDeleteDialogTitle: String {
@@ -148,14 +148,14 @@ struct BlocksHubView: View {
             return "Checking for linked records…"
         case .loaded(let id, let counts) where id == paddock.id:
             if counts.isEmpty {
-                return "This paddock has no linked records. You can archive it, or delete it permanently."
+                return "This block has no linked records. You can archive it, or delete it permanently."
             }
             let preview = counts.summaryLines.prefix(4).joined(separator: ", ")
-            return "This paddock has linked records (\(preview)). Archiving keeps it available for historical reports but hides it from active selectors."
+            return "This block has linked records (\(preview)). Archiving keeps it available for historical reports but hides it from active selectors."
         case .failed(let id, let message) where id == paddock.id:
-            return "Couldn't check linked records (\(message)). Archiving keeps the paddock available for historical reports."
+            return "Couldn't check linked records (\(message)). Archiving keeps the block available for historical reports."
         default:
-            return "Archiving keeps this paddock available for historical reports but hides it from active selectors."
+            return "Archiving keeps this block available for historical reports but hides it from active selectors."
         }
     }
 
@@ -322,7 +322,7 @@ private struct BlocksHubChromeModifier: ViewModifier {
                             Button {
                                 showAddPaddock = true
                             } label: {
-                                Label("Add Paddock", systemImage: "plus")
+                                Label("Add Block", systemImage: "plus")
                             }
                         }
                         if canExport && !paddocksEmpty {

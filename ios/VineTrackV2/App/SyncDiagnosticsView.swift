@@ -133,7 +133,7 @@ struct SyncDiagnosticsView: View {
             } label: {
                 HStack {
                     Label(
-                        isForceRepullingPaddocks ? "Refreshing paddocks…" : "Force refresh paddocks from server",
+                        isForceRepullingPaddocks ? "Refreshing blocks…" : "Force refresh blocks from server",
                         systemImage: "square.and.arrow.down.on.square"
                     )
                     Spacer()
@@ -166,9 +166,9 @@ struct SyncDiagnosticsView: View {
                 .padding(.vertical, 2)
             }
         } header: {
-            Text("Paddock Force Refresh")
+            Text("Block Force Refresh")
         } footer: {
-            Text("Pulls every paddock for the selected vineyard from Supabase and overwrites the local cache, ignoring the local sync watermark. Use this after a server-side repair (e.g. grape variety canonicalisation) when local paddocks still show stale data such as `Unknown` varieties. Local changes that were already pushed are unaffected; unpushed local edits to those paddocks will be replaced by the server row.")
+            Text("Pulls every block for the selected vineyard from Supabase and overwrites the local cache, ignoring the local sync watermark. Use this after a server-side repair (e.g. grape variety canonicalisation) when local blocks still show stale data such as `Unknown` varieties. Local changes that were already pushed are unaffected; unpushed local edits to those blocks will be replaced by the server row.")
         }
     }
 

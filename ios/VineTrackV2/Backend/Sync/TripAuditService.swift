@@ -35,9 +35,9 @@ final class TripAuditService {
             case .nullVineyard: return "Null vineyard_id"
             case .unknownVineyard: return "Unknown / bogus vineyard"
             case .deletedVineyard: return "Deleted vineyard"
-            case .scalarPaddockMismatch: return "Paddock_id in another vineyard"
-            case .paddockIdsMismatch: return "Paddock_ids in another vineyard"
-            case .nameOnlyPaddock: return "Paddock name only, no reliable id"
+            case .scalarPaddockMismatch: return "Block id in another vineyard"
+            case .paddockIdsMismatch: return "Block ids in another vineyard"
+            case .nameOnlyPaddock: return "Block name only, no reliable id"
             case .unsafe: return "Cannot safely repair"
             }
         }

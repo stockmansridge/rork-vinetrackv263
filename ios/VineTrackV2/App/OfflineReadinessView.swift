@@ -100,8 +100,8 @@ struct OfflineReadinessView: View {
     private var dataSection: some View {
         Section {
             ReadinessRow(
-                title: "Paddocks & rows",
-                detail: "\(paddockCount) paddock\(paddockCount == 1 ? "" : "s")",
+                title: "Blocks & rows",
+                detail: "\(paddockCount) block\(paddockCount == 1 ? "" : "s")",
                 state: paddockCount > 0 ? .good : .warn
             )
             ReadinessRow(

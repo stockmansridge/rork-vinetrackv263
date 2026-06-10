@@ -154,7 +154,7 @@ struct SoilProfileEditorSheet: View {
                 }
                 Button("Keep my values", role: .cancel) {}
             } message: {
-                Text("This paddock already has a manual soil profile. Applying NSW SEED values will overwrite your tuned AWC, root depth and allowed depletion.")
+                Text("This block already has a manual soil profile. Applying NSW SEED values will overwrite your tuned AWC, root depth and allowed depletion.")
             }
         }
     }
@@ -680,7 +680,7 @@ struct SoilProfileEditorSheet: View {
             return "You don't have permission to edit the soil profile for this paddock."
         }
         if raw.contains("paddock_not_found") {
-            return "Paddock not found."
+            return "Block not found."
         }
         if raw.contains("invalid_awc") {
             return "Available water capacity must be between 0 and 400 mm/m."

@@ -109,7 +109,7 @@ struct TripDetailView: View {
                 statRow("Duration", value: formatDuration(trip.activeDuration), icon: "clock")
                 statRow("Distance", value: formatDistance(trip.totalDistance), icon: "point.topleft.down.to.point.bottomright.curvepath")
                 if !trip.paddockName.isEmpty {
-                    statRow("Paddock", value: trip.paddockName, icon: "leaf")
+                    statRow("Block", value: trip.paddockName, icon: "leaf")
                 }
                 if !trip.personName.isEmpty {
                     statRow("Operator", value: trip.personName, icon: "person")
@@ -159,7 +159,7 @@ struct TripDetailView: View {
                 Section {
                     DisclosureGroup(isExpanded: $showRowCompletion) {
                         if let paddockName = coverageSourcePaddockName {
-                            statRow("Paddock", value: paddockName, icon: "leaf")
+                            statRow("Block", value: paddockName, icon: "leaf")
                         }
                         ForEach(rowCompletionResults) { result in
                             rowCompletionRow(result)
@@ -174,7 +174,7 @@ struct TripDetailView: View {
                     DisclosureGroup(isExpanded: $showRowCompletion) {
                         statRow("Rows covered", value: "\(coveredRowNumbers.count)", icon: "checkmark.circle")
                         if let paddockName = coverageSourcePaddockName {
-                            statRow("Paddock", value: paddockName, icon: "leaf")
+                            statRow("Block", value: paddockName, icon: "leaf")
                         }
                         Text(coveredRowSummary)
                             .font(.caption)

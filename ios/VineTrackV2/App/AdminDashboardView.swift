@@ -871,7 +871,7 @@ private struct AdminVineyardDetailView: View {
                 if let c = vineyard.country, !c.isEmpty { LabeledContent("Country", value: c) }
                 LabeledContent("Members", value: "\(vineyard.memberCount)")
                 LabeledContent("Pending Invites", value: "\(vineyard.pendingInvites)")
-                LabeledContent("Paddocks", value: "\(paddocks.count)")
+                LabeledContent("Blocks", value: "\(paddocks.count)")
                 if let d = vineyard.createdAt {
                     LabeledContent("Created") { Text(d, format: .dateTime.month(.abbreviated).day().year()) }
                 }
@@ -881,7 +881,7 @@ private struct AdminVineyardDetailView: View {
             }
 
             if !paddocks.isEmpty {
-                Section("Paddocks") {
+                Section("Blocks") {
                     ForEach(paddocks) { p in
                         Button {
                             onSelectPaddock?(p)
@@ -1011,7 +1011,7 @@ private struct AdminVineyardMapSection: View {
                                 Image(systemName: "map")
                                     .font(.title2)
                                     .foregroundStyle(.secondary)
-                                Text(totalPaddocks == 0 ? "No paddocks have been created for this vineyard." : "No paddocks have map geometry yet.")
+                                Text(totalPaddocks == 0 ? "No blocks have been created for this vineyard." : "No blocks have map geometry yet.")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .multilineTextAlignment(.center)
@@ -1378,7 +1378,7 @@ private struct AdminPaddockDetailView: View {
                 Toggle("Show row numbers", isOn: $showRowNumbers)
             }
 
-            Section("Paddock") {
+            Section("Block") {
                 LabeledContent("Name", value: paddock.name)
                 LabeledContent("Polygon points", value: "\(paddock.polygonPoints.count)")
                 LabeledContent("Rows", value: "\(paddock.rowCount)")
@@ -1404,7 +1404,7 @@ private struct AdminPaddockDetailView: View {
 
             Section("Rows (\(sortedRows.count))") {
                 if sortedRows.isEmpty {
-                    Text("No rows have been recorded for this paddock.")
+                    Text("No rows have been recorded for this block.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 } else {
@@ -1429,7 +1429,7 @@ private struct AdminPaddockDetailView: View {
                 }
             }
 
-            Section("Paddock ID") {
+            Section("Block ID") {
                 Text(paddock.id.uuidString)
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)

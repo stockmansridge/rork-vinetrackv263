@@ -157,7 +157,7 @@ private struct AuditTripRow: View {
                 }
             }
             if let p = trip.paddockName, !p.isEmpty {
-                Text("Paddock: \(p)")
+                Text("Block: \(p)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -237,7 +237,7 @@ private struct ManualReassignSheet: View {
             Form {
                 Section("Trip") {
                     if let p = trip.paddockName, !p.isEmpty {
-                        LabeledContent("Paddock", value: p)
+                        LabeledContent("Block", value: p)
                     }
                     if let person = trip.personName, !person.isEmpty {
                         LabeledContent("Person", value: person)

@@ -101,13 +101,13 @@ struct YieldDeterminationCalculatorView: View {
 
     var body: some View {
         Form {
-            Section("Paddock") {
+            Section("Block") {
                 if vineyardPaddocks.isEmpty {
-                    Text("No paddocks available")
+                    Text("No blocks available")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 } else {
-                    Picker("Paddock", selection: $selectedPaddockId) {
+                    Picker("Block", selection: $selectedPaddockId) {
                         Text("Select…").tag(UUID?.none)
                         ForEach(vineyardPaddocks) { paddock in
                             Text(paddock.name).tag(Optional(paddock.id))

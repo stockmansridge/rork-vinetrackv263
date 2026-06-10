@@ -127,7 +127,7 @@ struct SprayCalculatorView: View {
     }
 
     private var growthStageSummary: String {
-        if selectedPaddockIds.isEmpty { return "Select paddocks first" }
+        if selectedPaddockIds.isEmpty { return "Select blocks first" }
         if growthStageMode == .same {
             if let stage = sharedGrowthStage {
                 return "\(stage.code) — \(stage.name)"
@@ -136,7 +136,7 @@ struct SprayCalculatorView: View {
         }
         let count = paddockPhenologyStages.values.filter { _ in true }.count
         let assigned = selectedPaddockIds.compactMap { paddockPhenologyStages[$0] }.count
-        return "Per paddock — \(assigned)/\(selectedPaddockIds.count) assigned (\(count >= 0 ? "" : ""))"
+        return "Per block — \(assigned)/\(selectedPaddockIds.count) assigned (\(count >= 0 ? "" : ""))"
     }
 
     private var averageRowSpacing: Double {
@@ -420,7 +420,7 @@ struct SprayCalculatorView: View {
 
     private var paddockSelection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "Paddocks", icon: "square.grid.2x2.fill")
+            SectionHeader(title: "Blocks", icon: "square.grid.2x2.fill")
 
             Button {
                 showSprayPaddockPicker = true
@@ -436,10 +436,10 @@ struct SprayCalculatorView: View {
                     }
                     if selectedPaddockIds.isEmpty {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("No paddocks selected")
+                            Text("No blocks selected")
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(.primary)
-                            Text(store.paddocks.isEmpty ? "No paddocks configured" : "Tap to choose one or more paddocks")
+                            Text(store.paddocks.isEmpty ? "No blocks configured" : "Tap to choose one or more blocks")
                                 .font(.caption)
                                 .foregroundStyle(.orange)
                         }
@@ -472,7 +472,7 @@ struct SprayCalculatorView: View {
 
             if !selectedPaddockIds.isEmpty {
                 HStack(spacing: 0) {
-                    paddockStatCell(value: "\(selectedPaddockIds.count)", label: selectedPaddockIds.count == 1 ? "Paddock" : "Paddocks")
+                    paddockStatCell(value: "\(selectedPaddockIds.count)", label: selectedPaddockIds.count == 1 ? "Block" : "Blocks")
                     Divider().frame(height: 32)
                     paddockStatCell(value: String(format: "%.2f", totalAreaHectares), label: "Hectares")
                     Divider().frame(height: 32)
@@ -590,7 +590,7 @@ struct SprayCalculatorView: View {
                 )
             }
             .buttonStyle(.plain)
-            .accessibilityHint(paddocksMissing ? "Select paddocks first to choose a growth stage" : "Opens growth stage selector")
+            .accessibilityHint(paddocksMissing ? "Select blocks first to choose a growth stage" : "Opens growth stage selector")
 
             if isGrowthStageExpanded && !paddocksMissing {
                 Picker("", selection: $growthStageMode) {
@@ -2556,9 +2556,9 @@ private struct SprayPaddockPickerSheet: View {
             Group {
                 if store.paddocks.isEmpty {
                     ContentUnavailableView {
-                        Label("No Paddocks", systemImage: "square.grid.2x2")
+                        Label("No Blocks", systemImage: "square.grid.2x2")
                     } description: {
-                        Text("Create paddocks first to plan a spray.")
+                        Text("Create blocks first to plan a spray.")
                     }
                 } else {
                     List {
@@ -2613,10 +2613,10 @@ private struct SprayPaddockPickerSheet: View {
                         }
                     }
                     .listStyle(.insetGrouped)
-                    .searchable(text: $searchText, prompt: "Search paddocks")
+                    .searchable(text: $searchText, prompt: "Search blocks")
                 }
             }
-            .navigationTitle("Select Paddocks")
+            .navigationTitle("Select Blocks")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

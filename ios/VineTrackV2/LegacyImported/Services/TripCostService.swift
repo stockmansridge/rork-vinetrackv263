@@ -353,7 +353,7 @@ nonisolated enum TripCostService {
                 areaWarning = nil
             } else if sum > 0 {
                 area = sum
-                areaWarning = "Some paddocks are missing an area — cost per ha may be understated."
+                areaWarning = "Some blocks are missing an area — cost per ha may be understated."
             } else {
                 area = nil
                 areaWarning = "Cost per ha unavailable — treated area missing."

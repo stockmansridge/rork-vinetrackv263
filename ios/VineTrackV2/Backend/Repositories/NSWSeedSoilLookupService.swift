@@ -85,9 +85,9 @@ nonisolated enum NSWSeedSoilLookupError: Error, LocalizedError, Sendable {
             }
             return "NSW SEED lookup is only available for Australian vineyards."
         case .paddockMissingPolygon:
-            return "This paddock has no boundary polygon yet. Draw the paddock boundary before fetching NSW SEED soil data."
+            return "This block has no boundary polygon yet. Draw the block boundary before fetching NSW SEED soil data."
         case .paddockNotFound:
-            return "Paddock not found."
+            return "Block not found."
         case .missingEndpoint:
             return "NSW SEED soil landscape endpoint is not configured on the server."
         case .upstreamError(let status, let msg):

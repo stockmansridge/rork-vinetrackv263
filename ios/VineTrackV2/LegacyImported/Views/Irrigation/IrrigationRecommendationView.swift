@@ -1647,17 +1647,17 @@ struct IrrigationRecommendationView: View {
                 Text(count > 1
                      ? "Multiple soil profiles detected across this vineyard. Recommendations use a conservative average. For better accuracy, select an individual block."
                      : (count == 1
-                        ? "Using the single available paddock soil profile as a vineyard fallback."
-                        : "No paddock soil profiles found. Add a soil profile on at least one block for soil-aware guidance."))
+                        ? "Using the single available block soil profile as a vineyard fallback."
+                        : "No block soil profiles found. Add a soil profile on at least one block for soil-aware guidance."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else if vineyardPaddocks.isEmpty {
-                Text("No paddocks available")
+                Text("No blocks available")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else {
-                Picker("Paddock", selection: $selectedPaddockId) {
+                Picker("Block", selection: $selectedPaddockId) {
                     Text("Select…").tag(UUID?.none)
                     ForEach(vineyardPaddocks) { paddock in
                         Text(paddock.name).tag(Optional(paddock.id))
@@ -2044,7 +2044,7 @@ struct IrrigationRecommendationView: View {
                 )
             }
         } footer: {
-            Text("Fields marked \u{2728} are pre-filled with site-specific data from the selected paddock.")
+            Text("Fields marked \u{2728} are pre-filled with site-specific data from the selected block.")
         }
     }
 

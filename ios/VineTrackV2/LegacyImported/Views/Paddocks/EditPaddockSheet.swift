@@ -195,7 +195,7 @@ struct EditPaddockSheet: View {
                 isPresented: $showArchiveConfirm,
                 titleVisibility: .visible
             ) {
-                Button("Archive paddock", role: .destructive) { performArchive() }
+                Button("Archive block", role: .destructive) { performArchive() }
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text(archiveDialogMessage)
@@ -204,7 +204,7 @@ struct EditPaddockSheet: View {
                 permanentDeleteDialogTitle,
                 isPresented: $showPermanentDeleteConfirm
             ) {
-                TextField("Type paddock name", text: $permanentDeleteNameInput)
+                TextField("Type block name", text: $permanentDeleteNameInput)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
                 Button("Delete permanently", role: .destructive) {
@@ -256,7 +256,7 @@ struct EditPaddockSheet: View {
                         Text(counts.summaryLines.joined(separator: ", "))
                             .font(.caption2)
                             .foregroundStyle(.secondary)
-                        Text("This paddock has linked records, so it cannot be permanently deleted. Archiving will remove it from active lists while keeping historical records intact.")
+                        Text("This block has linked records, so it cannot be permanently deleted. Archiving will remove it from active lists while keeping historical records intact.")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .padding(.top, 2)
@@ -271,7 +271,7 @@ struct EditPaddockSheet: View {
             Button(role: .destructive) {
                 showArchiveConfirm = true
             } label: {
-                Label("Archive paddock", systemImage: "archivebox")
+                Label("Archive block", systemImage: "archivebox")
             }
             .disabled(isPerformingDestructiveAction)
 
@@ -292,24 +292,24 @@ struct EditPaddockSheet: View {
                 Text("Danger Zone")
             }
         } footer: {
-            Text("Archive removes the paddock from active selectors but keeps its history. Permanent delete is only offered when no linked records remain.")
+            Text("Archive removes the block from active selectors but keeps its history. Permanent delete is only offered when no linked records remain.")
         }
     }
 
     private var archiveDialogTitle: String {
-        "Archive \(paddock?.name ?? "paddock")?"
+        "Archive \(paddock?.name ?? "block")?"
     }
 
     private var archiveDialogMessage: String {
         if let counts = referenceCounts, !counts.isEmpty {
             let preview = counts.summaryLines.prefix(4).joined(separator: ", ")
-            return "This paddock has linked records (\(preview)). Archiving keeps it available for historical reports but hides it from active selectors."
+            return "This block has linked records (\(preview)). Archiving keeps it available for historical reports but hides it from active selectors."
         }
-        return "Archiving keeps this paddock available for historical reports but hides it from active selectors."
+        return "Archiving keeps this block available for historical reports but hides it from active selectors."
     }
 
     private var permanentDeleteDialogTitle: String {
-        "Delete \(paddock?.name ?? "paddock") permanently?"
+        "Delete \(paddock?.name ?? "block") permanently?"
     }
 
     private var permanentDeleteNameMatches: Bool {

@@ -298,11 +298,11 @@ struct PinDropView: View {
             if showLocationOptions {
                 VStack(spacing: 8) {
                     HStack {
-                        Text("Paddock")
+                        Text("Block")
                             .font(.subheadline)
                             .foregroundStyle(VineyardTheme.textSecondary)
                         Spacer()
-                        Picker("Paddock", selection: $selectedPaddockId) {
+                        Picker("Block", selection: $selectedPaddockId) {
                             Text("None").tag(UUID?.none)
                             ForEach(store.paddocks) { paddock in
                                 Text(paddock.name).tag(UUID?.some(paddock.id))

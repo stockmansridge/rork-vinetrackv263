@@ -196,7 +196,7 @@ struct SprayRecordDetailView: View {
                 detailRow("Date", value: record.date.formattedTZ(date: .abbreviated, time: .omitted, in: store.settings.resolvedTimeZone))
                 if let trip = tripForRecord, !trip.paddockName.isEmpty {
                     Divider()
-                    detailRow("Paddock / Block", value: trip.paddockName)
+                    detailRow("Block", value: trip.paddockName)
                 }
                 let tractorName = store.resolvedSprayTractorName(record)
                 if !tractorName.isEmpty {
