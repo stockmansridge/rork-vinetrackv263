@@ -40,6 +40,9 @@ struct EditPaddockSheet: View {
     @State private var showAddVariety: Bool = false
     @State private var showBoundaryEditor: Bool = false
     @State private var showFullscreenRowConfig: Bool = false
+    // Row-regeneration safety: warn before saving a row-layout change that
+    // could mis-map historical pins attached to this block.
+    @State private var showRowLayoutChangeConfirm: Bool = false
     @State private var varietySearch: String = ""
     @State private var isAddingCustomVariety: Bool = false
     @State private var customVarietyError: String?
@@ -97,8 +100,12 @@ struct EditPaddockSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        savePaddock()
-                        dismiss()
+                        if hasRiskyRowLayoutChange {
+                            showRowLayoutChangeConfirm = true
+                        } else {
+                            savePaddock()
+                            dismiss()
+                        }
                     }
                     .disabled(name.isEmpty)
                 }
@@ -189,6 +196,19 @@ struct EditPaddockSheet: View {
                     Task { await loadSoilProfile() }
                     Task { await loadReferenceCounts() }
                 }
+            }
+            .confirmationDialog(
+                "Row layout changed",
+                isPresented: $showRowLayoutChangeConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Save changes anyway", role: .destructive) {
+                    savePaddock()
+                    dismiss()
+                }
+                Button("Keep editing", role: .cancel) {}
+            } message: {
+                Text(rowLayoutChangeMessage)
             }
             .confirmationDialog(
                 archiveDialogTitle,
@@ -1519,6 +1539,55 @@ struct EditPaddockSheet: View {
         } footer: {
             Text("Row length and vine count are auto-calculated from boundary geometry. Override values here for more accurate water usage and yield calculations — trip path tracking always uses the mapped row geometry.")
         }
+    }
+
+    // MARK: - Row-regeneration safety
+
+    /// Number of historical pins on this block that hold row-attachment data
+    /// (`rowNumber`, `pinRowNumber`, or `alongRowDistanceM`). These are the
+    /// pins that a row-layout change could mis-map.
+    private var affectedPinCount: Int {
+        guard let pid = paddock?.id else { return 0 }
+        return store.pins.filter { pin in
+            pin.paddockId == pid &&
+            (pin.rowNumber != nil || pin.pinRowNumber != nil || pin.alongRowDistanceM != nil)
+        }.count
+    }
+
+    /// True when the row layout (count, start number, direction, spacing, or
+    /// orientation) differs from the saved block. Used to decide whether the
+    /// pin-safety warning is relevant.
+    private var rowLayoutDidChange: Bool {
+        guard let paddock else { return false }
+        let originalCount = paddock.rows.count
+        let originalStart: Int
+        let originalAscending: Bool
+        if let first = paddock.rows.first, let last = paddock.rows.last {
+            originalStart = min(first.number, last.number)
+            originalAscending = last.number >= first.number
+        } else {
+            originalStart = 1
+            originalAscending = true
+        }
+        if rowCount != originalCount { return true }
+        if rowStartNumber != originalStart { return true }
+        if rowNumberAscending != originalAscending { return true }
+        if abs(rowWidth - paddock.rowWidth) > 0.0001 { return true }
+        if abs(rowOffset - paddock.rowOffset) > 0.0001 { return true }
+        if abs(rowDirection - paddock.rowDirection) > 0.0001 { return true }
+        return false
+    }
+
+    /// Only warn when editing an existing block, the layout changed, and there
+    /// are pins that could be affected.
+    private var hasRiskyRowLayoutChange: Bool {
+        isEditing && rowLayoutDidChange && affectedPinCount > 0
+    }
+
+    private var rowLayoutChangeMessage: String {
+        let count = affectedPinCount
+        let pinText = count == 1 ? "1 existing pin" : "\(count) existing pins"
+        return "Changing the row layout may affect \(pinText) attached to this block. Historical pins will keep their stored row number and distance, but may need to be reviewed or re-snapped."
     }
 
     private func savePaddock() {
