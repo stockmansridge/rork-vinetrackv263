@@ -35,6 +35,28 @@ extension MigratedDataStore {
         for row in stale { onTripCostAllocationDeleted?(row.id) }
     }
 
+    /// Purge every local allocation for `tripId` WITHOUT firing delete
+    /// callbacks. Used when a trip deletion originated remotely: the server
+    /// cascade already removes the allocations, so we only need the local
+    /// cache to stay consistent (no re-propagation of a soft-delete).
+    func purgeTripCostAllocationsLocally(tripId: UUID) {
+        let stale = tripCostAllocations.filter { $0.tripId == tripId }
+        guard !stale.isEmpty else { return }
+        tripCostAllocations.removeAll { $0.tripId == tripId }
+        var all = tripCostAllocationRepo.loadAll()
+        all.removeAll { $0.tripId == tripId }
+        let byVineyard = Dictionary(grouping: all, by: { $0.vineyardId })
+        for (vid, rows) in byVineyard {
+            tripCostAllocationRepo.replace(rows, for: vid)
+        }
+        if let selected = selectedVineyardId {
+            tripCostAllocationRepo.saveSlice(
+                tripCostAllocations.filter { $0.vineyardId == selected },
+                for: selected
+            )
+        }
+    }
+
     func applyRemoteTripCostAllocationUpsert(_ row: TripCostAllocation) {
         if selectedVineyardId == row.vineyardId {
             if let idx = tripCostAllocations.firstIndex(where: { $0.id == row.id }) {

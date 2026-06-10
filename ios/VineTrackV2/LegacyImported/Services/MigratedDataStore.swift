@@ -944,9 +944,36 @@ final class MigratedDataStore {
 
     func deleteTrip(_ tripId: UUID) {
         guard let vineyardId = selectedVineyardId else { return }
+        // Clean up local links that depend on this trip BEFORE removing it so
+        // nothing is left pointing at a missing trip.
+        // 1. Trip cost allocations — soft-delete locally and propagate so the
+        //    server rows are removed too.
+        deleteTripCostAllocations(tripId: tripId)
+        // 2. Pins that are trip-owned — clear the dangling trip link but keep
+        //    the observation. Propagated via updatePin (marks dirty).
+        clearTripLinkOnPins(tripId: tripId, propagate: true)
         trips.removeAll { $0.id == tripId }
         tripRepo.saveSlice(trips, for: vineyardId)
+        // Fires markTripDeleted on the sync service, which also drops any
+        // pending work_task_id clear for this trip (subsumed by the delete).
         onTripDeleted?(tripId)
+    }
+
+    /// Clear the `tripId` link on any pins owned by `tripId`. Keeps the pin
+    /// (observations are independent of trips). When `propagate` is true the
+    /// cleared link is pushed via the normal dirty path; when false (remote
+    /// delete) the change is applied locally only.
+    private func clearTripLinkOnPins(tripId: UUID, propagate: Bool) {
+        let owned = pins.filter { $0.tripId == tripId }
+        guard !owned.isEmpty else { return }
+        for var pin in owned {
+            pin.tripId = nil
+            if propagate {
+                updatePin(pin)
+            } else {
+                applyRemotePinUpsert(pin)
+            }
+        }
     }
 
     /// Apply a trip upsert that originated from a remote sync pull. Does NOT
@@ -976,6 +1003,11 @@ final class MigratedDataStore {
 
     /// Apply a trip deletion that originated from a remote sync pull.
     func applyRemoteTripDelete(_ tripId: UUID) {
+        // Repair local orphaned links even when the delete came from another
+        // device. The server cascade already removed the remote rows, so purge
+        // the local cache without re-propagating.
+        purgeTripCostAllocationsLocally(tripId: tripId)
+        clearTripLinkOnPins(tripId: tripId, propagate: false)
         if let vineyardId = selectedVineyardId {
             trips.removeAll { $0.id == tripId }
             tripRepo.saveSlice(trips, for: vineyardId)
