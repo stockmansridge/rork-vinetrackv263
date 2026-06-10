@@ -28,12 +28,16 @@ struct SprayProgramExportService {
         formatter: RegionFormatter = .australian
     ) -> URL {
         // Prefer stable equipment links when present; fall back to text snapshots.
+        // Routed through the shared `EquipmentResolver` so spray-equipment naming
+        // matches the rest of the app (display-only; never mutates records).
+        let equipmentResolver = EquipmentResolver(
+            vineyardMachines: machines,
+            tractors: tractors,
+            sprayEquipment: sprayEquipment,
+            equipmentItems: []
+        )
         func resolvedEquipmentName(_ record: SprayRecord) -> String {
-            if let eid = record.sprayEquipmentId,
-               let e = sprayEquipment.first(where: { $0.id == eid }) {
-                return e.name
-            }
-            return record.equipmentType
+            equipmentResolver.sprayEquipmentName(record)
         }
         let pageWidth: CGFloat = 842.0
         let pageHeight: CGFloat = 595.0
