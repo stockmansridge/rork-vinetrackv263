@@ -715,12 +715,7 @@ struct TripPDFService {
     }
 
     private static func formatDurationSeconds(_ seconds: TimeInterval) -> String {
-        let mins = Int(seconds) / 60
-        let hrs = mins / 60
-        if hrs > 0 {
-            return "\(hrs)h \(mins % 60)m"
-        }
-        return "\(mins)m"
+        RegionFormatter.formatDuration(seconds: seconds)
     }
 
     private static func formatAverageSpeed(_ trip: Trip, formatter: RegionFormatter) -> String {

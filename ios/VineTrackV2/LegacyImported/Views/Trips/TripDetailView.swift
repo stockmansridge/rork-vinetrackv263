@@ -900,12 +900,7 @@ struct TripDetailView: View {
     }
 
     private func formatDuration(_ seconds: TimeInterval) -> String {
-        let mins = Int(seconds) / 60
-        let hrs = mins / 60
-        if hrs > 0 {
-            return "\(hrs)h \(mins % 60)m"
-        }
-        return "\(mins)m"
+        fmt.formatDuration(seconds: seconds)
     }
 
     private func formatDistance(_ meters: Double) -> String {

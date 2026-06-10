@@ -159,6 +159,30 @@ nonisolated struct RegionFormatter: Sendable {
         }
     }
 
+    // MARK: - Duration (input: seconds)
+
+    /// Friendly elapsed-duration string for *display* (not live timers).
+    ///
+    /// Always uses "min" — never "m" — for minutes so it can't be confused
+    /// with metres. Under 1 hour → "X min"; 1 hour or more → "X h Y min"
+    /// (omitting the minutes when zero, e.g. "2 h"). Duration is not a
+    /// region-converted unit, so this is also exposed as a `static` helper
+    /// for call sites (e.g. exports) that have no formatter instance.
+    static func formatDuration(seconds: TimeInterval) -> String {
+        let safe = seconds.isFinite && seconds > 0 ? seconds : 0
+        let totalMinutes = Int((safe / 60).rounded())
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+        if hours > 0 && minutes > 0 { return "\(hours) h \(minutes) min" }
+        if hours > 0 { return "\(hours) h" }
+        return "\(minutes) min"
+    }
+
+    /// Instance convenience mirroring `RegionFormatter.formatDuration(seconds:)`.
+    func formatDuration(seconds: TimeInterval) -> String {
+        Self.formatDuration(seconds: seconds)
+    }
+
     // MARK: - Currency
 
     var currencyCode: String { settings.currencyCode }

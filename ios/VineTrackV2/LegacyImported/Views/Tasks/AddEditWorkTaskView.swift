@@ -1078,14 +1078,9 @@ private struct BlockMultiSelectSheet: View {
 /// and the link picker, so both surfaces resolve names/durations identically.
 enum WorkTaskTripFormat {
     /// Friendly duration using "min" (never "m") per the regional convention.
+    /// Delegates to the shared `RegionFormatter` duration formatter.
     static func duration(_ seconds: TimeInterval) -> String {
-        let safe = seconds.isFinite && seconds > 0 ? seconds : 0
-        let totalMinutes = Int((safe / 60).rounded())
-        let hours = totalMinutes / 60
-        let minutes = totalMinutes % 60
-        if hours > 0 && minutes > 0 { return "\(hours)h \(minutes)min" }
-        if hours > 0 { return "\(hours)h" }
-        return "\(minutes)min"
+        RegionFormatter.formatDuration(seconds: seconds)
     }
 
     /// Resolve a trip's machine/tractor display name, preferring the linked
