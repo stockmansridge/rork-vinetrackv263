@@ -944,6 +944,15 @@ private struct AdminVineyardMapSection: View {
 
     @State private var position: MapCameraPosition = .automatic
     @State private var hasSetInitialPosition: Bool = false
+    @State private var displayMode: MapDisplayMode = .topDown
+
+    private enum MapDisplayMode: String, CaseIterable {
+        case topDown = "Top-down"
+        case overview3D = "3D Overview"
+    }
+
+    /// Pitch used for the 3D Overview camera (degrees).
+    private let overviewPitch: CGFloat = 50
 
     private var paddockIDs: [UUID] { paddocks.map(\.id) }
 
@@ -967,6 +976,22 @@ private struct AdminVineyardMapSection: View {
             longitudeDelta: max((maxLon - minLon) * 1.5, 0.002)
         )
         return MKCoordinateRegion(center: center, span: span)
+    }
+
+    /// Derives a tilted MapKit camera from the current content region so the 3D
+    /// Overview keeps a similar centre and zoom feel to the top-down view.
+    private func overviewCamera(from region: MKCoordinateRegion) -> MapCamera {
+        // Approximate the region's north-south extent in metres, then scale it
+        // into a camera distance that frames roughly the same area while tilted.
+        let metresPerDegreeLat = 111_000.0
+        let extentMetres = region.span.latitudeDelta * metresPerDegreeLat
+        let distance = max(extentMetres * 1.6, 300)
+        return MapCamera(
+            centerCoordinate: region.center,
+            distance: distance,
+            heading: 0,
+            pitch: overviewPitch
+        )
     }
 
     var body: some View {
@@ -993,6 +1018,18 @@ private struct AdminVineyardMapSection: View {
                         }
                         .mapStyle(.hybrid)
                         .allowsHitTesting(true)
+                        .overlay(alignment: .topTrailing) {
+                            Picker("Map view", selection: $displayMode) {
+                                ForEach(MapDisplayMode.allCases, id: \.self) { mode in
+                                    Text(mode.rawValue).tag(mode)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .fixedSize()
+                            .padding(6)
+                            .background(.ultraThinMaterial, in: .rect(cornerRadius: 8))
+                            .padding(8)
+                        }
                     } else {
                         VStack(spacing: 8) {
                             if isLoading {
@@ -1028,12 +1065,29 @@ private struct AdminVineyardMapSection: View {
             hasSetInitialPosition = false
             applyInitialRegionIfNeeded()
         }
+        .onChange(of: displayMode) { _, _ in
+            applyDisplayMode()
+        }
     }
 
     private func applyInitialRegionIfNeeded() {
         guard !hasSetInitialPosition, let region = regionForContent() else { return }
         position = .region(region)
         hasSetInitialPosition = true
+    }
+
+    /// Switches the camera between flat top-down and tilted 3D Overview while
+    /// keeping the same content centre and a comparable zoom level.
+    private func applyDisplayMode() {
+        guard let region = regionForContent() else { return }
+        withAnimation(.easeInOut(duration: 0.4)) {
+            switch displayMode {
+            case .topDown:
+                position = .region(region)
+            case .overview3D:
+                position = .camera(overviewCamera(from: region))
+            }
+        }
     }
 }
 
