@@ -25,8 +25,8 @@ import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.screens.BlocksScreen
 import com.rork.vinetrack.ui.screens.HomeDashboard
 import com.rork.vinetrack.ui.screens.PinsScreen
-import com.rork.vinetrack.ui.screens.PlaceholderScreen
 import com.rork.vinetrack.ui.screens.SettingsScreen
+import com.rork.vinetrack.ui.screens.TripsScreen
 
 private data class TabItem(val label: String, val icon: ImageVector)
 
@@ -61,11 +61,7 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState) {
             0 -> HomeDashboard(vm, state, modifier) { selected = it }
             1 -> BlocksScreen(state, modifier)
             2 -> PinsScreen(state, modifier)
-            3 -> PlaceholderScreen(
-                title = "Trip",
-                message = "Start a trip to log GPS rows and field work. Trip tracking continues offline and syncs when you reconnect.",
-                modifier = modifier,
-            )
+            3 -> TripsScreen(state, modifier)
             4 -> SettingsScreen(vm, state, modifier)
         }
     }

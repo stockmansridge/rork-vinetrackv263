@@ -215,6 +215,8 @@ private fun RecentSection(state: AppUiState, onSwitchTab: (Int) -> Unit) {
             SummaryRow("Pins", state.pins.size, VineColors.Destructive) { onSwitchTab(2) }
             Divider(vine.cardBorder)
             SummaryRow("Open pins", state.openPins, VineColors.Orange) { onSwitchTab(2) }
+            Divider(vine.cardBorder)
+            SummaryRow("Trips", state.trips.size, VineColors.Indigo) { onSwitchTab(3) }
         }
     }
 }

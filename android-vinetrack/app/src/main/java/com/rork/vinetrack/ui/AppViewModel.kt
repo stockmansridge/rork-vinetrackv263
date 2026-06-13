@@ -9,6 +9,7 @@ import com.rork.vinetrack.data.auth.AuthRepository
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Pin
+import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.Vineyard
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -30,13 +31,16 @@ data class AppUiState(
     val selectedVineyardId: String? = null,
     val paddocks: List<Paddock> = emptyList(),
     val pins: List<Pin> = emptyList(),
+    val trips: List<Trip> = emptyList(),
     val isLoadingVineyardData: Boolean = false,
     val paddockError: String? = null,
     val pinError: String? = null,
+    val tripError: String? = null,
 ) {
     val selectedVineyard: Vineyard? get() = vineyards.firstOrNull { it.id == selectedVineyardId }
     val openPins: Int get() = pins.count { !it.isCompleted }
     val totalHectares: Double get() = paddocks.sumOf { it.areaHectares }
+    val activeTrips: Int get() = trips.count { it.isActive }
 }
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
@@ -162,7 +166,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         session.selectedVineyardId = id
         // Clear the previous vineyard's data so the UI doesn't briefly show
         // stale blocks/pins while the new vineyard loads.
-        _ui.update { it.copy(selectedVineyardId = id, paddocks = emptyList(), pins = emptyList()) }
+        _ui.update { it.copy(selectedVineyardId = id, paddocks = emptyList(), pins = emptyList(), trips = emptyList()) }
         viewModelScope.launch { loadVineyardData(id) }
     }
 
@@ -193,13 +197,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             pinError = "Couldn't load pins. Check your connection."
             _ui.value.pins
         }
+        var tripError: String? = null
+        val trips = try {
+            repo.listTrips(vineyardId)
+        } catch (e: BackendError) {
+            tripError = e.message
+            _ui.value.trips
+        } catch (e: Exception) {
+            tripError = "Couldn't load trips. Check your connection."
+            _ui.value.trips
+        }
         _ui.update {
             it.copy(
                 paddocks = paddocks,
                 pins = pins,
+                trips = trips,
                 isLoadingVineyardData = false,
                 paddockError = paddockError,
                 pinError = pinError,
+                tripError = tripError,
             )
         }
     }

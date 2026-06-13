@@ -167,6 +167,129 @@ data class Paddock(
 }
 
 @Serializable
+data class Trip(
+    val id: String,
+    @SerialName("vineyard_id") val vineyardId: String,
+    @SerialName("paddock_id") val paddockId: String? = null,
+    @SerialName("paddock_name") val paddockName: String? = null,
+    @SerialName("start_time") val startTime: String? = null,
+    @SerialName("end_time") val endTime: String? = null,
+    @SerialName("is_active") val isActive: Boolean = false,
+    @SerialName("is_paused") val isPaused: Boolean = false,
+    @SerialName("total_distance") val totalDistance: Double? = null,
+    @SerialName("person_name") val personName: String? = null,
+    @SerialName("trip_function") val tripFunction: String? = null,
+    @SerialName("trip_title") val tripTitle: String? = null,
+    @SerialName("completed_paths") val completedPaths: List<Double>? = null,
+    @SerialName("skipped_paths") val skippedPaths: List<Double>? = null,
+    @SerialName("total_tanks") val totalTanks: Int? = null,
+    @SerialName("completion_notes") val completionNotes: String? = null,
+    @SerialName("work_task_id") val workTaskId: String? = null,
+    @SerialName("pause_timestamps") val pauseTimestamps: List<String>? = null,
+    @SerialName("resume_timestamps") val resumeTimestamps: List<String>? = null,
+    @SerialName("created_at") val createdAt: String? = null,
+    @SerialName("deleted_at") val deletedAt: String? = null,
+) {
+    /** User-facing label, mirroring iOS `Trip.displayFunctionLabel`. */
+    val displayLabel: String
+        get() {
+            tripTitle?.takeIf { it.isNotBlank() }?.let { return it }
+            val raw = tripFunction
+            if (!raw.isNullOrBlank()) {
+                tripFunctionDisplayName(raw)?.let { return it }
+                if (raw.startsWith("custom:")) {
+                    val slug = raw.removePrefix("custom:")
+                    if (slug.isNotBlank()) {
+                        return slug.replace("-", " ")
+                            .split(" ")
+                            .joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
+                    }
+                }
+            }
+            return "Trip"
+        }
+
+    val startEpochMs: Long? get() = parseIsoToEpochMs(startTime)
+    val endEpochMs: Long? get() = parseIsoToEpochMs(endTime)
+
+    /** Number of rows recorded as completed during this trip. */
+    val completedRowCount: Int get() = completedPaths?.size ?: 0
+
+    /**
+     * Active duration in seconds, excluding paused intervals — mirrors the iOS
+     * `Trip.activeDuration` calculation. Returns null when the trip has no end
+     * time (i.e. still active) and no start, otherwise measures to now.
+     */
+    val activeDurationSeconds: Long?
+        get() {
+            val start = startEpochMs ?: return null
+            val end = endEpochMs ?: System.currentTimeMillis()
+            val pauses = pauseTimestamps.orEmpty().mapNotNull { parseIsoToEpochMs(it) }
+            val resumes = resumeTimestamps.orEmpty().mapNotNull { parseIsoToEpochMs(it) }
+            var total = 0L
+            var lastStart = start
+            for (i in pauses.indices) {
+                total += pauses[i] - lastStart
+                if (i < resumes.size) {
+                    lastStart = resumes[i]
+                } else {
+                    return total / 1000
+                }
+            }
+            total += end - lastStart
+            return total / 1000
+        }
+}
+
+/** Maps a stored `trip_function` raw value to its display name (mirrors iOS `TripFunction`). */
+fun tripFunctionDisplayName(raw: String): String? = when (raw) {
+    "slashing" -> "Slashing"
+    "mulching" -> "Mulching"
+    "harrowing" -> "Harrowing"
+    "mowing" -> "Mowing"
+    "spraying" -> "Spraying"
+    "fertilising" -> "Fertilising"
+    "undervineWeeding" -> "Undervine weeding"
+    "undervineMowing" -> "Mowing"
+    "undervineMulticlean" -> "Multiclean"
+    "undervineRollHacke" -> "Roll Hacke"
+    "undervineDisc" -> "Undervine Disc"
+    "undervineKnifing" -> "Undervine Knifing"
+    "interRowCultivation" -> "Inter-row cultivation"
+    "pruning" -> "Pruning"
+    "shootThinning" -> "Shoot thinning"
+    "canopyWork" -> "Canopy work"
+    "irrigationCheck" -> "Irrigation check"
+    "repairs" -> "Repairs"
+    "seeding" -> "Seeding"
+    "spreading" -> "Spreading"
+    "other" -> "Other"
+    else -> null
+}
+
+/**
+ * Parse an ISO-8601 / PostgREST timestamp string to epoch millis. Tolerant of
+ * the `+00:00`, `Z`, and fractional-second variants Supabase returns.
+ */
+fun parseIsoToEpochMs(value: String?): Long? {
+    if (value.isNullOrBlank()) return null
+    return try {
+        java.time.OffsetDateTime.parse(value).toInstant().toEpochMilli()
+    } catch (_: Exception) {
+        try {
+            java.time.Instant.parse(value).toEpochMilli()
+        } catch (_: Exception) {
+            try {
+                java.time.LocalDateTime.parse(value)
+                    .toInstant(java.time.ZoneOffset.UTC).toEpochMilli()
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+}
+
+@Serializable
 data class Pin(
     val id: String,
     @SerialName("vineyard_id") val vineyardId: String,

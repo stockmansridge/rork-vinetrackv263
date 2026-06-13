@@ -3,6 +3,7 @@ package com.rork.vinetrack.data
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Pin
+import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.Vineyard
 import io.ktor.client.call.body
 import io.ktor.client.request.get
@@ -28,6 +29,10 @@ class VineyardRepository(private val session: SessionStore) {
 
     suspend fun listPins(vineyardId: String): List<Pin> = withContext(Dispatchers.IO) {
         get("pins?select=*&vineyard_id=eq.$vineyardId&deleted_at=is.null&order=created_at.desc")
+    }
+
+    suspend fun listTrips(vineyardId: String): List<Trip> = withContext(Dispatchers.IO) {
+        get("trips?select=*&vineyard_id=eq.$vineyardId&deleted_at=is.null&order=start_time.desc")
     }
 
     private suspend inline fun <reified T> get(path: String): T {
