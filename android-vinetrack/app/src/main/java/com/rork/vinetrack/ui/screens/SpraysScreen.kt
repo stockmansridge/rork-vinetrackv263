@@ -656,6 +656,13 @@ private fun SpraySheet(
     var operationMenu by remember { mutableStateOf(false) }
     var windMenu by remember { mutableStateOf(false) }
     var machineMenu by remember { mutableStateOf(false) }
+
+    // Tank capacity (L) of the currently selected spray equipment, if any. Used
+    // to default blank/new tank water volumes, mirroring how iOS seeds tank
+    // volumes from `spray_equipment.tank_capacity_litres`.
+    val selectedTankCapacity: Double? = remember(sprayEquipmentId, state.sprayEquipment) {
+        state.sprayEquipment.firstOrNull { it.id == sprayEquipmentId }?.tankCapacityLitres?.takeIf { it > 0 }
+    }
     var showDatePicker by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
 
@@ -801,11 +808,20 @@ private fun SpraySheet(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 SectionHeader("Tank mix · ${tanks.size}", onLight = true, modifier = Modifier.weight(1f))
                 TextButton(onClick = {
-                    tanks.add(TankDraft(UUID.randomUUID().toString(), tanks.size + 1, "", "", "", emptyList(), emptyList()))
+                    val defaultVol = selectedTankCapacity?.let { trimNum(it) } ?: ""
+                    tanks.add(TankDraft(UUID.randomUUID().toString(), tanks.size + 1, defaultVol, "", "", emptyList(), emptyList()))
                 }) {
                     Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp), tint = VineColors.PrimaryAccent)
                     Text("  Tank", color = VineColors.PrimaryAccent)
                 }
+            }
+            selectedTankCapacity?.let { cap ->
+                Text(
+                    "New tanks default to ${trimNum(cap)} L from selected spray equipment.",
+                    fontSize = 12.sp,
+                    color = vine.textSecondary,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
             tanks.forEachIndexed { idx, tank ->
                 TankEditor(
@@ -827,7 +843,15 @@ private fun SpraySheet(
                 selectedId = sprayEquipmentId,
                 onSelect = { eq ->
                     sprayEquipmentId = eq?.id
-                    if (eq != null) equipmentType = eq.displayName
+                    if (eq != null) {
+                        equipmentType = eq.displayName
+                        // Prefill only blank tank water volumes; never overwrite
+                        // a value the operator already entered.
+                        eq.tankCapacityLitres?.takeIf { it > 0 }?.let { cap ->
+                            val capText = trimNum(cap)
+                            tanks.forEach { t -> if (t.waterVolume.isBlank()) t.waterVolume = capText }
+                        }
+                    }
                 },
             )
             OutlinedTextField(
