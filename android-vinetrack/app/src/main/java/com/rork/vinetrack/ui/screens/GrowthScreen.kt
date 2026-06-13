@@ -80,6 +80,7 @@ import com.rork.vinetrack.data.model.GrowthStage
 import com.rork.vinetrack.data.model.GrowthStageRecord
 import com.rork.vinetrack.data.model.canonicalVarietyName
 import com.rork.vinetrack.data.model.Paddock
+import com.rork.vinetrack.data.model.PaddockVarietyAllocation
 import com.rork.vinetrack.data.model.parseIsoToEpochMs
 import com.rork.vinetrack.data.model.resolveGrowthRecordBlockName
 import com.rork.vinetrack.ui.AppUiState
@@ -110,27 +111,33 @@ private enum class GrowthTab(val label: String) {
 fun GrowthScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifier) {
     var tab by remember { mutableStateOf(GrowthTab.Growth) }
     var selectedId by remember { mutableStateOf<String?>(null) }
+    var selectedVarietyKey by remember { mutableStateOf<String?>(null) }
     var creating by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<GrowthStageRecord?>(null) }
 
     val selected = state.growthRecords.firstOrNull { it.id == selectedId }
+    val selectedVariety = state.grapeVarieties.firstOrNull { it.varietyKey == selectedVarietyKey }
 
     AnimatedContent(
-        targetState = selected,
+        targetState = Pair(selected, selectedVariety),
         transitionSpec = { fadeIn() togetherWith fadeOut() },
         label = "growth-nav",
         modifier = modifier,
-    ) { record ->
-        if (record != null) {
-            GrowthDetailView(
+    ) { (record, variety) ->
+        when {
+            record != null -> GrowthDetailView(
                 vm = vm,
                 state = state,
                 record = record,
                 onBack = { selectedId = null },
                 onEdit = { editing = record },
             )
-        } else {
-            when (tab) {
+            variety != null -> VarietyDetailView(
+                state = state,
+                variety = variety,
+                onBack = { selectedVarietyKey = null },
+            )
+            else -> when (tab) {
                 GrowthTab.Growth -> GrowthListView(
                     vm = vm,
                     state = state,
@@ -143,6 +150,7 @@ fun GrowthScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modif
                     state = state,
                     tab = tab,
                     onTabChange = { tab = it },
+                    onOpenVariety = { selectedVarietyKey = it.varietyKey },
                 )
             }
         }
@@ -287,6 +295,7 @@ private fun VarietiesCatalogView(
     state: AppUiState,
     tab: GrowthTab,
     onTabChange: (GrowthTab) -> Unit,
+    onOpenVariety: (com.rork.vinetrack.data.model.GrapeVarietyRow) -> Unit,
 ) {
     val vine = LocalVineColors.current
     val varieties = remember(state.grapeVarieties) {
@@ -350,6 +359,7 @@ private fun VarietiesCatalogView(
                         VarietyCatalogCard(
                             variety = variety,
                             usage = usage[variety.varietyKey] ?: VarietyUsage(0, 0.0),
+                            onClick = { onOpenVariety(variety) },
                         )
                     }
                     item {
@@ -367,9 +377,9 @@ private fun VarietiesCatalogView(
 private data class VarietyUsage(val blocks: Int, val areaHectares: Double)
 
 @Composable
-private fun VarietyCatalogCard(variety: com.rork.vinetrack.data.model.GrapeVarietyRow, usage: VarietyUsage) {
+private fun VarietyCatalogCard(variety: com.rork.vinetrack.data.model.GrapeVarietyRow, usage: VarietyUsage, onClick: () -> Unit) {
     val vine = LocalVineColors.current
-    VineyardCard {
+    VineyardCard(modifier = Modifier.clickable { onClick() }) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             Box(
                 modifier = Modifier.size(46.dp).clip(RoundedCornerShape(12.dp)).background(VineColors.DarkGreen.copy(alpha = 0.12f)),
@@ -392,6 +402,149 @@ private fun VarietyCatalogCard(variety: com.rork.vinetrack.data.model.GrapeVarie
                     }
                 }
                 Text(sub.joinToString(" · "), color = vine.textSecondary, fontSize = 12.sp, maxLines = 1)
+            }
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = vine.textSecondary)
+        }
+    }
+}
+
+/** A block that plants a given variety, with the resolved allocation. */
+private data class VarietyBlockUsage(
+    val paddock: Paddock,
+    val allocation: PaddockVarietyAllocation,
+) {
+    val allocatedHectares: Double
+        get() {
+            val pct = (allocation.displayPercent ?: 100.0).coerceIn(0.0, 100.0)
+            return paddock.areaHectares * pct / 100.0
+        }
+}
+
+/**
+ * Read-only drill-in for a single variety: which blocks plant it, their
+ * allocation share, agronomy snapshot, phenology and recent growth observation.
+ * Matches the catalog's variety-key-first, canonical-name fallback resolution
+ * and never writes to `paddocks.variety_allocations`.
+ */
+@Composable
+private fun VarietyDetailView(
+    state: AppUiState,
+    variety: com.rork.vinetrack.data.model.GrapeVarietyRow,
+    onBack: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val canonical = variety.canonicalName
+    val blocks = remember(variety, state.paddocks) {
+        state.paddocks.mapNotNull { paddock ->
+            val alloc = paddock.varietyAllocations.orEmpty().firstOrNull { a ->
+                (a.varietyKey != null && a.varietyKey == variety.varietyKey) ||
+                    (a.displayName != null && canonicalVarietyName(a.displayName!!) == canonical)
+            } ?: return@mapNotNull null
+            VarietyBlockUsage(paddock, alloc)
+        }.sortedByDescending { it.allocatedHectares }
+    }
+    val totalArea = blocks.sumOf { it.allocatedHectares }
+
+    Box(modifier = Modifier.fillMaxSize().background(vine.appBackground)) {
+        Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 32.dp)) {
+            Row(modifier = Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = vine.textPrimary) }
+                Text("Variety", color = vine.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            }
+
+            Column(modifier = Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                // Header summary.
+                VineyardCard {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Box(
+                            modifier = Modifier.size(54.dp).clip(RoundedCornerShape(14.dp)).background(VineColors.DarkGreen.copy(alpha = 0.12f)),
+                            contentAlignment = Alignment.Center,
+                        ) { Icon(Icons.Filled.Spa, contentDescription = null, tint = VineColors.DarkGreen, modifier = Modifier.size(24.dp)) }
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(variety.displayName, color = vine.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            StatusBadge(if (variety.isCustom) "Custom" else "Built-in", if (variety.isCustom) VineColors.Orange else VineColors.LeafGreen)
+                        }
+                    }
+                }
+
+                VineyardCard {
+                    DetailRowG(Icons.Filled.Spa, "Variety key", variety.varietyKey, VineColors.DarkGreen)
+                    variety.optimalGddOverride?.let {
+                        DividerG(vine.cardBorder)
+                        DetailRowG(Icons.Filled.Schedule, "Optimal GDD", "${it.toInt()}", VineColors.Orange)
+                    }
+                    DividerG(vine.cardBorder)
+                    DetailRowG(Icons.Filled.Map, "Linked blocks", "${blocks.size}", VineColors.LeafGreen)
+                    if (totalArea > 0) {
+                        DividerG(vine.cardBorder)
+                        DetailRowG(Icons.Filled.Map, "Planted area", "${formatHa(totalArea)} ha", VineColors.Indigo)
+                    }
+                }
+
+                SectionHeader("Blocks · ${blocks.size}", onLight = true)
+                if (blocks.isEmpty()) {
+                    VineyardCard {
+                        Text("No blocks currently plant this variety.", color = vine.textSecondary, fontSize = 14.sp)
+                    }
+                } else {
+                    blocks.forEach { usage ->
+                        VarietyBlockCard(
+                            usage = usage,
+                            latestObservation = state.growthRecords
+                                .filter { it.paddockId == usage.paddock.id }
+                                .maxByOrNull { it.observedEpochMs ?: 0L },
+                        )
+                    }
+                }
+
+                Text(
+                    "Read-only. Variety allocations are managed from the vineyard setup.",
+                    color = vine.textSecondary, fontSize = 12.sp,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun VarietyBlockCard(usage: VarietyBlockUsage, latestObservation: GrowthStageRecord?) {
+    val vine = LocalVineColors.current
+    val block = usage.paddock
+    val alloc = usage.allocation
+    VineyardCard {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(block.name, color = vine.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                alloc.displayPercent?.let { StatusBadge("${it.toInt()}%", VineColors.LeafGreen) }
+            }
+            val meta = buildList {
+                if (usage.allocatedHectares > 0) add("${formatHa(usage.allocatedHectares)} ha")
+                alloc.clone?.takeIf { it.isNotBlank() }?.let { add("Clone $it") }
+                alloc.rootstock?.takeIf { it.isNotBlank() }?.let { add("Rootstock $it") }
+                block.plantingYear?.let { add("Planted $it") }
+            }
+            if (meta.isNotEmpty()) {
+                Text(meta.joinToString(" · "), color = vine.textSecondary, fontSize = 13.sp)
+            }
+            val phenology = buildList {
+                formatGrowthDate(parseIsoToEpochMs(block.budburstDate))?.let { add("Budburst $it") }
+                formatGrowthDate(parseIsoToEpochMs(block.floweringDate))?.let { add("Flowering $it") }
+                formatGrowthDate(parseIsoToEpochMs(block.veraisonDate))?.let { add("Veraison $it") }
+                formatGrowthDate(parseIsoToEpochMs(block.harvestDate))?.let { add("Harvest $it") }
+            }
+            if (phenology.isNotEmpty()) {
+                Text(phenology.joinToString(" · "), color = vine.textSecondary, fontSize = 12.sp)
+            }
+            latestObservation?.let { obs ->
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Icon(Icons.Filled.Spa, contentDescription = null, tint = VineColors.DarkGreen, modifier = Modifier.size(14.dp))
+                    val stageText = GrowthStage.byCode(obs.stageCode)?.displayName ?: obs.displayStage
+                    val dateText = formatGrowthDate(obs.observedEpochMs)
+                    Text(
+                        "Latest: $stageText" + (dateText?.let { " · $it" } ?: ""),
+                        color = vine.textSecondary, fontSize = 12.sp, maxLines = 1,
+                    )
+                }
             }
         }
     }
