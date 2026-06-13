@@ -814,3 +814,67 @@ val windDirectionOptions: List<String> = listOf(
     "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
     "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
 )
+
+/**
+ * A maintenance/service log — backs `public.maintenance_logs` (sql/014, 054,
+ * 100). `itemName` is the authoritative display snapshot; the optional
+ * `equipmentSource` + `equipmentRefId` pair give a stable link to a catalog row
+ * (mirrors the iOS `MaintenanceLog`). `hours` is labour hours spent on the job;
+ * `machineHours` is the equipment's hour-meter reading at service time.
+ * `is_finalized` is the iOS completion convention; `is_archived` hides the log
+ * from the default list. Soft-delete uses the `soft_delete_maintenance_log` RPC.
+ */
+@Serializable
+data class MaintenanceLog(
+    val id: String,
+    @SerialName("vineyard_id") val vineyardId: String,
+    @SerialName("item_name") val itemName: String = "",
+    @SerialName("equipment_source") val equipmentSource: String? = null,
+    @SerialName("equipment_ref_id") val equipmentRefId: String? = null,
+    val hours: Double = 0.0,
+    @SerialName("machine_hours") val machineHours: Double? = null,
+    @SerialName("work_completed") val workCompleted: String = "",
+    @SerialName("parts_used") val partsUsed: String = "",
+    @SerialName("parts_cost") val partsCost: Double = 0.0,
+    @SerialName("labour_cost") val labourCost: Double = 0.0,
+    val date: String? = null,
+    @SerialName("is_archived") val isArchived: Boolean = false,
+    @SerialName("is_finalized") val isFinalized: Boolean = false,
+    @SerialName("deleted_at") val deletedAt: String? = null,
+) {
+    val totalCost: Double get() = partsCost + labourCost
+    val startEpochMs: Long? get() = parseIsoToEpochMs(date)
+
+    /** User-facing title for lists, falling back when the snapshot is blank. */
+    val displayTitle: String get() = itemName.trim().takeIf { it.isNotBlank() } ?: "Maintenance log"
+}
+
+/**
+ * Resolve the live display name for a maintenance log's linked equipment,
+ * mirroring the iOS resolver order: prefer the stable `equipment_ref_id`
+ * against the matching catalog (vineyard machines / spray equipment), then
+ * fall back to the `item_name` snapshot, and show a friendly placeholder only
+ * when a link exists but the asset is unavailable (e.g. soft-deleted).
+ */
+fun resolveMaintenanceEquipmentName(
+    log: MaintenanceLog,
+    machines: List<VineyardMachine>,
+    sprayEquipment: List<SprayEquipment>,
+): String {
+    val snapshot = log.itemName.trim().takeIf { it.isNotBlank() }
+    val refId = log.equipmentRefId
+    if (refId != null) {
+        when (log.equipmentSource) {
+            "vineyard_machine", "tractor" -> {
+                machines.firstOrNull { it.id == refId || it.legacyTractorId == refId }
+                    ?.let { return it.displayName }
+            }
+            "spray_equipment" -> {
+                sprayEquipment.firstOrNull { it.id == refId }?.let { return it.displayName }
+            }
+        }
+        // Link present but asset not loaded/available: fall back to snapshot.
+        return snapshot ?: "Equipment unavailable"
+    }
+    return snapshot ?: "Maintenance log"
+}
