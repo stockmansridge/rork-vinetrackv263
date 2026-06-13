@@ -132,7 +132,11 @@ private fun DashboardContent(
 
             OverviewSection(state, onOpenMap)
 
-            ToolsSection(onOpenWorkTasks = { onSwitchTab(4) }, onOpenMaintenance = { onSwitchTab(6) })
+            ToolsSection(
+                onOpenWorkTasks = { onSwitchTab(4) },
+                onOpenMaintenance = { onSwitchTab(7) },
+                onOpenGrowth = { onSwitchTab(6) },
+            )
 
             RecentSection(state, onSwitchTab)
 
@@ -254,7 +258,7 @@ private fun OverviewSection(state: AppUiState, onOpenMap: () -> Unit) {
 }
 
 @Composable
-private fun ToolsSection(onOpenWorkTasks: () -> Unit, onOpenMaintenance: () -> Unit) {
+private fun ToolsSection(onOpenWorkTasks: () -> Unit, onOpenMaintenance: () -> Unit, onOpenGrowth: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -271,6 +275,7 @@ private fun ToolsSection(onOpenWorkTasks: () -> Unit, onOpenMaintenance: () -> U
                 val onClick = when (tool.title) {
                     "Work Tasks" -> onOpenWorkTasks
                     "Maintenance Log" -> onOpenMaintenance
+                    "Growth Stage Records" -> onOpenGrowth
                     else -> null
                 }
                 OperationalTile(
@@ -306,7 +311,9 @@ private fun RecentSection(state: AppUiState, onSwitchTab: (Int) -> Unit) {
             Divider(vine.cardBorder)
             SummaryRow("Spray records", state.sprayRecords.size, VineColors.Cyan) { onSwitchTab(5) }
             Divider(vine.cardBorder)
-            SummaryRow("Maintenance logs", state.maintenanceLogs.size, VineColors.EarthBrown) { onSwitchTab(6) }
+            SummaryRow("Growth observations", state.growthRecords.size, VineColors.LeafGreen) { onSwitchTab(6) }
+            Divider(vine.cardBorder)
+            SummaryRow("Maintenance logs", state.maintenanceLogs.size, VineColors.EarthBrown) { onSwitchTab(7) }
         }
     }
 }

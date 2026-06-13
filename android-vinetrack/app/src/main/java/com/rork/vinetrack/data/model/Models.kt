@@ -82,8 +82,22 @@ data class Paddock(
     @SerialName("polygon_points") val polygonPoints: List<CoordinatePoint>? = null,
     val rows: List<PaddockRow>? = null,
     @SerialName("variety_allocations") val varietyAllocations: List<PaddockVarietyAllocation>? = null,
+    @SerialName("budburst_date") val budburstDate: String? = null,
+    @SerialName("flowering_date") val floweringDate: String? = null,
+    @SerialName("veraison_date") val veraisonDate: String? = null,
+    @SerialName("harvest_date") val harvestDate: String? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
 ) {
+    /** True when this block has any phenology milestone date set. */
+    val hasPhenology: Boolean
+        get() = !budburstDate.isNullOrBlank() || !floweringDate.isNullOrBlank() ||
+            !veraisonDate.isNullOrBlank() || !harvestDate.isNullOrBlank()
+
+    /** Best display name for the block's primary planted variety, if any. */
+    val primaryVarietyName: String?
+        get() = varietyAllocations
+            ?.maxByOrNull { it.displayPercent ?: 0.0 }
+            ?.displayName
     /** Polygon area in hectares (equirectangular projection — matches iOS `areaHectares`). */
     val areaHectares: Double
         get() {
@@ -877,4 +891,131 @@ fun resolveMaintenanceEquipmentName(
         return snapshot ?: "Equipment unavailable"
     }
     return snapshot ?: "Maintenance log"
+}
+
+/**
+ * A grape-vine growth-stage (phenology) observation — backs
+ * `public.growth_stage_records` (sql/055), the canonical agronomy table. iOS
+ * mirrors growth-mode pins into this table (`pin_id` links back to the source
+ * pin) and also backfills legacy pins, so reading it surfaces both pin-based
+ * and directly-authored observations. Android writes records directly with a
+ * null `pin_id`. Stage codes follow the E-L (modified Eichhorn-Lorenz) scale.
+ * Soft-deleted via the `soft_delete_growth_stage_record` RPC
+ * (owner/manager/supervisor only); inserts/updates follow membership RLS.
+ */
+@Serializable
+data class GrowthStageRecord(
+    val id: String,
+    @SerialName("vineyard_id") val vineyardId: String,
+    @SerialName("paddock_id") val paddockId: String? = null,
+    @SerialName("pin_id") val pinId: String? = null,
+    @SerialName("stage_code") val stageCode: String = "",
+    @SerialName("stage_label") val stageLabel: String? = null,
+    val variety: String? = null,
+    @SerialName("variety_id") val varietyId: String? = null,
+    @SerialName("observed_at") val observedAt: String? = null,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    @SerialName("row_number") val rowNumber: Int? = null,
+    val side: String? = null,
+    val notes: String? = null,
+    @SerialName("photo_paths") val photoPaths: List<String>? = null,
+    @SerialName("recorded_by_name") val recordedByName: String? = null,
+    @SerialName("created_at") val createdAt: String? = null,
+    @SerialName("deleted_at") val deletedAt: String? = null,
+) {
+    val observedEpochMs: Long? get() = parseIsoToEpochMs(observedAt ?: createdAt)
+
+    /** True when this observation was mirrored from a map pin (read-only origin). */
+    val isFromPin: Boolean get() = !pinId.isNullOrBlank()
+
+    /** True when the record carries at least one synced photo. */
+    val hasPhotos: Boolean get() = !photoPaths.isNullOrEmpty()
+
+    /**
+     * Best display label for the E-L stage: prefer a live match against the
+     * built-in scale, then the stored `stage_label` snapshot, then the raw code.
+     */
+    val displayStage: String
+        get() {
+            GrowthStage.byCode(stageCode)?.let { return it.displayName }
+            val label = stageLabel?.trim()?.takeIf { it.isNotBlank() }
+            return when {
+                label != null && stageCode.isNotBlank() -> "$stageCode - $label"
+                label != null -> label
+                stageCode.isNotBlank() -> stageCode
+                else -> "Observation"
+            }
+        }
+}
+
+/**
+ * One stage on the modified Eichhorn-Lorenz (E-L) grapevine growth scale,
+ * mirroring the iOS `GrowthStage.allStages` catalog. Static reference data —
+ * not persisted; observations store the `code` in `growth_stage_records`.
+ */
+data class GrowthStage(
+    val code: String,
+    val description: String,
+) {
+    val displayName: String get() = "$code - $description"
+
+    companion object {
+        /** E-L code the app treats as Budburst (auto-sets a block's budburst date on iOS). */
+        const val BUDBURST_CODE: String = "EL4"
+
+        fun byCode(code: String?): GrowthStage? =
+            code?.let { c -> allStages.firstOrNull { it.code == c } }
+
+        val allStages: List<GrowthStage> = listOf(
+            GrowthStage("EL1", "Winter bud"),
+            GrowthStage("EL2", "Bud scales opening"),
+            GrowthStage("EL3", "Wooly bud \u00B1 green showing"),
+            GrowthStage("EL4", "Budburst; leaf tips visible"),
+            GrowthStage("EL7", "First leaf separated from shoot tip"),
+            GrowthStage("EL9", "2 to 3 leaves separated; shoots 2-4 cm long"),
+            GrowthStage("EL11", "4 leaves separated"),
+            GrowthStage("EL12", "5 leaves separated; shoots about 10 cm long; inflorescence clear"),
+            GrowthStage("EL13", "6 leaves separated"),
+            GrowthStage("EL14", "7 leaves separated"),
+            GrowthStage("EL15", "8 leaves separated, shoot elongating rapidly; single flowers in compact groups"),
+            GrowthStage("EL16", "10 leaves separated"),
+            GrowthStage("EL17", "12 leaves separated; inflorescence well developed, single flowers separated"),
+            GrowthStage("EL18", "14 leaves separated, flower caps still in place but cap colour fading"),
+            GrowthStage("EL19", "About 16 leaves separated; beginning of flowering (first caps loosening)"),
+            GrowthStage("EL20", "10% caps off"),
+            GrowthStage("EL21", "30% caps off"),
+            GrowthStage("EL23", "17-20 leaves separated; 50% caps off (= flowering)"),
+            GrowthStage("EL25", "80% caps off"),
+            GrowthStage("EL26", "Cap-fall complete"),
+            GrowthStage("EL27", "Setting; young berries enlarging (>2 mm), bunch at right angles to stem"),
+            GrowthStage("EL29", "Berries pepper-corn size (4 mm diam.); bunches tending downwards"),
+            GrowthStage("EL31", "Berries pea-size (7 mm diam.)"),
+            GrowthStage("EL32", "Beginning of bunch closure, berries touching"),
+            GrowthStage("EL33", "Berries still hard and green"),
+            GrowthStage("EL34", "Berries begin to soften; sugar starts increasing"),
+            GrowthStage("EL35", "Berries begin to colour and enlarge (veraison)"),
+            GrowthStage("EL36", "Berries with intermediate sugar values"),
+            GrowthStage("EL37", "Berries not quite ripe"),
+            GrowthStage("EL38", "Berries harvest-ripe"),
+            GrowthStage("EL39", "Berries over-ripe"),
+            GrowthStage("EL41", "After harvest; cane maturation complete"),
+            GrowthStage("EL43", "Beginning of leaf fall"),
+            GrowthStage("EL47", "End of leaf fall"),
+        )
+    }
+}
+
+/**
+ * Resolve the live display name for a growth-stage record's linked block,
+ * preferring the loaded paddock, then a friendly placeholder when the link is
+ * present but the block is unavailable (e.g. soft-deleted). Returns null for
+ * unlinked records so the UI can show a neutral label.
+ */
+fun resolveGrowthRecordBlockName(record: GrowthStageRecord, paddocks: List<Paddock>): String? {
+    record.paddockId?.let { pid ->
+        paddocks.firstOrNull { it.id == pid }?.let { return it.name }
+        return "Block unavailable"
+    }
+    return null
 }

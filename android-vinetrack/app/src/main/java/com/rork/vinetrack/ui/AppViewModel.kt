@@ -9,6 +9,7 @@ import com.rork.vinetrack.data.LocationTracker
 import com.rork.vinetrack.data.MaintenanceLogRepository
 import com.rork.vinetrack.data.PinPhotoImageUtil
 import com.rork.vinetrack.data.PinPhotoRepository
+import com.rork.vinetrack.data.GrowthStageRecordRepository
 import com.rork.vinetrack.data.PinRepository
 import com.rork.vinetrack.data.SprayRecordRepository
 import com.rork.vinetrack.data.TripRepository
@@ -18,6 +19,7 @@ import com.rork.vinetrack.data.WorkTaskLineRepository
 import com.rork.vinetrack.data.auth.AuthRepository
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.CoordinatePoint
+import com.rork.vinetrack.data.model.GrowthStageRecord
 import com.rork.vinetrack.data.model.MaintenanceLog
 import com.rork.vinetrack.data.model.OperatorCategory
 import com.rork.vinetrack.data.model.Paddock
@@ -59,6 +61,7 @@ data class AppUiState(
     val sprayRecords: List<SprayRecord> = emptyList(),
     val sprayEquipment: List<SprayEquipment> = emptyList(),
     val maintenanceLogs: List<MaintenanceLog> = emptyList(),
+    val growthRecords: List<GrowthStageRecord> = emptyList(),
     val isLoadingVineyardData: Boolean = false,
     val paddockError: String? = null,
     val pinError: String? = null,
@@ -81,6 +84,8 @@ data class AppUiState(
     val sprayError: String? = null,
     val maintenanceBusy: Boolean = false,
     val maintenanceError: String? = null,
+    val growthBusy: Boolean = false,
+    val growthError: String? = null,
 ) {
     val selectedVineyard: Vineyard? get() = vineyards.firstOrNull { it.id == selectedVineyardId }
     val openPins: Int get() = pins.count { !it.isCompleted }
@@ -101,6 +106,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val workTaskLineRepo = WorkTaskLineRepository(session)
     private val sprayRepo = SprayRecordRepository(session)
     private val maintenanceRepo = MaintenanceLogRepository(session)
+    private val growthRepo = GrowthStageRecordRepository(session)
 
     /** Foreground GPS tracker for the currently active trip (null when idle). */
     private var tracker: LocationTracker? = null
@@ -224,7 +230,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         session.selectedVineyardId = id
         // Clear the previous vineyard's data so the UI doesn't briefly show
         // stale blocks/pins while the new vineyard loads.
-        _ui.update { it.copy(selectedVineyardId = id, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), sprayRecords = emptyList(), sprayEquipment = emptyList(), maintenanceLogs = emptyList()) }
+        _ui.update { it.copy(selectedVineyardId = id, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), sprayRecords = emptyList(), sprayEquipment = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList()) }
         viewModelScope.launch { loadVineyardData(id) }
     }
 
@@ -1138,6 +1144,74 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { it.copy(maintenanceError = null) }
     }
 
+    // MARK: - Growth-stage record write path
+
+    /** Log a new growth-stage observation, optimistically inserting it at the top. */
+    fun createGrowthStageRecord(input: GrowthStageRecordRepository.GrowthInput, onResult: (Boolean) -> Unit) {
+        val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
+        viewModelScope.launch {
+            _ui.update { it.copy(growthBusy = true, growthError = null) }
+            try {
+                val created = growthRepo.createGrowthStageRecord(vineyardId, input)
+                _ui.update { it.copy(growthRecords = listOf(created) + it.growthRecords, growthBusy = false) }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                _ui.update { it.copy(growthBusy = false) }; signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(growthBusy = false, growthError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(growthBusy = false, growthError = "Couldn't save the observation. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /** Edit an existing growth-stage observation, reconciling the returned row. */
+    fun updateGrowthStageRecord(id: String, input: GrowthStageRecordRepository.GrowthInput, onResult: (Boolean) -> Unit) {
+        val previous = _ui.value.growthRecords
+        viewModelScope.launch {
+            _ui.update { it.copy(growthBusy = true, growthError = null) }
+            try {
+                val updated = growthRepo.updateGrowthStageRecord(id, input)
+                _ui.update { st -> st.copy(growthRecords = st.growthRecords.map { if (it.id == id) updated else it }, growthBusy = false) }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                _ui.update { it.copy(growthBusy = false) }; signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(growthBusy = false, growthRecords = previous, growthError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(growthBusy = false, growthRecords = previous, growthError = "Couldn't save the observation. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /** Soft-delete a growth-stage observation via the server RPC, optimistically removing it. */
+    fun deleteGrowthStageRecord(id: String, onResult: (Boolean) -> Unit) {
+        val previous = _ui.value.growthRecords
+        _ui.update { st -> st.copy(growthRecords = st.growthRecords.filterNot { it.id == id }) }
+        viewModelScope.launch {
+            try {
+                growthRepo.softDeleteGrowthStageRecord(id)
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(growthRecords = previous, growthError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(growthRecords = previous, growthError = "Couldn't delete the observation. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    fun clearGrowthError() {
+        _ui.update { it.copy(growthError = null) }
+    }
+
     private fun friendlyWriteError(code: Int): String = when (code) {
         403 -> "You don't have permission to do that."
         else -> "Something went wrong. Please try again."
@@ -1220,6 +1294,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } catch (e: Exception) {
             _ui.value.maintenanceLogs
         }
+        // Growth-stage observations are an operational list; soft-fail to existing.
+        val growthRecords = try {
+            repo.listGrowthStageRecords(vineyardId)
+        } catch (e: Exception) {
+            _ui.value.growthRecords
+        }
         _ui.update {
             it.copy(
                 paddocks = paddocks,
@@ -1232,6 +1312,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 sprayRecords = sprayRecords,
                 sprayEquipment = sprayEquipment,
                 maintenanceLogs = maintenanceLogs,
+                growthRecords = growthRecords,
                 isLoadingVineyardData = false,
                 paddockError = paddockError,
                 pinError = pinError,
