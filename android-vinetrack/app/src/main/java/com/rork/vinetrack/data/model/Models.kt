@@ -178,6 +178,16 @@ data class Paddock(
 
     val hasIrrigationSetup: Boolean
         get() = (flowPerEmitter ?: 0.0) > 0 && (emitterSpacing ?: 0.0) > 0
+
+    /** Centroid of the mapped boundary polygon, or null when no geometry exists. */
+    val centroid: CoordinatePoint?
+        get() {
+            val points = polygonPoints ?: return null
+            if (points.isEmpty()) return null
+            val lat = points.sumOf { it.latitude } / points.size
+            val lon = points.sumOf { it.longitude } / points.size
+            return CoordinatePoint(latitude = lat, longitude = lon)
+        }
 }
 
 /**
