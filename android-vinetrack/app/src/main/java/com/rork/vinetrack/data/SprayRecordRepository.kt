@@ -55,6 +55,7 @@ class SprayRecordRepository(private val session: SessionStore) {
         @SerialName("machine_id") val machineId: String? = null,
         @SerialName("operation_type") val operationType: String? = null,
         @SerialName("trip_id") val tripId: String? = null,
+        @SerialName("is_template") val isTemplate: Boolean = false,
         val tanks: List<SprayTank> = emptyList(),
         @SerialName("created_by") val createdBy: String? = null,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
@@ -79,6 +80,7 @@ class SprayRecordRepository(private val session: SessionStore) {
         @SerialName("machine_id") val machineId: String? = null,
         @SerialName("operation_type") val operationType: String? = null,
         @SerialName("trip_id") val tripId: String? = null,
+        @SerialName("is_template") val isTemplate: Boolean = false,
         val tanks: List<SprayTank> = emptyList(),
         @SerialName("client_updated_at") val clientUpdatedAt: String,
     )
@@ -104,6 +106,7 @@ class SprayRecordRepository(private val session: SessionStore) {
         val machineId: String?,
         val operationType: String?,
         val tripId: String?,
+        val isTemplate: Boolean = false,
         val tanks: List<SprayTank>,
     )
 
@@ -133,6 +136,7 @@ class SprayRecordRepository(private val session: SessionStore) {
                 machineId = input.machineId,
                 operationType = input.operationType,
                 tripId = input.tripId,
+                isTemplate = input.isTemplate,
                 tanks = input.tanks,
                 createdBy = session.userId,
                 clientUpdatedAt = now,
@@ -167,6 +171,7 @@ class SprayRecordRepository(private val session: SessionStore) {
                 machineId = input.machineId,
                 operationType = input.operationType,
                 tripId = input.tripId,
+                isTemplate = input.isTemplate,
                 tanks = input.tanks,
                 clientUpdatedAt = nowIso(),
             )

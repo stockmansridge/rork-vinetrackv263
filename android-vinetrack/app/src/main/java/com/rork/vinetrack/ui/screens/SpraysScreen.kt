@@ -30,7 +30,10 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Agriculture
 import androidx.compose.material.icons.filled.Air
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.Notes
 import androidx.compose.material.icons.filled.Opacity
 import androidx.compose.material.icons.filled.Schedule
@@ -80,11 +83,13 @@ import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.SprayRecordRepository
 import com.rork.vinetrack.data.model.SprayChemical
 import com.rork.vinetrack.data.model.SprayRecord
+import com.rork.vinetrack.data.model.SprayStatus
 import com.rork.vinetrack.data.model.SprayTank
 import com.rork.vinetrack.data.model.VineyardMachine
 import com.rork.vinetrack.data.model.resolveSprayTrip
 import com.rork.vinetrack.data.model.resolveSprayWorkTask
 import com.rork.vinetrack.data.model.resolveTripWorkTask
+import com.rork.vinetrack.data.model.sprayRecordStatus
 import com.rork.vinetrack.data.model.sprayOperationTypes
 import com.rork.vinetrack.data.model.windDirectionOptions
 import com.rork.vinetrack.ui.AppUiState
@@ -104,7 +109,10 @@ import java.util.UUID
 fun SpraysScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifier) {
     var selectedId by remember { mutableStateOf<String?>(null) }
     var creating by remember { mutableStateOf(false) }
+    var creatingTemplate by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<SprayRecord?>(null) }
+    // A template selected to seed a brand-new operational record (job -> record).
+    var prefillFromTemplate by remember { mutableStateOf<SprayRecord?>(null) }
 
     val selected = state.sprayRecords.firstOrNull { it.id == selectedId }
 
@@ -119,6 +127,7 @@ fun SpraysScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modif
                 state = state,
                 onSelect = { selectedId = it.id },
                 onAdd = { creating = true },
+                onAddTemplate = { creatingTemplate = true },
             )
         } else {
             SprayDetailView(
@@ -127,69 +136,176 @@ fun SpraysScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modif
                 recordId = record.id,
                 onBack = { selectedId = null },
                 onEdit = { editing = it },
+                onUseTemplate = { prefillFromTemplate = it; selectedId = null },
             )
         }
     }
 
     if (creating) {
-        SpraySheet(vm = vm, state = state, existing = null, onDismiss = { creating = false }, onSaved = { creating = false })
+        SpraySheet(vm = vm, state = state, existing = null, asTemplate = false, onDismiss = { creating = false }, onSaved = { creating = false })
+    }
+    if (creatingTemplate) {
+        SpraySheet(vm = vm, state = state, existing = null, asTemplate = true, onDismiss = { creatingTemplate = false }, onSaved = { creatingTemplate = false })
+    }
+    prefillFromTemplate?.let { tmpl ->
+        SpraySheet(vm = vm, state = state, existing = tmpl, asTemplate = false, fromTemplate = true, onDismiss = { prefillFromTemplate = null }, onSaved = { prefillFromTemplate = null })
     }
     editing?.let { rec ->
-        SpraySheet(vm = vm, state = state, existing = rec, onDismiss = { editing = null }, onSaved = { editing = null })
+        SpraySheet(vm = vm, state = state, existing = rec, asTemplate = rec.isTemplate, onDismiss = { editing = null }, onSaved = { editing = null })
     }
+}
+
+/** Status/segment filters for the spray list, mirroring the iOS SprayStatusFilter. */
+private enum class SprayFilter(val label: String) {
+    ALL("All"),
+    IN_PROGRESS("In Progress"),
+    NOT_STARTED("Not Started"),
+    COMPLETED("Completed"),
+    TEMPLATES("Templates"),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SprayListView(state: AppUiState, onSelect: (SprayRecord) -> Unit, onAdd: () -> Unit) {
+private fun SprayListView(
+    state: AppUiState,
+    onSelect: (SprayRecord) -> Unit,
+    onAdd: () -> Unit,
+    onAddTemplate: () -> Unit,
+) {
     val vine = LocalVineColors.current
-    val records = remember(state.sprayRecords) { state.sprayRecords.sortedByDescending { it.dateEpochMs ?: 0L } }
+    var filter by remember { mutableStateOf(SprayFilter.ALL) }
+    var addMenu by remember { mutableStateOf(false) }
+
+    val all = remember(state.sprayRecords) { state.sprayRecords.sortedByDescending { it.dateEpochMs ?: 0L } }
+    val templates = remember(all) {
+        all.filter { it.isTemplate }.sortedBy { it.displayLabel.lowercase() }
+    }
+    val operational = remember(all) { all.filter { !it.isTemplate } }
+    val filtered = remember(operational, filter, state.trips) {
+        when (filter) {
+            SprayFilter.ALL -> operational
+            SprayFilter.IN_PROGRESS -> operational.filter { sprayRecordStatus(it, state.trips) == SprayStatus.IN_PROGRESS }
+            SprayFilter.NOT_STARTED -> operational.filter { sprayRecordStatus(it, state.trips) == SprayStatus.NOT_STARTED }
+            SprayFilter.COMPLETED -> operational.filter { sprayRecordStatus(it, state.trips) == SprayStatus.COMPLETED }
+            SprayFilter.TEMPLATES -> emptyList()
+        }
+    }
 
     Scaffold(
         containerColor = vine.appBackground,
         topBar = {
             TopAppBar(
-                title = { Text("Spray Records") },
+                title = { Text("Spray Program") },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = onAdd, containerColor = VineColors.PrimaryAccent, contentColor = Color.White) {
-                Icon(Icons.Filled.Add, contentDescription = "New spray record")
+            Box {
+                FloatingActionButton(onClick = { addMenu = true }, containerColor = VineColors.PrimaryAccent, contentColor = Color.White) {
+                    Icon(Icons.Filled.Add, contentDescription = "New spray")
+                }
+                androidx.compose.material3.DropdownMenu(expanded = addMenu, onDismissRequest = { addMenu = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Log a spray record") },
+                        leadingIcon = { Icon(Icons.Filled.WaterDrop, contentDescription = null) },
+                        onClick = { addMenu = false; onAdd() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("New template") },
+                        leadingIcon = { Icon(Icons.Filled.ContentCopy, contentDescription = null) },
+                        onClick = { addMenu = false; onAddTemplate() },
+                    )
+                }
             }
         },
     ) { padding ->
-        when {
-            state.isLoadingVineyardData && records.isEmpty() -> {
-                Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = VineColors.LeafGreen)
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            // Status filter chips
+            androidx.compose.foundation.lazy.LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(SprayFilter.entries.toList()) { f ->
+                    val active = f == filter
+                    Text(
+                        f.label,
+                        fontSize = 13.sp,
+                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (active) Color.White else vine.textSecondary,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(if (active) VineColors.PrimaryAccent else vine.cardBackground)
+                            .clickable { filter = f }
+                            .padding(horizontal = 14.dp, vertical = 7.dp),
+                    )
                 }
             }
 
-            records.isEmpty() -> {
-                Box(Modifier.fillMaxSize().padding(padding).padding(24.dp), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                        EmptyState(
-                            icon = Icons.Filled.WaterDrop,
-                            title = "No spray records yet",
-                            message = "Log spray applications with tank mixes, weather conditions and equipment to keep compliant records.",
-                        )
-                        Button(onClick = onAdd, colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent)) {
-                            Icon(Icons.Filled.Add, contentDescription = null)
-                            Text("  Log a spray")
+            when {
+                state.isLoadingVineyardData && all.isEmpty() -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = VineColors.LeafGreen)
+                    }
+                }
+
+                all.isEmpty() -> {
+                    Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            EmptyState(
+                                icon = Icons.Filled.WaterDrop,
+                                title = "No spray records yet",
+                                message = "Log spray applications with tank mixes, weather conditions and equipment to keep compliant records.",
+                            )
+                            Button(onClick = onAdd, colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent)) {
+                                Icon(Icons.Filled.Add, contentDescription = null)
+                                Text("  Log a spray")
+                            }
                         }
                     }
                 }
-            }
 
-            else -> {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize().padding(padding),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    items(records, key = { it.id }) { record ->
-                        SprayRow(record, state.machines, onClick = { onSelect(record) })
+                filter == SprayFilter.TEMPLATES && templates.isEmpty() -> {
+                    Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                        EmptyState(
+                            icon = Icons.Filled.ContentCopy,
+                            title = "No templates",
+                            message = "Save a reusable spray program as a template to quickly start future spray records.",
+                        )
+                    }
+                }
+
+                filter != SprayFilter.TEMPLATES && filtered.isEmpty() && templates.isEmpty() -> {
+                    Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                        EmptyState(
+                            icon = Icons.Filled.WaterDrop,
+                            title = "No spray records",
+                            message = "No records match this filter yet.",
+                        )
+                    }
+                }
+
+                else -> {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        if (filter == SprayFilter.TEMPLATES) {
+                            items(templates, key = { it.id }) { record ->
+                                SprayRow(record, state.machines, state.trips, onClick = { onSelect(record) })
+                            }
+                        } else {
+                            if (filter == SprayFilter.ALL && templates.isNotEmpty()) {
+                                item { SectionHeader("Templates · ${templates.size}", onLight = true) }
+                                items(templates, key = { "tmpl-${it.id}" }) { record ->
+                                    SprayRow(record, state.machines, state.trips, onClick = { onSelect(record) })
+                                }
+                                item { SectionHeader("Records · ${filtered.size}", onLight = true) }
+                            }
+                            items(filtered, key = { it.id }) { record ->
+                                SprayRow(record, state.machines, state.trips, onClick = { onSelect(record) })
+                            }
+                        }
                     }
                 }
             }
@@ -198,21 +314,29 @@ private fun SprayListView(state: AppUiState, onSelect: (SprayRecord) -> Unit, on
 }
 
 @Composable
-private fun SprayRow(record: SprayRecord, machines: List<VineyardMachine>, onClick: () -> Unit) {
+private fun SprayRow(record: SprayRecord, machines: List<VineyardMachine>, trips: List<com.rork.vinetrack.data.model.Trip>, onClick: () -> Unit) {
     val vine = LocalVineColors.current
+    val status = if (record.isTemplate) null else sprayRecordStatus(record, trips)
+    val (icon, iconTint) = when {
+        record.isTemplate -> Icons.Filled.ContentCopy to VineColors.Indigo
+        status == SprayStatus.IN_PROGRESS -> Icons.Filled.FiberManualRecord to VineColors.Destructive
+        status == SprayStatus.NOT_STARTED -> Icons.Filled.Schedule to VineColors.Orange
+        status == SprayStatus.COMPLETED -> Icons.Filled.CheckCircle to VineColors.LeafGreen
+        else -> Icons.Filled.WaterDrop to VineColors.Cyan
+    }
     VineyardCard(modifier = Modifier.clickable { onClick() }) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Box(
-                modifier = Modifier.size(40.dp).clip(CircleShape).background(VineColors.Cyan.copy(alpha = 0.15f)),
+                modifier = Modifier.size(40.dp).clip(CircleShape).background(iconTint.copy(alpha = 0.15f)),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(Icons.Filled.WaterDrop, contentDescription = null, tint = VineColors.Cyan)
+                Icon(icon, contentDescription = null, tint = iconTint)
             }
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(record.displayLabel, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, fontSize = 16.sp, maxLines = 1)
                 val sub = listOfNotNull(
-                    record.operationType?.takeIf { it.isNotBlank() },
-                    formatSprayDate(record.dateEpochMs),
+                    if (record.isTemplate) "Template" else record.operationType?.takeIf { it.isNotBlank() },
+                    if (record.isTemplate) null else formatSprayDate(record.dateEpochMs),
                 ).joinToString(" · ")
                 if (sub.isNotBlank()) Text(sub, fontSize = 13.sp, color = vine.textSecondary, maxLines = 1)
                 val chems = record.chemicalNames
@@ -237,6 +361,7 @@ private fun SprayDetailView(
     recordId: String,
     onBack: () -> Unit,
     onEdit: (SprayRecord) -> Unit,
+    onUseTemplate: (SprayRecord) -> Unit,
 ) {
     val vine = LocalVineColors.current
     val record = state.sprayRecords.firstOrNull { it.id == recordId }
@@ -266,6 +391,29 @@ private fun SprayDetailView(
             modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
+            if (record.isTemplate) {
+                VineyardCard {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Box(
+                            modifier = Modifier.size(36.dp).clip(CircleShape).background(VineColors.Indigo.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center,
+                        ) { Icon(Icons.Filled.ContentCopy, contentDescription = null, tint = VineColors.Indigo, modifier = Modifier.size(20.dp)) }
+                        Column(Modifier.weight(1f)) {
+                            Text("Reusable template", fontWeight = FontWeight.SemiBold, color = vine.textPrimary, fontSize = 15.sp)
+                            Text("Start a new spray record from this template.", fontSize = 12.sp, color = vine.textSecondary)
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Button(
+                        onClick = { onUseTemplate(record) },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent),
+                    ) {
+                        Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Text("  Use template for new record")
+                    }
+                }
+            }
             // Details
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SectionHeader("Details", onLight = true)
@@ -404,7 +552,7 @@ private fun SprayDetailView(
 
             TextButton(onClick = { confirmDelete = true }, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Filled.Delete, contentDescription = null, tint = VineColors.Destructive)
-                Text("  Delete spray record", color = VineColors.Destructive)
+                Text(if (record.isTemplate) "  Delete template" else "  Delete spray record", color = VineColors.Destructive)
             }
             Spacer(Modifier.height(8.dp))
         }
@@ -468,11 +616,17 @@ private fun SpraySheet(
     vm: AppViewModel,
     state: AppUiState,
     existing: SprayRecord?,
+    asTemplate: Boolean,
+    fromTemplate: Boolean = false,
     onDismiss: () -> Unit,
     onSaved: () -> Unit,
 ) {
     val vine = LocalVineColors.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    // When seeding from a template we prefill from `existing` but still create a
+    // brand-new operational record (no id reuse, fresh date, not a template).
+    val isEdit = existing != null && !fromTemplate
+    var isTemplate by remember { mutableStateOf(asTemplate) }
 
     var reference by remember { mutableStateOf(existing?.sprayReference ?: "") }
     var operationType by remember { mutableStateOf(existing?.operationType ?: sprayOperationTypes.first()) }
@@ -488,7 +642,7 @@ private fun SpraySheet(
     var fansJets by remember { mutableStateOf(existing?.numberOfFansJets ?: "") }
     var avgSpeed by remember { mutableStateOf(existing?.averageSpeed?.let { trimNum(it) } ?: "") }
     var notes by remember { mutableStateOf(existing?.notes ?: "") }
-    var tripId by remember { mutableStateOf(existing?.tripId) }
+    var tripId by remember { mutableStateOf(if (fromTemplate) null else existing?.tripId) }
 
     val tanks = remember {
         val initial = existing?.tanks?.takeIf { it.isNotEmpty() }?.map { it.toDraft() }
@@ -507,7 +661,7 @@ private fun SpraySheet(
         val tankModels = tanks.mapIndexed { idx, t -> t.toModel(idx + 1) }
         return SprayRecordRepository.SprayInput(
             date = iso,
-            startTime = existing?.startTime ?: iso,
+            startTime = if (isEdit) existing?.startTime ?: iso else iso,
             temperature = temperature.toDoubleSafe(),
             windSpeed = windSpeed.toDoubleSafe(),
             windDirection = windDirection.ifBlank { null },
@@ -522,6 +676,7 @@ private fun SpraySheet(
             machineId = machineId,
             operationType = operationType,
             tripId = tripId,
+            isTemplate = isTemplate,
             tanks = tankModels,
         )
     }
@@ -530,10 +685,10 @@ private fun SpraySheet(
         if (saving) return
         saving = true
         val input = buildInput()
-        if (existing == null) {
-            vm.createSprayRecord(input) { ok -> saving = false; if (ok) onSaved() }
+        if (isEdit) {
+            vm.updateSprayRecord(existing!!.id, input) { ok -> saving = false; if (ok) onSaved() }
         } else {
-            vm.updateSprayRecord(existing.id, input) { ok -> saving = false; if (ok) onSaved() }
+            vm.createSprayRecord(input) { ok -> saving = false; if (ok) onSaved() }
         }
     }
 
@@ -542,15 +697,32 @@ private fun SpraySheet(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text(if (existing == null) "Log a spray" else "Edit spray", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+            val title = when {
+                isEdit && isTemplate -> "Edit template"
+                isEdit -> "Edit spray"
+                fromTemplate -> "New record from template"
+                isTemplate -> "New template"
+                else -> "Log a spray"
+            }
+            Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
 
             OutlinedTextField(
                 value = reference,
                 onValueChange = { reference = it },
-                label = { Text("Spray reference") },
+                label = { Text(if (isTemplate) "Template name" else "Spray reference") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
+
+            // Template toggle (a record can be promoted to/from a reusable template).
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Icon(Icons.Filled.ContentCopy, contentDescription = null, tint = VineColors.Indigo, modifier = Modifier.size(20.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Save as template", fontWeight = FontWeight.Medium, color = vine.textPrimary, fontSize = 15.sp)
+                    Text("Reusable program, not a dated record", fontSize = 12.sp, color = vine.textSecondary)
+                }
+                androidx.compose.material3.Switch(checked = isTemplate, onCheckedChange = { isTemplate = it })
+            }
 
             // Operation type
             ExposedDropdownMenuBox(expanded = operationMenu, onExpandedChange = { operationMenu = it }) {
@@ -729,7 +901,7 @@ private fun SpraySheet(
                 colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent),
             ) {
                 if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
-                else Text(if (existing == null) "Save spray record" else "Save changes")
+                else Text(if (isEdit) "Save changes" else if (isTemplate) "Save template" else "Save spray record")
             }
         }
     }

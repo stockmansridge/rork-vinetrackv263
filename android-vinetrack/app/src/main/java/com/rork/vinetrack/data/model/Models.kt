@@ -756,6 +756,20 @@ fun resolveSprayTrip(record: SprayRecord, trips: List<Trip>): Trip? =
 fun resolveSprayWorkTask(record: SprayRecord, trips: List<Trip>, workTasks: List<WorkTask>): WorkTask? =
     resolveSprayTrip(record, trips)?.let { trip -> resolveTripWorkTask(trip, workTasks) }
 
+/**
+ * Operational status of a spray record, mirroring the iOS `recordStatus`
+ * logic in `SprayProgramView`: completed when the record has an end time;
+ * in-progress when its linked trip is currently active; otherwise not started.
+ * Templates are surfaced separately and should not be passed here.
+ */
+enum class SprayStatus { NOT_STARTED, IN_PROGRESS, COMPLETED }
+
+fun sprayRecordStatus(record: SprayRecord, trips: List<Trip>): SprayStatus = when {
+    record.endTime?.isNotBlank() == true -> SprayStatus.COMPLETED
+    resolveSprayTrip(record, trips)?.isActive == true -> SprayStatus.IN_PROGRESS
+    else -> SprayStatus.NOT_STARTED
+}
+
 /** Built-in spray operation types — raw values match the iOS `OperationType` enum. */
 val sprayOperationTypes: List<String> = listOf(
     "Foliar Spray",
