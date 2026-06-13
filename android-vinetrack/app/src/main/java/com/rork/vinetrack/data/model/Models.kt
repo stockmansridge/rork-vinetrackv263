@@ -369,8 +369,11 @@ fun machineTypeLabel(raw: String?): String = when (raw) {
 }
 
 /**
- * A work task — backs `public.work_tasks`. Trips optionally group under one
- * work task via `trips.work_task_id` (see sql/102_trips_work_task_link.sql).
+ * A work task — backs `public.work_tasks` (sql/014). Trips optionally group
+ * under one work task via `trips.work_task_id` (sql/102). The `is_finalized`
+ * flag is the iOS completion convention; `is_archived` hides the task from the
+ * default list. Android writes only the columns it edits, leaving the
+ * iOS-managed `resources` JSONB and Phase-16 costing fields untouched.
  */
 @Serializable
 data class WorkTask(
@@ -380,11 +383,20 @@ data class WorkTask(
     @SerialName("paddock_name") val paddockName: String? = null,
     val date: String? = null,
     @SerialName("task_type") val taskType: String? = null,
+    @SerialName("duration_hours") val durationHours: Double = 0.0,
     val notes: String? = null,
+    val status: String? = null,
     @SerialName("is_archived") val isArchived: Boolean = false,
+    @SerialName("is_finalized") val isFinalized: Boolean = false,
+    @SerialName("finalized_at") val finalizedAt: String? = null,
+    @SerialName("finalized_by") val finalizedBy: String? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
 ) {
     val startEpochMs: Long? get() = parseIsoToEpochMs(date)
+    val finalizedEpochMs: Long? get() = parseIsoToEpochMs(finalizedAt)
+
+    /** Completion state — mirrors the iOS `isFinalized` convention. */
+    val isComplete: Boolean get() = isFinalized
 
     /** User-facing label, mirroring the iOS work-task naming. */
     val displayLabel: String
@@ -392,6 +404,29 @@ data class WorkTask(
             ?: paddockName?.takeIf { it.isNotBlank() }
             ?: "Work task"
 }
+
+/**
+ * Built-in work-task types offered when logging a task. Mirrors the iOS
+ * `WorkTaskTypeCatalog.defaults` so the `task_type` text column stays
+ * consistent across platforms.
+ */
+val builtInWorkTaskTypes: List<String> = listOf(
+    "Pruning",
+    "Cane Tying",
+    "Shoot Thinning",
+    "Leaf Plucking",
+    "Canopy Trimming",
+    "Wire Lifting",
+    "Bud Rubbing",
+    "Weed Control",
+    "Mowing",
+    "Irrigation Check",
+    "Harvest",
+    "Planting",
+    "Training",
+    "Bird Netting",
+    "Other",
+)
 
 /**
  * Resolve a trip's linked equipment display name, mirroring the iOS

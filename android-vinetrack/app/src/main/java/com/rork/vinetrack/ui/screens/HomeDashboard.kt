@@ -132,7 +132,7 @@ private fun DashboardContent(
 
             OverviewSection(state, onOpenMap)
 
-            ToolsSection()
+            ToolsSection(onOpenWorkTasks = { onSwitchTab(4) })
 
             RecentSection(state, onSwitchTab)
 
@@ -254,7 +254,7 @@ private fun OverviewSection(state: AppUiState, onOpenMap: () -> Unit) {
 }
 
 @Composable
-private fun ToolsSection() {
+private fun ToolsSection(onOpenWorkTasks: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -268,7 +268,14 @@ private fun ToolsSection() {
             userScrollEnabled = false,
         ) {
             items(operationalTools) { tool ->
-                OperationalTile(tool.title, tool.subtitle, tool.icon, tool.tint)
+                val onClick = if (tool.title == "Work Tasks") onOpenWorkTasks else null
+                OperationalTile(
+                    tool.title,
+                    tool.subtitle,
+                    tool.icon,
+                    tool.tint,
+                    modifier = if (onClick != null) Modifier.clickable { onClick() } else Modifier,
+                )
             }
         }
     }
@@ -290,6 +297,8 @@ private fun RecentSection(state: AppUiState, onSwitchTab: (Int) -> Unit) {
             SummaryRow("Open pins", state.openPins, VineColors.Orange) { onSwitchTab(2) }
             Divider(vine.cardBorder)
             SummaryRow("Trips", state.trips.size, VineColors.Indigo) { onSwitchTab(3) }
+            Divider(vine.cardBorder)
+            SummaryRow("Work tasks", state.workTasks.size, VineColors.EarthBrown) { onSwitchTab(4) }
         }
     }
 }

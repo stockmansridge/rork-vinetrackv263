@@ -7,6 +7,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.DirectionsCar
+import androidx.compose.material.icons.filled.Assignment
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -27,6 +28,7 @@ import com.rork.vinetrack.ui.screens.HomeDashboard
 import com.rork.vinetrack.ui.screens.PinsScreen
 import com.rork.vinetrack.ui.screens.SettingsScreen
 import com.rork.vinetrack.ui.screens.TripsScreen
+import com.rork.vinetrack.ui.screens.WorkTasksScreen
 
 private data class TabItem(val label: String, val icon: ImageVector)
 
@@ -35,6 +37,7 @@ private val tabs = listOf(
     TabItem("Blocks", Icons.Filled.Grass),
     TabItem("Pins", Icons.Filled.LocationOn),
     TabItem("Trip", Icons.Filled.DirectionsCar),
+    TabItem("Tasks", Icons.Filled.Assignment),
     TabItem("Settings", Icons.Filled.Settings),
 )
 
@@ -62,7 +65,8 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState) {
             1 -> BlocksScreen(state, modifier)
             2 -> PinsScreen(vm, state, modifier)
             3 -> TripsScreen(vm, state, modifier)
-            4 -> SettingsScreen(vm, state, modifier)
+            4 -> WorkTasksScreen(vm, state, modifier)
+            5 -> SettingsScreen(vm, state, modifier)
         }
     }
 }

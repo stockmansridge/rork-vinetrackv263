@@ -11,6 +11,7 @@ import com.rork.vinetrack.data.PinPhotoRepository
 import com.rork.vinetrack.data.PinRepository
 import com.rork.vinetrack.data.TripRepository
 import com.rork.vinetrack.data.VineyardRepository
+import com.rork.vinetrack.data.WorkTaskRepository
 import com.rork.vinetrack.data.auth.AuthRepository
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.CoordinatePoint
@@ -54,6 +55,8 @@ data class AppUiState(
     val pinPhotoBusy: Boolean = false,
     val tripBusy: Boolean = false,
     val isTracking: Boolean = false,
+    val workTaskError: String? = null,
+    val workTaskBusy: Boolean = false,
 ) {
     val selectedVineyard: Vineyard? get() = vineyards.firstOrNull { it.id == selectedVineyardId }
     val openPins: Int get() = pins.count { !it.isCompleted }
@@ -70,6 +73,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val pinRepo = PinRepository(session)
     private val pinPhotoRepo = PinPhotoRepository(session)
     private val tripRepo = TripRepository(session)
+    private val workTaskRepo = WorkTaskRepository(session)
 
     /** Foreground GPS tracker for the currently active trip (null when idle). */
     private var tracker: LocationTracker? = null
@@ -647,6 +651,129 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         tracker?.stop()
         tracker = null
         super.onCleared()
+    }
+
+    // MARK: - Work task write path
+
+    /** Log a new work task, optimistically inserting it at the top of the list. */
+    fun createWorkTask(
+        taskType: String,
+        paddockId: String?,
+        date: String,
+        durationHours: Double,
+        notes: String?,
+        onResult: (Boolean) -> Unit,
+    ) {
+        val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
+        viewModelScope.launch {
+            _ui.update { it.copy(workTaskBusy = true, workTaskError = null) }
+            try {
+                val paddock = _ui.value.paddocks.firstOrNull { it.id == paddockId }
+                val created = workTaskRepo.createWorkTask(
+                    vineyardId = vineyardId,
+                    paddockId = paddockId,
+                    paddockName = paddock?.name,
+                    date = date,
+                    taskType = taskType.trim(),
+                    durationHours = durationHours,
+                    notes = notes?.ifBlank { null },
+                )
+                _ui.update { it.copy(workTasks = listOf(created) + it.workTasks, workTaskBusy = false) }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                _ui.update { it.copy(workTaskBusy = false) }
+                signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(workTaskBusy = false, workTaskError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(workTaskBusy = false, workTaskError = "Couldn't save the task. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /** Edit an existing work task's details (no completion changes). */
+    fun updateWorkTask(
+        taskId: String,
+        taskType: String,
+        paddockId: String?,
+        date: String,
+        durationHours: Double,
+        notes: String?,
+        onResult: (Boolean) -> Unit,
+    ) {
+        val previous = _ui.value.workTasks
+        viewModelScope.launch {
+            _ui.update { it.copy(workTaskError = null) }
+            try {
+                val paddock = _ui.value.paddocks.firstOrNull { it.id == paddockId }
+                val updated = workTaskRepo.updateMetadata(
+                    id = taskId,
+                    paddockId = paddockId,
+                    paddockName = paddock?.name,
+                    date = date,
+                    taskType = taskType.trim(),
+                    durationHours = durationHours,
+                    notes = notes?.ifBlank { null },
+                )
+                _ui.update { st -> st.copy(workTasks = st.workTasks.map { if (it.id == taskId) updated else it }) }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(workTasks = previous, workTaskError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(workTasks = previous, workTaskError = "Couldn't save the task. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /** Mark a work task complete or reopen it, with an optimistic flip. */
+    fun setWorkTaskComplete(taskId: String, complete: Boolean, onResult: (Boolean) -> Unit = {}) {
+        val previous = _ui.value.workTasks
+        _ui.update { st -> st.copy(workTasks = st.workTasks.map { if (it.id == taskId) it.copy(isFinalized = complete) else it }) }
+        viewModelScope.launch {
+            try {
+                val updated = workTaskRepo.setFinalized(taskId, complete)
+                _ui.update { st -> st.copy(workTasks = st.workTasks.map { if (it.id == taskId) updated else it }) }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(workTasks = previous, workTaskError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(workTasks = previous, workTaskError = "Couldn't update the task. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /** Soft-delete a work task via the server RPC, optimistically removing it. */
+    fun deleteWorkTask(taskId: String, onResult: (Boolean) -> Unit) {
+        val previous = _ui.value.workTasks
+        _ui.update { st -> st.copy(workTasks = st.workTasks.filterNot { it.id == taskId }) }
+        viewModelScope.launch {
+            try {
+                workTaskRepo.softDeleteWorkTask(taskId)
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(workTasks = previous, workTaskError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(workTasks = previous, workTaskError = "Couldn't delete the task. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    fun clearWorkTaskError() {
+        _ui.update { it.copy(workTaskError = null) }
     }
 
     private fun friendlyWriteError(code: Int): String = when (code) {
