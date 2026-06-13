@@ -60,7 +60,7 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState) {
         when (selected) {
             0 -> HomeDashboard(vm, state, modifier) { selected = it }
             1 -> BlocksScreen(state, modifier)
-            2 -> PinsScreen(state, modifier)
+            2 -> PinsScreen(vm, state, modifier)
             3 -> TripsScreen(state, modifier)
             4 -> SettingsScreen(vm, state, modifier)
         }

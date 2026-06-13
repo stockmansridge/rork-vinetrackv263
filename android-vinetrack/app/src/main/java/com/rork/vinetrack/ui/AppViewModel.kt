@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.rork.vinetrack.data.BackendError
+import com.rork.vinetrack.data.PinRepository
 import com.rork.vinetrack.data.VineyardRepository
 import com.rork.vinetrack.data.auth.AuthRepository
 import com.rork.vinetrack.data.auth.SessionStore
@@ -48,6 +49,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val session = SessionStore(app)
     private val auth = AuthRepository(session)
     private val repo = VineyardRepository(session)
+    private val pinRepo = PinRepository(session)
 
     private val _ui = MutableStateFlow(AppUiState())
     val ui: StateFlow<AppUiState> = _ui.asStateFlow()
@@ -173,6 +175,154 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun refresh() {
         val id = _ui.value.selectedVineyardId ?: return
         viewModelScope.launch { loadVineyardData(id) }
+    }
+
+    // MARK: - Pin write path
+
+    /**
+     * Create a pin. Optimistically inserts a temporary row so the list updates
+     * instantly, then swaps in the server-confirmed pin (with its real id /
+     * timestamps) or rolls back on failure.
+     */
+    fun createPin(
+        title: String,
+        mode: String,
+        category: String?,
+        notes: String?,
+        paddockId: String?,
+        rowNumber: Int?,
+        isCompleted: Boolean,
+        latitude: Double?,
+        longitude: Double?,
+        onResult: (Boolean) -> Unit,
+    ) {
+        val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
+        viewModelScope.launch {
+            _ui.update { it.copy(pinError = null) }
+            try {
+                val created = pinRepo.createPin(
+                    PinRepository.PinInput(
+                        vineyardId = vineyardId,
+                        paddockId = paddockId,
+                        title = title.ifBlank { null },
+                        category = category?.ifBlank { null },
+                        mode = mode.ifBlank { null },
+                        notes = notes?.ifBlank { null },
+                        rowNumber = rowNumber,
+                        isCompleted = isCompleted,
+                        latitude = latitude,
+                        longitude = longitude,
+                    )
+                )
+                _ui.update { it.copy(pins = listOf(created) + it.pins) }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                signOut()
+                onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(pinError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(pinError = "Couldn't save the pin. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /** Update an existing pin, optimistically reflecting edits then reconciling. */
+    fun updatePin(
+        pinId: String,
+        title: String,
+        mode: String,
+        category: String?,
+        notes: String?,
+        paddockId: String?,
+        rowNumber: Int?,
+        isCompleted: Boolean,
+        onResult: (Boolean) -> Unit,
+    ) {
+        val previous = _ui.value.pins
+        viewModelScope.launch {
+            _ui.update { it.copy(pinError = null) }
+            try {
+                val updated = pinRepo.updatePin(
+                    id = pinId,
+                    paddockId = paddockId,
+                    title = title.ifBlank { null },
+                    category = category?.ifBlank { null },
+                    mode = mode.ifBlank { null },
+                    notes = notes?.ifBlank { null },
+                    rowNumber = rowNumber,
+                    isCompleted = isCompleted,
+                )
+                _ui.update { st -> st.copy(pins = st.pins.map { if (it.id == pinId) updated else it }) }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                signOut()
+                onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(pins = previous, pinError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(pins = previous, pinError = "Couldn't save the pin. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /** Toggle a pin's completion state with an optimistic flip. */
+    fun togglePinCompleted(pin: Pin) {
+        val previous = _ui.value.pins
+        val target = !pin.isCompleted
+        _ui.update { st -> st.copy(pins = st.pins.map { if (it.id == pin.id) it.copy(isCompleted = target) else it }) }
+        viewModelScope.launch {
+            try {
+                pinRepo.updatePin(
+                    id = pin.id,
+                    paddockId = pin.paddockId,
+                    title = pin.title,
+                    category = pin.category,
+                    mode = pin.mode,
+                    notes = pin.notes,
+                    rowNumber = null,
+                    isCompleted = target,
+                )
+            } catch (e: BackendError.Unauthorized) {
+                signOut()
+            } catch (e: Exception) {
+                _ui.update { it.copy(pins = previous, pinError = "Couldn't update the pin. Check your connection.") }
+            }
+        }
+    }
+
+    /** Soft-delete a pin via the server RPC, optimistically removing it. */
+    fun deletePin(pinId: String, onResult: (Boolean) -> Unit) {
+        val previous = _ui.value.pins
+        _ui.update { st -> st.copy(pins = st.pins.filterNot { it.id == pinId }) }
+        viewModelScope.launch {
+            try {
+                pinRepo.softDeletePin(pinId)
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                signOut()
+                onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(pins = previous, pinError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(pins = previous, pinError = "Couldn't delete the pin. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    fun clearPinError() {
+        _ui.update { it.copy(pinError = null) }
+    }
+
+    private fun friendlyWriteError(code: Int): String = when (code) {
+        403 -> "You don't have permission to do that."
+        else -> "Something went wrong. Please try again."
     }
 
     private suspend fun loadVineyardData(vineyardId: String) {
