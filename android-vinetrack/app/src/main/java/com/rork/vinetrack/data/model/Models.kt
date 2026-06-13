@@ -739,6 +739,23 @@ data class SprayRecord(
     }
 }
 
+/**
+ * Resolve the trip a spray record was logged against, or null when unlinked or
+ * the linked trip is unavailable (e.g. deleted). Mirrors the iOS lookup
+ * `store.trips.first { $0.id == record.tripId }`.
+ */
+fun resolveSprayTrip(record: SprayRecord, trips: List<Trip>): Trip? =
+    record.tripId?.let { id -> trips.firstOrNull { it.id == id } }
+
+/**
+ * Resolve the work task a spray record relates to. `spray_records` has no
+ * `work_task_id` column, so — like iOS — the task is derived through the
+ * record's linked trip (`trip.work_task_id`). Returns null when there is no
+ * linked trip or the trip carries no work-task link.
+ */
+fun resolveSprayWorkTask(record: SprayRecord, trips: List<Trip>, workTasks: List<WorkTask>): WorkTask? =
+    resolveSprayTrip(record, trips)?.let { trip -> resolveTripWorkTask(trip, workTasks) }
+
 /** Built-in spray operation types — raw values match the iOS `OperationType` enum. */
 val sprayOperationTypes: List<String> = listOf(
     "Foliar Spray",

@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.Notes
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -303,6 +304,12 @@ private fun WorkTaskDetailView(
     // Count GPS trips grouped under this task (mirrors iOS work_task_id link).
     val linkedTrips = remember(state.trips, taskId) { state.trips.filter { it.workTaskId == taskId } }
 
+    // Spray records have no work_task_id; relate them via the task's linked trips.
+    val linkedSprays = remember(linkedTrips, state.sprayRecords) {
+        val tripIds = linkedTrips.map { it.id }.toSet()
+        state.sprayRecords.filter { it.tripId != null && it.tripId in tripIds }
+    }
+
     val labourLines = remember(state.taskLabourLines, taskId) {
         state.taskLabourLines.filter { it.workTaskId == taskId }.sortedBy { it.workDate }
     }
@@ -477,6 +484,39 @@ private fun WorkTaskDetailView(
                                 Text(trip.displayLabel, color = vine.textPrimary, fontSize = 14.sp, modifier = Modifier.weight(1f), maxLines = 1)
                                 trip.activeDurationSeconds?.let {
                                     Text(com.rork.vinetrack.data.model.formatTripDuration(it), color = vine.textSecondary, fontSize = 13.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (linkedSprays.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SectionHeader("Linked sprays · ${linkedSprays.size}", onLight = true)
+                    VineyardCard {
+                        linkedSprays.forEachIndexed { i, spray ->
+                            if (i > 0) DividerWT(vine.cardBorder)
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                Box(
+                                    modifier = Modifier.size(28.dp).clip(CircleShape).background(VineColors.Cyan.copy(alpha = 0.15f)),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(Icons.Filled.WaterDrop, contentDescription = null, tint = VineColors.Cyan, modifier = Modifier.size(16.dp))
+                                }
+                                Text(spray.displayLabel, color = vine.textPrimary, fontSize = 14.sp, modifier = Modifier.weight(1f), maxLines = 1)
+                                val chems = spray.chemicalNames
+                                if (chems.isNotEmpty()) {
+                                    Text(
+                                        if (chems.size <= 2) chems.joinToString(", ") else "${chems.take(2).joinToString(", ")} +${chems.size - 2}",
+                                        color = vine.textSecondary,
+                                        fontSize = 12.sp,
+                                        maxLines = 1,
+                                    )
                                 }
                             }
                         }

@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Straighten
+import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -475,6 +476,34 @@ private fun TripDetailView(
                     trip.endEpochMs?.let {
                         Divider(vine.cardBorder)
                         DetailRow(Icons.Filled.Schedule, "Finished", formatTripDateTime(it) ?: "—", VineColors.DarkGreen)
+                    }
+                }
+            }
+
+            // Linked spray record (spray_records.trip_id == trip.id), mirroring iOS.
+            val linkedSpray = remember(trip.id, state.sprayRecords) {
+                state.sprayRecords.firstOrNull { it.tripId == trip.id }
+            }
+            if (linkedSpray != null) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SectionHeader("Spray", onLight = true)
+                    VineyardCard {
+                        DetailRow(
+                            Icons.Filled.WaterDrop,
+                            "Spray record",
+                            linkedSpray.displayLabel,
+                            VineColors.Cyan,
+                        )
+                        val chems = linkedSpray.chemicalNames
+                        if (chems.isNotEmpty()) {
+                            Divider(vine.cardBorder)
+                            DetailRow(
+                                Icons.Filled.Grass,
+                                "Chemicals",
+                                if (chems.size <= 2) chems.joinToString(", ") else "${chems.take(2).joinToString(", ")} +${chems.size - 2}",
+                                VineColors.LeafGreen,
+                            )
+                        }
                     }
                 }
             }

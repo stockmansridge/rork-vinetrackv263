@@ -28,8 +28,10 @@ import java.util.UUID
  *
  * Online-first — there is no local queue yet. The spray form is the sole editor
  * of these columns (including the `tanks` JSONB), so create/edit send the full
- * editable column set. `trip_id`, `created_by` and the server-managed sync
- * columns are left untouched on edit.
+ * editable column set. `trip_id` is the only link field the schema supports
+ * (there is no `work_task_id` on spray_records — iOS derives the task via the
+ * linked trip), and it is user-editable from the form. `created_by` and the
+ * server-managed sync columns are left untouched on edit.
  */
 class SprayRecordRepository(private val session: SessionStore) {
 
@@ -52,6 +54,7 @@ class SprayRecordRepository(private val session: SessionStore) {
         @SerialName("tractor_gear") val tractorGear: String? = null,
         @SerialName("machine_id") val machineId: String? = null,
         @SerialName("operation_type") val operationType: String? = null,
+        @SerialName("trip_id") val tripId: String? = null,
         val tanks: List<SprayTank> = emptyList(),
         @SerialName("created_by") val createdBy: String? = null,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
@@ -75,6 +78,7 @@ class SprayRecordRepository(private val session: SessionStore) {
         @SerialName("tractor_gear") val tractorGear: String? = null,
         @SerialName("machine_id") val machineId: String? = null,
         @SerialName("operation_type") val operationType: String? = null,
+        @SerialName("trip_id") val tripId: String? = null,
         val tanks: List<SprayTank> = emptyList(),
         @SerialName("client_updated_at") val clientUpdatedAt: String,
     )
@@ -99,6 +103,7 @@ class SprayRecordRepository(private val session: SessionStore) {
         val tractorGear: String?,
         val machineId: String?,
         val operationType: String?,
+        val tripId: String?,
         val tanks: List<SprayTank>,
     )
 
@@ -127,6 +132,7 @@ class SprayRecordRepository(private val session: SessionStore) {
                 tractorGear = input.tractorGear,
                 machineId = input.machineId,
                 operationType = input.operationType,
+                tripId = input.tripId,
                 tanks = input.tanks,
                 createdBy = session.userId,
                 clientUpdatedAt = now,
@@ -160,6 +166,7 @@ class SprayRecordRepository(private val session: SessionStore) {
                 tractorGear = input.tractorGear,
                 machineId = input.machineId,
                 operationType = input.operationType,
+                tripId = input.tripId,
                 tanks = input.tanks,
                 clientUpdatedAt = nowIso(),
             )

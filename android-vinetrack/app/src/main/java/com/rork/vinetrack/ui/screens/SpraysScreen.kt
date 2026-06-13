@@ -82,6 +82,9 @@ import com.rork.vinetrack.data.model.SprayChemical
 import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.SprayTank
 import com.rork.vinetrack.data.model.VineyardMachine
+import com.rork.vinetrack.data.model.resolveSprayTrip
+import com.rork.vinetrack.data.model.resolveSprayWorkTask
+import com.rork.vinetrack.data.model.resolveTripWorkTask
 import com.rork.vinetrack.data.model.sprayOperationTypes
 import com.rork.vinetrack.data.model.windDirectionOptions
 import com.rork.vinetrack.ui.AppUiState
@@ -366,6 +369,27 @@ private fun SprayDetailView(
                 }
             }
 
+            // Links: resolved trip + work task derived through that trip (iOS pattern).
+            if (record.tripId != null) {
+                val linkedTrip = resolveSprayTrip(record, state.trips)
+                val linkedTask = resolveSprayWorkTask(record, state.trips, state.workTasks)
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SectionHeader("Links", onLight = true)
+                    VineyardCard {
+                        DetailRowSP(
+                            Icons.Filled.Schedule,
+                            "Trip",
+                            linkedTrip?.displayLabel ?: "Linked trip unavailable",
+                            VineColors.Indigo,
+                        )
+                        if (linkedTask != null) {
+                            DividerSP(vine.cardBorder)
+                            DetailRowSP(Icons.Filled.Notes, "Work task", linkedTask.displayLabel, VineColors.LeafGreen)
+                        }
+                    }
+                }
+            }
+
             record.notes?.takeIf { it.isNotBlank() }?.let { notes ->
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     SectionHeader("Notes", onLight = true)
@@ -464,6 +488,7 @@ private fun SpraySheet(
     var fansJets by remember { mutableStateOf(existing?.numberOfFansJets ?: "") }
     var avgSpeed by remember { mutableStateOf(existing?.averageSpeed?.let { trimNum(it) } ?: "") }
     var notes by remember { mutableStateOf(existing?.notes ?: "") }
+    var tripId by remember { mutableStateOf(existing?.tripId) }
 
     val tanks = remember {
         val initial = existing?.tanks?.takeIf { it.isNotEmpty() }?.map { it.toDraft() }
@@ -496,6 +521,7 @@ private fun SpraySheet(
             tractorGear = tractorGear.trim().ifBlank { null },
             machineId = machineId,
             operationType = operationType,
+            tripId = tripId,
             tanks = tankModels,
         )
     }
@@ -667,6 +693,28 @@ private fun SpraySheet(
                 modifier = Modifier.fillMaxWidth(),
             )
 
+            // Links: trip (the only schema-supported link). Selecting a trip also
+            // surfaces the trip's work task, mirroring the iOS derived-task pattern.
+            SectionHeader("Links", onLight = true)
+            SprayTripPicker(state = state, selectedId = tripId, onSelect = { tripId = it })
+            val linkedTrip = remember(tripId, state.trips) { state.trips.firstOrNull { it.id == tripId } }
+            val derivedTask = remember(linkedTrip, state.workTasks) {
+                linkedTrip?.let { resolveTripWorkTask(it, state.workTasks) }
+            }
+            if (tripId != null) {
+                val taskLabel = when {
+                    derivedTask != null -> derivedTask.displayLabel
+                    linkedTrip == null -> "Linked trip unavailable"
+                    else -> "No work task on this trip"
+                }
+                Text(
+                    "Work task: $taskLabel",
+                    fontSize = 13.sp,
+                    color = vine.textSecondary,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+
             OutlinedTextField(
                 value = notes,
                 onValueChange = { notes = it },
@@ -781,6 +829,43 @@ private fun TankEditor(tank: TankDraft, index: Int, canRemove: Boolean, onRemove
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Trip picker for spray records — links the record to a logged trip via
+ * `spray_records.trip_id`. Lists the vineyard's trips most-recent-first; the
+ * default "No trip linked" clears the link. Shows a friendly fallback label
+ * when the saved trip can no longer be resolved (e.g. deleted).
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SprayTripPicker(state: AppUiState, selectedId: String?, onSelect: (String?) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    val trips = remember(state.trips) { state.trips.sortedByDescending { it.startEpochMs ?: 0L } }
+    val selectedLabel = trips.firstOrNull { it.id == selectedId }?.displayLabel
+        ?: if (selectedId != null) "Linked trip unavailable" else "No trip linked"
+    ExposedDropdownMenuBox(expanded = open, onExpandedChange = { open = it }) {
+        OutlinedTextField(
+            value = selectedLabel,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Trip") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = open) },
+            modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+        )
+        ExposedDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(text = { Text("No trip linked") }, onClick = { onSelect(null); open = false })
+            trips.forEach { t ->
+                DropdownMenuItem(
+                    text = {
+                        val sub = formatSprayDate(t.startEpochMs)
+                        Text(if (sub != null) "${t.displayLabel} · $sub" else t.displayLabel)
+                    },
+                    onClick = { onSelect(t.id); open = false },
                 )
             }
         }
