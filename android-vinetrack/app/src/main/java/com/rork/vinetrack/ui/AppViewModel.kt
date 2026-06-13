@@ -20,6 +20,7 @@ import com.rork.vinetrack.data.model.CoordinatePoint
 import com.rork.vinetrack.data.model.OperatorCategory
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Pin
+import com.rork.vinetrack.data.model.SprayEquipment
 import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.Vineyard
@@ -54,6 +55,7 @@ data class AppUiState(
     val members: List<VineyardMember> = emptyList(),
     val operatorCategories: List<OperatorCategory> = emptyList(),
     val sprayRecords: List<SprayRecord> = emptyList(),
+    val sprayEquipment: List<SprayEquipment> = emptyList(),
     val isLoadingVineyardData: Boolean = false,
     val paddockError: String? = null,
     val pinError: String? = null,
@@ -216,7 +218,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         session.selectedVineyardId = id
         // Clear the previous vineyard's data so the UI doesn't briefly show
         // stale blocks/pins while the new vineyard loads.
-        _ui.update { it.copy(selectedVineyardId = id, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), sprayRecords = emptyList()) }
+        _ui.update { it.copy(selectedVineyardId = id, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), sprayRecords = emptyList(), sprayEquipment = emptyList()) }
         viewModelScope.launch { loadVineyardData(id) }
     }
 
@@ -1131,6 +1133,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } catch (e: Exception) {
             _ui.value.sprayRecords
         }
+        // Spray equipment is an optional reference list backing the spray form
+        // picker; soft-fail to the existing list (or empty).
+        val sprayEquipment = try {
+            repo.listSprayEquipment(vineyardId)
+        } catch (e: Exception) {
+            _ui.value.sprayEquipment
+        }
         _ui.update {
             it.copy(
                 paddocks = paddocks,
@@ -1141,6 +1150,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 members = members,
                 operatorCategories = operatorCategories,
                 sprayRecords = sprayRecords,
+                sprayEquipment = sprayEquipment,
                 isLoadingVineyardData = false,
                 paddockError = paddockError,
                 pinError = pinError,

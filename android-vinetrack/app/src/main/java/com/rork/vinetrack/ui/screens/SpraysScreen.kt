@@ -86,6 +86,7 @@ import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.SprayStatus
 import com.rork.vinetrack.data.model.SprayTank
 import com.rork.vinetrack.data.model.VineyardMachine
+import com.rork.vinetrack.data.model.resolveSprayEquipmentName
 import com.rork.vinetrack.data.model.resolveSprayTrip
 import com.rork.vinetrack.data.model.resolveSprayWorkTask
 import com.rork.vinetrack.data.model.resolveTripWorkTask
@@ -498,8 +499,9 @@ private fun SprayDetailView(
 
             // Equipment
             val machineName = record.displayMachine(state.machines)
+            val sprayEquipName = resolveSprayEquipmentName(record, state.sprayEquipment)
             val equipParts = buildList {
-                record.equipmentType?.takeIf { it.isNotBlank() }?.let { add(Triple(Icons.Filled.Agriculture, "Equipment", it)) }
+                sprayEquipName?.let { add(Triple(Icons.Filled.Agriculture, "Spray equipment", it)) }
                 machineName?.let { add(Triple(Icons.Filled.Agriculture, "Machine", it)) }
                 record.tractorGear?.takeIf { it.isNotBlank() }?.let { add(Triple(Icons.Filled.Agriculture, "Gear", it)) }
                 record.numberOfFansJets?.takeIf { it.isNotBlank() }?.let { add(Triple(Icons.Filled.Air, "Fans / jets", it)) }
@@ -638,6 +640,7 @@ private fun SpraySheet(
     var equipmentType by remember { mutableStateOf(existing?.equipmentType ?: "") }
     var tractorText by remember { mutableStateOf(existing?.tractor ?: "") }
     var machineId by remember { mutableStateOf(existing?.machineId) }
+    var sprayEquipmentId by remember { mutableStateOf(existing?.sprayEquipmentId) }
     var tractorGear by remember { mutableStateOf(existing?.tractorGear ?: "") }
     var fansJets by remember { mutableStateOf(existing?.numberOfFansJets ?: "") }
     var avgSpeed by remember { mutableStateOf(existing?.averageSpeed?.let { trimNum(it) } ?: "") }
@@ -674,6 +677,7 @@ private fun SpraySheet(
             tractor = tractorText.trim().ifBlank { null },
             tractorGear = tractorGear.trim().ifBlank { null },
             machineId = machineId,
+            sprayEquipmentId = sprayEquipmentId,
             operationType = operationType,
             tripId = tripId,
             isTemplate = isTemplate,
@@ -814,9 +818,26 @@ private fun SpraySheet(
 
             // Equipment
             SectionHeader("Equipment", onLight = true)
+            // Spray-equipment picker. Selecting a rig also fills the
+            // `equipment_type` text snapshot and stores the stable link,
+            // matching iOS. Typing a different equipment type below clears the
+            // link so the snapshot stays authoritative.
+            SprayEquipmentPicker(
+                state = state,
+                selectedId = sprayEquipmentId,
+                onSelect = { eq ->
+                    sprayEquipmentId = eq?.id
+                    if (eq != null) equipmentType = eq.displayName
+                },
+            )
             OutlinedTextField(
                 value = equipmentType,
-                onValueChange = { equipmentType = it },
+                onValueChange = {
+                    equipmentType = it
+                    // Drop the stable link unless the text still matches the rig.
+                    val linked = state.sprayEquipment.firstOrNull { eq -> eq.id == sprayEquipmentId }
+                    if (linked != null && linked.displayName != it) sprayEquipmentId = null
+                },
                 label = { Text("Equipment type (optional)") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
@@ -1013,6 +1034,41 @@ private fun TankEditor(tank: TankDraft, index: Int, canRemove: Boolean, onRemove
  * default "No trip linked" clears the link. Shows a friendly fallback label
  * when the saved trip can no longer be resolved (e.g. deleted).
  */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SprayEquipmentPicker(
+    state: AppUiState,
+    selectedId: String?,
+    onSelect: (com.rork.vinetrack.data.model.SprayEquipment?) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    val equipment = remember(state.sprayEquipment) { state.sprayEquipment.sortedBy { it.displayName } }
+    val selectedLabel = equipment.firstOrNull { it.id == selectedId }?.displayName
+        ?: if (selectedId != null) "Spray equipment unavailable" else "No spray equipment"
+    ExposedDropdownMenuBox(expanded = open, onExpandedChange = { open = it }) {
+        OutlinedTextField(
+            value = selectedLabel,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Spray equipment") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = open) },
+            modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+        )
+        ExposedDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(text = { Text("None") }, onClick = { onSelect(null); open = false })
+            equipment.forEach { eq ->
+                DropdownMenuItem(
+                    text = {
+                        val cap = eq.tankCapacityLitres?.takeIf { it > 0 }?.let { "${trimNum(it)} L" }
+                        Text(if (cap != null) "${eq.displayName} · $cap" else eq.displayName)
+                    },
+                    onClick = { onSelect(eq); open = false },
+                )
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SprayTripPicker(state: AppUiState, selectedId: String?, onSelect: (String?) -> Unit) {

@@ -4,6 +4,7 @@ import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.OperatorCategory
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Pin
+import com.rork.vinetrack.data.model.SprayEquipment
 import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.Vineyard
@@ -56,6 +57,10 @@ class VineyardRepository(private val session: SessionStore) {
 
     suspend fun listSprayRecords(vineyardId: String): List<SprayRecord> = withContext(Dispatchers.IO) {
         get("spray_records?select=*&vineyard_id=eq.$vineyardId&deleted_at=is.null&order=date.desc")
+    }
+
+    suspend fun listSprayEquipment(vineyardId: String): List<SprayEquipment> = withContext(Dispatchers.IO) {
+        get("spray_equipment?select=*&vineyard_id=eq.$vineyardId&deleted_at=is.null&order=name.asc")
     }
 
     suspend fun listOperatorCategories(vineyardId: String): List<OperatorCategory> = withContext(Dispatchers.IO) {

@@ -740,6 +740,38 @@ data class SprayRecord(
 }
 
 /**
+ * A spray rig / tank — backs `public.spray_equipment` (sql/011). Spray records
+ * optionally link one via `spray_records.spray_equipment_id`. Read-only on
+ * Android (managed on iOS); RLS scopes selects to vineyard members.
+ */
+@Serializable
+data class SprayEquipment(
+    val id: String,
+    @SerialName("vineyard_id") val vineyardId: String,
+    val name: String = "",
+    @SerialName("tank_capacity_litres") val tankCapacityLitres: Double? = null,
+    @SerialName("deleted_at") val deletedAt: String? = null,
+) {
+    val displayName: String get() = name.trim().takeIf { it.isNotBlank() } ?: "Spray equipment"
+}
+
+/**
+ * Resolve a spray record's spray-equipment display name, mirroring the iOS
+ * `EquipmentResolver.sprayEquipmentName`: prefer the stable `spray_equipment_id`
+ * link, fall back to the free-text `equipment_type` snapshot, and show a
+ * friendly placeholder only when a link exists but the asset is unavailable
+ * (e.g. soft-deleted). Returns null when there is nothing to show.
+ */
+fun resolveSprayEquipmentName(record: SprayRecord, equipment: List<SprayEquipment>): String? {
+    record.sprayEquipmentId?.let { eid ->
+        equipment.firstOrNull { it.id == eid }?.let { return it.displayName }
+        record.equipmentType?.takeIf { it.isNotBlank() }?.let { return it }
+        return "Spray equipment unavailable"
+    }
+    return record.equipmentType?.takeIf { it.isNotBlank() }
+}
+
+/**
  * Resolve the trip a spray record was logged against, or null when unlinked or
  * the linked trip is unavailable (e.g. deleted). Mirrors the iOS lookup
  * `store.trips.first { $0.id == record.tripId }`.
