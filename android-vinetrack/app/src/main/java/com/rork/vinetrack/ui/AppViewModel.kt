@@ -12,6 +12,7 @@ import com.rork.vinetrack.data.PinRepository
 import com.rork.vinetrack.data.TripRepository
 import com.rork.vinetrack.data.VineyardRepository
 import com.rork.vinetrack.data.WorkTaskRepository
+import com.rork.vinetrack.data.WorkTaskLineRepository
 import com.rork.vinetrack.data.auth.AuthRepository
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.CoordinatePoint
@@ -23,6 +24,8 @@ import com.rork.vinetrack.data.model.Vineyard
 import com.rork.vinetrack.data.model.VineyardMachine
 import com.rork.vinetrack.data.model.VineyardMember
 import com.rork.vinetrack.data.model.WorkTask
+import com.rork.vinetrack.data.model.WorkTaskLabourLine
+import com.rork.vinetrack.data.model.WorkTaskMachineLine
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -57,6 +60,15 @@ data class AppUiState(
     val isTracking: Boolean = false,
     val workTaskError: String? = null,
     val workTaskBusy: Boolean = false,
+    /** Labour lines for the work task currently open in detail. */
+    val taskLabourLines: List<WorkTaskLabourLine> = emptyList(),
+    /** Machine lines for the work task currently open in detail. */
+    val taskMachineLines: List<WorkTaskMachineLine> = emptyList(),
+    /** Work task id the loaded lines belong to (null when nothing is open). */
+    val taskLinesTaskId: String? = null,
+    val taskLinesLoading: Boolean = false,
+    val taskLineBusy: Boolean = false,
+    val taskLineError: String? = null,
 ) {
     val selectedVineyard: Vineyard? get() = vineyards.firstOrNull { it.id == selectedVineyardId }
     val openPins: Int get() = pins.count { !it.isCompleted }
@@ -74,6 +86,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val pinPhotoRepo = PinPhotoRepository(session)
     private val tripRepo = TripRepository(session)
     private val workTaskRepo = WorkTaskRepository(session)
+    private val workTaskLineRepo = WorkTaskLineRepository(session)
 
     /** Foreground GPS tracker for the currently active trip (null when idle). */
     private var tracker: LocationTracker? = null
@@ -774,6 +787,205 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearWorkTaskError() {
         _ui.update { it.copy(workTaskError = null) }
+    }
+
+    // MARK: - Work task costing lines (labour + machine)
+
+    /**
+     * Load the labour & machine lines for a task opened in detail. Each list
+     * soft-fails independently so a single failure doesn't blank the screen.
+     */
+    fun loadTaskLines(taskId: String) {
+        _ui.update {
+            it.copy(
+                taskLinesTaskId = taskId,
+                taskLinesLoading = true,
+                taskLineError = null,
+                // Clear stale lines when switching tasks.
+                taskLabourLines = if (it.taskLinesTaskId == taskId) it.taskLabourLines else emptyList(),
+                taskMachineLines = if (it.taskLinesTaskId == taskId) it.taskMachineLines else emptyList(),
+            )
+        }
+        viewModelScope.launch {
+            val labour = try {
+                workTaskLineRepo.listLabourLines(taskId)
+            } catch (e: BackendError.Unauthorized) {
+                signOut(); return@launch
+            } catch (_: Exception) {
+                null
+            }
+            val machine = try {
+                workTaskLineRepo.listMachineLines(taskId)
+            } catch (e: BackendError.Unauthorized) {
+                signOut(); return@launch
+            } catch (_: Exception) {
+                null
+            }
+            _ui.update { st ->
+                if (st.taskLinesTaskId != taskId) return@update st
+                st.copy(
+                    taskLabourLines = labour ?: st.taskLabourLines,
+                    taskMachineLines = machine ?: st.taskMachineLines,
+                    taskLinesLoading = false,
+                    taskLineError = if (labour == null && machine == null) {
+                        "Couldn't load cost lines. Check your connection."
+                    } else null,
+                )
+            }
+        }
+    }
+
+    fun clearTaskLines() {
+        _ui.update {
+            it.copy(
+                taskLinesTaskId = null,
+                taskLabourLines = emptyList(),
+                taskMachineLines = emptyList(),
+                taskLineError = null,
+            )
+        }
+    }
+
+    fun clearTaskLineError() {
+        _ui.update { it.copy(taskLineError = null) }
+    }
+
+    /** Create or update a labour line, then merge the returned row (with DB totals). */
+    fun saveLabourLine(
+        lineId: String?,
+        taskId: String,
+        workDate: String,
+        operatorCategoryId: String?,
+        workerType: String,
+        workerCount: Int,
+        hoursPerWorker: Double,
+        hourlyRate: Double?,
+        notes: String?,
+        onResult: (Boolean) -> Unit,
+    ) {
+        val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
+        viewModelScope.launch {
+            _ui.update { it.copy(taskLineBusy = true, taskLineError = null) }
+            try {
+                val saved = workTaskLineRepo.upsertLabourLine(
+                    id = lineId,
+                    workTaskId = taskId,
+                    vineyardId = vineyardId,
+                    workDate = workDate,
+                    operatorCategoryId = operatorCategoryId,
+                    workerType = workerType,
+                    workerCount = workerCount,
+                    hoursPerWorker = hoursPerWorker,
+                    hourlyRate = hourlyRate,
+                    notes = notes,
+                )
+                _ui.update { st ->
+                    val others = st.taskLabourLines.filterNot { it.id == saved.id }
+                    st.copy(taskLabourLines = others + saved, taskLineBusy = false)
+                }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                _ui.update { it.copy(taskLineBusy = false) }; signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(taskLineBusy = false, taskLineError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(taskLineBusy = false, taskLineError = "Couldn't save the labour line. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /** Soft-delete a labour line, optimistically removing it. */
+    fun deleteLabourLine(lineId: String, onResult: (Boolean) -> Unit = {}) {
+        val previous = _ui.value.taskLabourLines
+        _ui.update { st -> st.copy(taskLabourLines = st.taskLabourLines.filterNot { it.id == lineId }) }
+        viewModelScope.launch {
+            try {
+                workTaskLineRepo.deleteLabourLine(lineId)
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(taskLabourLines = previous, taskLineError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(taskLabourLines = previous, taskLineError = "Couldn't remove the labour line. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /** Create or update a machine line, then merge the returned row. */
+    fun saveMachineLine(
+        lineId: String?,
+        taskId: String,
+        workDate: String,
+        equipmentRefId: String?,
+        equipmentNameSnapshot: String,
+        operatorCategoryId: String?,
+        durationHours: Double?,
+        fuelLitres: Double?,
+        fuelCost: Double?,
+        hourlyMachineRate: Double?,
+        totalMachineCost: Double?,
+        notes: String?,
+        onResult: (Boolean) -> Unit,
+    ) {
+        val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
+        viewModelScope.launch {
+            _ui.update { it.copy(taskLineBusy = true, taskLineError = null) }
+            try {
+                val saved = workTaskLineRepo.upsertMachineLine(
+                    id = lineId,
+                    workTaskId = taskId,
+                    vineyardId = vineyardId,
+                    workDate = workDate,
+                    equipmentRefId = equipmentRefId,
+                    equipmentNameSnapshot = equipmentNameSnapshot,
+                    operatorCategoryId = operatorCategoryId,
+                    durationHours = durationHours,
+                    fuelLitres = fuelLitres,
+                    fuelCost = fuelCost,
+                    hourlyMachineRate = hourlyMachineRate,
+                    totalMachineCost = totalMachineCost,
+                    notes = notes,
+                )
+                _ui.update { st ->
+                    val others = st.taskMachineLines.filterNot { it.id == saved.id }
+                    st.copy(taskMachineLines = others + saved, taskLineBusy = false)
+                }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                _ui.update { it.copy(taskLineBusy = false) }; signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(taskLineBusy = false, taskLineError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(taskLineBusy = false, taskLineError = "Couldn't save the machine line. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /** Soft-delete a machine line, optimistically removing it. */
+    fun deleteMachineLine(lineId: String, onResult: (Boolean) -> Unit = {}) {
+        val previous = _ui.value.taskMachineLines
+        _ui.update { st -> st.copy(taskMachineLines = st.taskMachineLines.filterNot { it.id == lineId }) }
+        viewModelScope.launch {
+            try {
+                workTaskLineRepo.deleteMachineLine(lineId)
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(taskMachineLines = previous, taskLineError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(taskMachineLines = previous, taskLineError = "Couldn't remove the machine line. Check your connection.") }
+                onResult(false)
+            }
+        }
     }
 
     private fun friendlyWriteError(code: Int): String = when (code) {

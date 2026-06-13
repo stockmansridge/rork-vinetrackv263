@@ -535,3 +535,82 @@ data class Pin(
             ?: mode?.takeIf { it.isNotBlank() }
             ?: "Pin"
 }
+
+/**
+ * A per-day, per-worker-type labour entry for a work task — backs
+ * `public.work_task_labour_lines` (sql/050). `total_hours` and `total_cost` are
+ * database-generated columns, so Android only writes the inputs and reads the
+ * computed totals back. Soft-deleted via the `soft_delete_work_task_labour_line`
+ * RPC (owner/manager/supervisor only); inserts/updates follow membership RLS.
+ */
+@Serializable
+data class WorkTaskLabourLine(
+    val id: String,
+    @SerialName("work_task_id") val workTaskId: String,
+    @SerialName("vineyard_id") val vineyardId: String,
+    @SerialName("work_date") val workDate: String? = null,
+    @SerialName("operator_category_id") val operatorCategoryId: String? = null,
+    @SerialName("worker_type") val workerType: String = "",
+    @SerialName("worker_count") val workerCount: Int = 1,
+    @SerialName("hours_per_worker") val hoursPerWorker: Double = 0.0,
+    @SerialName("hourly_rate") val hourlyRate: Double? = null,
+    @SerialName("total_hours") val totalHours: Double? = null,
+    @SerialName("total_cost") val totalCost: Double? = null,
+    val notes: String = "",
+    @SerialName("deleted_at") val deletedAt: String? = null,
+) {
+    /** Computed hours, falling back to the local product when the server value is absent. */
+    val resolvedHours: Double get() = totalHours ?: (workerCount.toDouble() * hoursPerWorker)
+
+    /** Computed cost, falling back to the local product when the server value is absent. */
+    val resolvedCost: Double get() = totalCost ?: (resolvedHours * (hourlyRate ?: 0.0))
+}
+
+/**
+ * A manual machine/equipment work entry for a work task — backs
+ * `public.work_task_machine_lines` (sql/103). Equipment identity uses the
+ * migration-safe `equipment_source` + `equipment_ref_id` + `equipment_name_snapshot`
+ * pattern, where the snapshot is the authoritative display value when no stable
+ * link resolves. Soft-deleted via `soft_delete_work_task_machine_line`.
+ */
+@Serializable
+data class WorkTaskMachineLine(
+    val id: String,
+    @SerialName("work_task_id") val workTaskId: String,
+    @SerialName("vineyard_id") val vineyardId: String,
+    @SerialName("work_date") val workDate: String? = null,
+    @SerialName("equipment_source") val equipmentSource: String? = null,
+    @SerialName("equipment_ref_id") val equipmentRefId: String? = null,
+    @SerialName("equipment_name_snapshot") val equipmentNameSnapshot: String = "",
+    @SerialName("operator_user_id") val operatorUserId: String? = null,
+    @SerialName("operator_category_id") val operatorCategoryId: String? = null,
+    @SerialName("duration_hours") val durationHours: Double? = null,
+    @SerialName("fuel_litres") val fuelLitres: Double? = null,
+    @SerialName("fuel_cost") val fuelCost: Double? = null,
+    @SerialName("hourly_machine_rate") val hourlyMachineRate: Double? = null,
+    @SerialName("total_machine_cost") val totalMachineCost: Double? = null,
+    @SerialName("entry_source") val entrySource: String = "manual",
+    val notes: String = "",
+    @SerialName("deleted_at") val deletedAt: String? = null,
+) {
+    /**
+     * Computed machine cost. Prefers the explicit `total_machine_cost`, else
+     * derives `duration * hourly_rate + fuel_cost` so the roll-up still works
+     * when only the inputs were entered.
+     */
+    val resolvedCost: Double
+        get() = totalMachineCost
+            ?: ((durationHours ?: 0.0) * (hourlyMachineRate ?: 0.0) + (fuelCost ?: 0.0))
+
+    /**
+     * Best display name for the linked equipment. Prefers a live match against
+     * the loaded machines (handling deleted/renamed equipment) and falls back
+     * to the stored snapshot or a friendly placeholder.
+     */
+    fun displayEquipment(machines: List<VineyardMachine>): String {
+        equipmentRefId?.let { ref ->
+            machines.firstOrNull { it.id == ref }?.let { return it.displayName }
+        }
+        return equipmentNameSnapshot.trim().takeIf { it.isNotBlank() } ?: "Machine"
+    }
+}
