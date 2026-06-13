@@ -36,6 +36,7 @@ object SupabaseClient {
     fun authUrl(path: String): String = "$baseUrl/auth/v1/$path"
     fun restUrl(path: String): String = "$baseUrl/rest/v1/$path"
     fun rpcUrl(name: String): String = "$baseUrl/rest/v1/rpc/$name"
+    fun storageUrl(path: String): String = "$baseUrl/storage/v1/$path"
 }
 
 /** Domain error surfaced to the UI layer. */

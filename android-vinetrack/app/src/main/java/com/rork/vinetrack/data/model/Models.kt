@@ -302,9 +302,13 @@ data class Pin(
     @SerialName("is_completed") val isCompleted: Boolean = false,
     val latitude: Double? = null,
     val longitude: Double? = null,
+    @SerialName("photo_path") val photoPath: String? = null,
     @SerialName("created_at") val createdAt: String? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
 ) {
+    /** True when this pin has a synced photo in the `vineyard-pin-photos` bucket. */
+    val hasPhoto: Boolean get() = !photoPath.isNullOrBlank()
+
     /** Best human label for the pin, mirroring iOS button-name fallback. */
     val displayTitle: String
         get() = title?.takeIf { it.isNotBlank() }

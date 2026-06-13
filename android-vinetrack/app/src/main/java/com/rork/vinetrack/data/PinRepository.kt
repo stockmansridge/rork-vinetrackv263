@@ -59,6 +59,9 @@ class PinRepository(private val session: SessionStore) {
     )
 
     @Serializable
+    private data class PhotoPatch(@SerialName("photo_path") val photoPath: String?)
+
+    @Serializable
     private data class SoftDeleteArgs(@SerialName("p_pin_id") val pinId: String)
 
     suspend fun createPin(input: PinInput): Pin = withContext(Dispatchers.IO) {
@@ -105,6 +108,28 @@ class PinRepository(private val session: SessionStore) {
             headers { append("Prefer", "return=representation") }
             contentType(ContentType.Application.Json)
             setBody(patch)
+        }
+        when {
+            response.status.isSuccess() -> response.body<List<Pin>>().firstOrNull()
+                ?: throw BackendError.Server(response.status.value, "Empty response")
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
+    }
+
+    /**
+     * Set or clear a pin's `photo_path` after a storage upload/removal. Kept
+     * separate from [updatePin] so photo writes don't disturb the editable
+     * field set, and returns the reconciled row so the UI can refresh.
+     */
+    suspend fun updatePhotoPath(id: String, photoPath: String?): Pin = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.patch(SupabaseClient.restUrl("pins?id=eq.$id")) {
+            authHeaders(token)
+            headers { append("Prefer", "return=representation") }
+            contentType(ContentType.Application.Json)
+            setBody(PhotoPatch(photoPath))
         }
         when {
             response.status.isSuccess() -> response.body<List<Pin>>().firstOrNull()

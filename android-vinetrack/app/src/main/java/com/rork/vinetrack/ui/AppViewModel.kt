@@ -3,7 +3,10 @@ package com.rork.vinetrack.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import android.net.Uri
 import com.rork.vinetrack.data.BackendError
+import com.rork.vinetrack.data.PinPhotoImageUtil
+import com.rork.vinetrack.data.PinPhotoRepository
 import com.rork.vinetrack.data.PinRepository
 import com.rork.vinetrack.data.VineyardRepository
 import com.rork.vinetrack.data.auth.AuthRepository
@@ -37,6 +40,7 @@ data class AppUiState(
     val paddockError: String? = null,
     val pinError: String? = null,
     val tripError: String? = null,
+    val pinPhotoBusy: Boolean = false,
 ) {
     val selectedVineyard: Vineyard? get() = vineyards.firstOrNull { it.id == selectedVineyardId }
     val openPins: Int get() = pins.count { !it.isCompleted }
@@ -50,6 +54,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val auth = AuthRepository(session)
     private val repo = VineyardRepository(session)
     private val pinRepo = PinRepository(session)
+    private val pinPhotoRepo = PinPhotoRepository(session)
 
     private val _ui = MutableStateFlow(AppUiState())
     val ui: StateFlow<AppUiState> = _ui.asStateFlow()
@@ -194,13 +199,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         isCompleted: Boolean,
         latitude: Double?,
         longitude: Double?,
+        photoUri: Uri? = null,
         onResult: (Boolean) -> Unit,
     ) {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
         viewModelScope.launch {
             _ui.update { it.copy(pinError = null) }
             try {
-                val created = pinRepo.createPin(
+                var created = pinRepo.createPin(
                     PinRepository.PinInput(
                         vineyardId = vineyardId,
                         paddockId = paddockId,
@@ -214,6 +220,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         longitude = longitude,
                     )
                 )
+                // A new pin only has its server id after creation, so any
+                // selected photo is uploaded here (mirrors iOS deferred upload).
+                if (photoUri != null) {
+                    try {
+                        val jpeg = PinPhotoImageUtil.compress(getApplication(), photoUri)
+                        val path = pinPhotoRepo.upload(vineyardId, created.id, jpeg)
+                        created = pinRepo.updatePhotoPath(created.id, path)
+                    } catch (e: Exception) {
+                        _ui.update { it.copy(pinError = "Pin saved, but the photo didn't upload. Open the pin to try again.") }
+                    }
+                }
                 _ui.update { it.copy(pins = listOf(created) + it.pins) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
@@ -318,6 +335,82 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearPinError() {
         _ui.update { it.copy(pinError = null) }
+    }
+
+    /**
+     * Compress and upload a photo for an existing pin, then persist the
+     * `photo_path` reference. Reports a friendly error on failure without
+     * losing the rest of the pin's data (the pin row is untouched until the
+     * upload succeeds).
+     */
+    fun uploadPinPhoto(pin: Pin, uri: Uri, onResult: (Boolean) -> Unit) {
+        val vineyardId = pin.vineyardId
+        _ui.update { it.copy(pinPhotoBusy = true, pinError = null) }
+        viewModelScope.launch {
+            try {
+                val jpeg = PinPhotoImageUtil.compress(getApplication(), uri)
+                val path = pinPhotoRepo.upload(vineyardId, pin.id, jpeg)
+                val updated = pinRepo.updatePhotoPath(pin.id, path)
+                _ui.update { st ->
+                    st.copy(
+                        pins = st.pins.map { if (it.id == pin.id) updated else it },
+                        pinPhotoBusy = false,
+                    )
+                }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                _ui.update { it.copy(pinPhotoBusy = false) }
+                signOut()
+                onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(pinPhotoBusy = false, pinError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(pinPhotoBusy = false, pinError = "Couldn't upload the photo. Check your connection and try again.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /** Remove a pin's photo from storage and clear its reference. */
+    fun removePinPhoto(pin: Pin, onResult: (Boolean) -> Unit) {
+        val path = pin.photoPath
+        if (path.isNullOrBlank()) { onResult(true); return }
+        _ui.update { it.copy(pinPhotoBusy = true, pinError = null) }
+        viewModelScope.launch {
+            try {
+                pinPhotoRepo.delete(path)
+                val updated = pinRepo.updatePhotoPath(pin.id, null)
+                _ui.update { st ->
+                    st.copy(
+                        pins = st.pins.map { if (it.id == pin.id) updated else it },
+                        pinPhotoBusy = false,
+                    )
+                }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                _ui.update { it.copy(pinPhotoBusy = false) }
+                signOut()
+                onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(pinPhotoBusy = false, pinError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(pinPhotoBusy = false, pinError = "Couldn't remove the photo. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /** Mint a signed URL so Coil can load the private pin photo. */
+    fun requestPinPhotoUrl(path: String, onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            try {
+                onResult(pinPhotoRepo.signedUrl(path))
+            } catch (e: Exception) {
+                onResult(null)
+            }
+        }
     }
 
     private fun friendlyWriteError(code: Int): String = when (code) {

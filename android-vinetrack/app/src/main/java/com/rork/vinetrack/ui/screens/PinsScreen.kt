@@ -1,5 +1,9 @@
 package com.rork.vinetrack.ui.screens
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -11,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -22,6 +27,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.outlined.AddAPhoto
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -31,6 +38,8 @@ import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.FloatingActionButton
@@ -46,6 +55,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -55,8 +65,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil3.compose.AsyncImage
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Pin
 import com.rork.vinetrack.ui.AppUiState
@@ -120,10 +132,12 @@ fun PinsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifie
     val target = editing
     if (target != null) {
         PinEditSheet(
+            vm = vm,
+            state = state,
             target = target,
             paddocks = state.paddocks,
             onDismiss = { editing = null },
-            onSave = { fields, onDone ->
+            onSave = { fields, photoUri, onDone ->
                 when (target) {
                     is PinEditTarget.New -> {
                         val loc = defaultLocation(fields.paddockId, state)
@@ -137,6 +151,7 @@ fun PinsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifie
                             isCompleted = fields.isCompleted,
                             latitude = loc?.first,
                             longitude = loc?.second,
+                            photoUri = photoUri,
                         ) { ok -> onDone(ok); if (ok) editing = null }
                     }
                     is PinEditTarget.Existing -> {
@@ -226,15 +241,20 @@ private val pinModes = listOf("Repairs", "Growth")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PinEditSheet(
+    vm: AppViewModel,
+    state: AppUiState,
     target: PinEditTarget,
     paddocks: List<Paddock>,
     onDismiss: () -> Unit,
-    onSave: (PinFields, (Boolean) -> Unit) -> Unit,
+    onSave: (PinFields, Uri?, (Boolean) -> Unit) -> Unit,
     onDelete: ((Boolean) -> Unit) -> Unit,
 ) {
     val vine = LocalVineColors.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val existing = (target as? PinEditTarget.Existing)?.pin
+    // Re-read the live pin so the photo section reflects uploads/removals.
+    val existing = (target as? PinEditTarget.Existing)?.let { t ->
+        state.pins.firstOrNull { it.id == t.pin.id } ?: t.pin
+    }
 
     var title by remember { mutableStateOf(existing?.title ?: "") }
     var mode by remember { mutableStateOf(existing?.mode?.takeIf { it in pinModes } ?: "Repairs") }
@@ -246,6 +266,19 @@ private fun PinEditSheet(
     var saving by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var paddockMenu by remember { mutableStateOf(false) }
+    // Photo selected for a brand-new pin (uploaded after the pin is created).
+    var pendingPhotoUri by remember { mutableStateOf<Uri?>(null) }
+
+    val photoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        if (existing != null) {
+            vm.uploadPinPhoto(existing, uri) {}
+        } else {
+            pendingPhotoUri = uri
+        }
+    }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(
@@ -330,6 +363,21 @@ private fun PinEditSheet(
                 modifier = Modifier.fillMaxWidth().height(110.dp),
             )
 
+            PinPhotoSection(
+                vm = vm,
+                pin = existing,
+                pendingPhotoUri = pendingPhotoUri,
+                busy = state.pinPhotoBusy,
+                onPick = {
+                    photoPicker.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                    )
+                },
+                onRemove = {
+                    if (existing != null) vm.removePinPhoto(existing) {} else pendingPhotoUri = null
+                },
+            )
+
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Switch(checked = isCompleted, onCheckedChange = { isCompleted = it })
                 Text("Completed", color = vine.textPrimary)
@@ -348,6 +396,7 @@ private fun PinEditSheet(
                             rowNumber = rowText.toIntOrNull(),
                             isCompleted = isCompleted,
                         ),
+                        pendingPhotoUri,
                     ) { saving = false }
                 },
                 enabled = !saving && title.isNotBlank(),
@@ -386,5 +435,93 @@ private fun PinEditSheet(
                 TextButton(onClick = { confirmDelete = false }) { Text("Cancel") }
             },
         )
+    }
+}
+
+/**
+ * Photo attachment for a pin. Shows the synced photo (existing pin) or the
+ * locally picked image (new pin), an add/replace action, a remove action, and
+ * an upload progress overlay. One photo per pin, matching the shared
+ * `vineyard-pin-photos` storage pattern used by iOS and the web portal.
+ */
+@Composable
+private fun PinPhotoSection(
+    vm: AppViewModel,
+    pin: Pin?,
+    pendingPhotoUri: Uri?,
+    busy: Boolean,
+    onPick: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val photoPath = pin?.photoPath
+    var signedUrl by remember(photoPath) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(photoPath) {
+        signedUrl = null
+        if (!photoPath.isNullOrBlank()) {
+            vm.requestPinPhotoUrl(photoPath) { url -> signedUrl = url }
+        }
+    }
+
+    val hasImage = pendingPhotoUri != null || !photoPath.isNullOrBlank()
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Photo", fontSize = 13.sp, color = vine.textSecondary)
+
+        if (hasImage) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(4f / 3f)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(vine.textSecondary.copy(alpha = 0.1f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                val model: Any? = pendingPhotoUri ?: signedUrl
+                if (model != null) {
+                    AsyncImage(
+                        model = model,
+                        contentDescription = "Pin photo",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxWidth().aspectRatio(4f / 3f),
+                    )
+                } else {
+                    CircularProgressIndicator(color = VineColors.PrimaryAccent)
+                }
+                if (busy) {
+                    Box(
+                        modifier = Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.35f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(color = androidx.compose.ui.graphics.Color.White)
+                    }
+                }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onPick, enabled = !busy, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Filled.PhotoCamera, contentDescription = null)
+                    Text("  Replace")
+                }
+                TextButton(onClick = onRemove, enabled = !busy) {
+                    Icon(Icons.Filled.Delete, contentDescription = null, tint = VineColors.Destructive)
+                    Text("  Remove", color = VineColors.Destructive)
+                }
+            }
+        } else {
+            OutlinedButton(
+                onClick = onPick,
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                if (busy) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), color = VineColors.PrimaryAccent)
+                } else {
+                    Icon(Icons.Outlined.AddAPhoto, contentDescription = null)
+                    Text("  Add photo")
+                }
+            }
+        }
     }
 }
