@@ -14,11 +14,13 @@ import com.rork.vinetrack.data.VineyardRepository
 import com.rork.vinetrack.data.auth.AuthRepository
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.CoordinatePoint
+import com.rork.vinetrack.data.model.OperatorCategory
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Pin
 import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.Vineyard
 import com.rork.vinetrack.data.model.VineyardMachine
+import com.rork.vinetrack.data.model.VineyardMember
 import com.rork.vinetrack.data.model.WorkTask
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -43,6 +45,8 @@ data class AppUiState(
     val trips: List<Trip> = emptyList(),
     val machines: List<VineyardMachine> = emptyList(),
     val workTasks: List<WorkTask> = emptyList(),
+    val members: List<VineyardMember> = emptyList(),
+    val operatorCategories: List<OperatorCategory> = emptyList(),
     val isLoadingVineyardData: Boolean = false,
     val paddockError: String? = null,
     val pinError: String? = null,
@@ -189,7 +193,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         session.selectedVineyardId = id
         // Clear the previous vineyard's data so the UI doesn't briefly show
         // stale blocks/pins while the new vineyard loads.
-        _ui.update { it.copy(selectedVineyardId = id, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList()) }
+        _ui.update { it.copy(selectedVineyardId = id, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList()) }
         viewModelScope.launch { loadVineyardData(id) }
     }
 
@@ -443,6 +447,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         tripTitle: String?,
         machineId: String? = null,
         workTaskId: String? = null,
+        operatorUserId: String? = null,
+        operatorCategoryId: String? = null,
         onResult: (Boolean) -> Unit,
     ) {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
@@ -458,6 +464,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     tripTitle = tripTitle?.ifBlank { null },
                     machineId = machineId,
                     workTaskId = workTaskId,
+                    operatorUserId = operatorUserId,
+                    operatorCategoryId = operatorCategoryId,
                 )
                 _ui.update { it.copy(trips = listOf(created) + it.trips, tripBusy = false) }
                 beginTracking(created)
@@ -485,6 +493,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         tripTitle: String?,
         machineId: String? = null,
         workTaskId: String? = null,
+        operatorUserId: String? = null,
+        operatorCategoryId: String? = null,
         onResult: (Boolean) -> Unit,
     ) {
         val previous = _ui.value.trips
@@ -500,6 +510,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     tripTitle = tripTitle?.ifBlank { null },
                     machineId = machineId,
                     workTaskId = workTaskId,
+                    operatorUserId = operatorUserId,
+                    operatorCategoryId = operatorCategoryId,
                 )
                 _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == tripId) updated else it }) }
                 onResult(true)
@@ -687,6 +699,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } catch (e: Exception) {
             _ui.value.workTasks
         }
+        // Team members + operator categories back the trip operator picker.
+        // Both are optional reference lists — soft-fail to the existing list
+        // (or empty) so the Trips screen still works if either is unavailable.
+        val members = try {
+            repo.listTeamMembers(vineyardId)
+        } catch (e: Exception) {
+            _ui.value.members
+        }
+        val operatorCategories = try {
+            repo.listOperatorCategories(vineyardId)
+        } catch (e: Exception) {
+            _ui.value.operatorCategories
+        }
         _ui.update {
             it.copy(
                 paddocks = paddocks,
@@ -694,6 +719,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 trips = trips,
                 machines = machines,
                 workTasks = workTasks,
+                members = members,
+                operatorCategories = operatorCategories,
                 isLoadingVineyardData = false,
                 paddockError = paddockError,
                 pinError = pinError,

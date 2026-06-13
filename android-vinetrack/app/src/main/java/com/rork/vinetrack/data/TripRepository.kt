@@ -46,6 +46,8 @@ class TripRepository(private val session: SessionStore) {
         @SerialName("trip_title") val tripTitle: String? = null,
         @SerialName("machine_id") val machineId: String? = null,
         @SerialName("work_task_id") val workTaskId: String? = null,
+        @SerialName("operator_user_id") val operatorUserId: String? = null,
+        @SerialName("operator_category_id") val operatorCategoryId: String? = null,
         @SerialName("total_distance") val totalDistance: Double = 0.0,
         @SerialName("path_points") val pathPoints: List<CoordinatePoint> = emptyList(),
         @SerialName("created_by") val createdBy: String? = null,
@@ -62,6 +64,8 @@ class TripRepository(private val session: SessionStore) {
         @SerialName("trip_title") val tripTitle: String? = null,
         @SerialName("machine_id") val machineId: String? = null,
         @SerialName("work_task_id") val workTaskId: String? = null,
+        @SerialName("operator_user_id") val operatorUserId: String? = null,
+        @SerialName("operator_category_id") val operatorCategoryId: String? = null,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
     )
 
@@ -100,6 +104,8 @@ class TripRepository(private val session: SessionStore) {
         tripTitle: String?,
         machineId: String? = null,
         workTaskId: String? = null,
+        operatorUserId: String? = null,
+        operatorCategoryId: String? = null,
     ): Trip = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
@@ -116,6 +122,8 @@ class TripRepository(private val session: SessionStore) {
             tripTitle = tripTitle,
             machineId = machineId,
             workTaskId = workTaskId,
+            operatorUserId = operatorUserId,
+            operatorCategoryId = operatorCategoryId,
             createdBy = session.userId,
             clientUpdatedAt = now,
         )
@@ -137,6 +145,8 @@ class TripRepository(private val session: SessionStore) {
         tripTitle: String?,
         machineId: String? = null,
         workTaskId: String? = null,
+        operatorUserId: String? = null,
+        operatorCategoryId: String? = null,
     ): Trip = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
@@ -148,6 +158,8 @@ class TripRepository(private val session: SessionStore) {
             tripTitle = tripTitle,
             machineId = machineId,
             workTaskId = workTaskId,
+            operatorUserId = operatorUserId,
+            operatorCategoryId = operatorCategoryId,
             clientUpdatedAt = nowIso(),
         )
         patchTrip(id, patch, token)

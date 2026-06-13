@@ -1,16 +1,24 @@
 package com.rork.vinetrack.data
 
 import com.rork.vinetrack.data.auth.SessionStore
+import com.rork.vinetrack.data.model.OperatorCategory
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Pin
 import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.Vineyard
 import com.rork.vinetrack.data.model.VineyardMachine
+import com.rork.vinetrack.data.model.VineyardMember
 import com.rork.vinetrack.data.model.WorkTask
 import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.headers
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.http.ContentType
+import io.ktor.http.contentType
 import io.ktor.http.isSuccess
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -44,6 +52,37 @@ class VineyardRepository(private val session: SessionStore) {
     suspend fun listWorkTasks(vineyardId: String): List<WorkTask> = withContext(Dispatchers.IO) {
         get("work_tasks?select=*&vineyard_id=eq.$vineyardId&deleted_at=is.null&is_archived=eq.false&order=date.desc")
     }
+
+    suspend fun listOperatorCategories(vineyardId: String): List<OperatorCategory> = withContext(Dispatchers.IO) {
+        get("operator_categories?select=*&vineyard_id=eq.$vineyardId&deleted_at=is.null&order=name.asc")
+    }
+
+    /**
+     * Loads the active vineyard's team members via the SECURITY DEFINER
+     * `get_vineyard_team_members` RPC, which resolves display names + each
+     * member's default operator category without weakening profiles RLS
+     * (sql/022 + sql/082). Mirrors the iOS `SupabaseTeamRepository.listMembers`.
+     */
+    suspend fun listTeamMembers(vineyardId: String): List<VineyardMember> = withContext(Dispatchers.IO) {
+        if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("get_vineyard_team_members")) {
+            headers {
+                append("apikey", SupabaseClient.anonKey)
+                append("Authorization", "Bearer $token")
+            }
+            contentType(ContentType.Application.Json)
+            setBody(TeamMembersArgs(vineyardId))
+        }
+        when {
+            response.status.isSuccess() -> response.body()
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, "")
+        }
+    }
+
+    @Serializable
+    private data class TeamMembersArgs(@SerialName("p_vineyard_id") val vineyardId: String)
 
     private suspend inline fun <reified T> get(path: String): T {
         if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured

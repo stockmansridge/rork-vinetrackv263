@@ -96,7 +96,10 @@ import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.builtInTripFunctions
 import com.rork.vinetrack.data.model.formatTripDuration
+import com.rork.vinetrack.data.model.VineyardMember
 import com.rork.vinetrack.data.model.resolveTripMachineName
+import com.rork.vinetrack.data.model.resolveTripOperatorCategory
+import com.rork.vinetrack.data.model.resolveTripOperatorName
 import com.rork.vinetrack.data.model.resolveTripWorkTask
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
@@ -234,7 +237,12 @@ private fun TripListView(state: AppUiState, onSelect: (Trip) -> Unit, onStart: (
                 ) {
                     if (active != null) {
                         item(key = "active-${active.id}") {
-                            ActiveTripBanner(active, machineName = resolveTripMachineName(active, state.machines), onClick = { onSelectActive(active) })
+                            ActiveTripBanner(
+                                active,
+                                machineName = resolveTripMachineName(active, state.machines),
+                                operatorName = resolveTripOperatorName(active, state.members),
+                                onClick = { onSelectActive(active) },
+                            )
                         }
                     }
                     if (finished.isNotEmpty()) {
@@ -258,7 +266,7 @@ private fun TripListView(state: AppUiState, onSelect: (Trip) -> Unit, onStart: (
 }
 
 @Composable
-private fun ActiveTripBanner(trip: Trip, machineName: String?, onClick: () -> Unit) {
+private fun ActiveTripBanner(trip: Trip, machineName: String?, operatorName: String?, onClick: () -> Unit) {
     var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(trip.id, trip.isPaused) {
         while (true) {
@@ -283,8 +291,9 @@ private fun ActiveTripBanner(trip: Trip, machineName: String?, onClick: () -> Un
                     fontSize = 13.sp,
                     color = LocalVineColors.current.textSecondary,
                 )
-                machineName?.let {
-                    Text(it, fontSize = 12.sp, color = LocalVineColors.current.textSecondary, maxLines = 1)
+                val subtitle = listOfNotNull(operatorName, machineName).joinToString(" · ")
+                if (subtitle.isNotBlank()) {
+                    Text(subtitle, fontSize = 12.sp, color = LocalVineColors.current.textSecondary, maxLines = 1)
                 }
             }
             StatusBadge(if (trip.isPaused) "Paused" else "Live", if (trip.isPaused) VineColors.Orange else VineColors.Warning)
@@ -425,10 +434,26 @@ private fun TripDetailView(
                 val machineName = resolveTripMachineName(trip, state.machines)
                 val hasMachineLink = trip.machineId != null || trip.tractorId != null
                 val workTask = resolveTripWorkTask(trip, state.workTasks)
+                val operatorName = resolveTripOperatorName(trip, state.members)
+                val operatorCategory = resolveTripOperatorCategory(trip, state.operatorCategories)
                 VineyardCard {
                     DetailRow(Icons.Filled.Grass, "Block", trip.paddockName?.takeIf { it.isNotBlank() } ?: "No block linked", VineColors.LeafGreen)
                     Divider(vine.cardBorder)
-                    DetailRow(Icons.Filled.Person, "Operator", trip.personName?.takeIf { it.isNotBlank() } ?: "Not recorded", VineColors.EarthBrown)
+                    DetailRow(
+                        Icons.Filled.Person,
+                        "Operator",
+                        operatorName ?: if (trip.operatorUserId != null) "Linked member unavailable" else "Not recorded",
+                        VineColors.EarthBrown,
+                    )
+                    if (trip.operatorCategoryId != null) {
+                        Divider(vine.cardBorder)
+                        DetailRow(
+                            Icons.Filled.Person,
+                            "Operator category",
+                            operatorCategory?.displayName ?: "Linked category unavailable",
+                            VineColors.EarthBrown,
+                        )
+                    }
                     Divider(vine.cardBorder)
                     DetailRow(
                         Icons.Filled.Agriculture,
@@ -583,6 +608,8 @@ private fun StartTripSheet(
     var paddockId by remember { mutableStateOf<String?>(null) }
     var functionRaw by remember { mutableStateOf(builtInTripFunctions.first().first) }
     var operator by remember { mutableStateOf("") }
+    var operatorUserId by remember { mutableStateOf<String?>(null) }
+    var operatorCategoryId by remember { mutableStateOf<String?>(null) }
     var title by remember { mutableStateOf("") }
     var machineId by remember { mutableStateOf<String?>(null) }
     var workTaskId by remember { mutableStateOf<String?>(null) }
@@ -602,6 +629,8 @@ private fun StartTripSheet(
             tripTitle = title.trim(),
             machineId = machineId,
             workTaskId = workTaskId,
+            operatorUserId = operatorUserId,
+            operatorCategoryId = operatorCategoryId,
         ) { ok ->
             saving = false
             if (ok) vm.activeTripIdOrNull()?.let(onStarted)
@@ -654,12 +683,20 @@ private fun StartTripSheet(
                 }
             }
 
-            OutlinedTextField(
-                value = operator,
-                onValueChange = { operator = it },
-                label = { Text("Operator (optional)") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
+            OperatorPicker(
+                state = state,
+                operatorUserId = operatorUserId,
+                operatorName = operator,
+                operatorCategoryId = operatorCategoryId,
+                onSelectMember = { member ->
+                    operatorUserId = member?.userId
+                    if (member != null) {
+                        operator = member.name
+                        if (operatorCategoryId == null) operatorCategoryId = member.operatorCategoryId
+                    }
+                },
+                onOperatorNameChange = { operator = it },
+                onSelectCategory = { operatorCategoryId = it },
             )
 
             MachinePicker(state = state, selectedId = machineId, onSelect = { machineId = it })
@@ -758,6 +795,8 @@ private fun EditTripSheet(
         mutableStateOf(trip.tripFunction?.takeIf { raw -> builtInTripFunctions.any { it.first == raw } } ?: builtInTripFunctions.first().first)
     }
     var operator by remember { mutableStateOf(trip.personName ?: "") }
+    var operatorUserId by remember { mutableStateOf(trip.operatorUserId) }
+    var operatorCategoryId by remember { mutableStateOf(trip.operatorCategoryId) }
     var title by remember { mutableStateOf(trip.tripTitle ?: "") }
     var machineId by remember { mutableStateOf(trip.machineId) }
     var workTaskId by remember { mutableStateOf(trip.workTaskId) }
@@ -805,12 +844,20 @@ private fun EditTripSheet(
                 }
             }
 
-            OutlinedTextField(
-                value = operator,
-                onValueChange = { operator = it },
-                label = { Text("Operator") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
+            OperatorPicker(
+                state = state,
+                operatorUserId = operatorUserId,
+                operatorName = operator,
+                operatorCategoryId = operatorCategoryId,
+                onSelectMember = { member ->
+                    operatorUserId = member?.userId
+                    if (member != null) {
+                        operator = member.name
+                        if (operatorCategoryId == null) operatorCategoryId = member.operatorCategoryId
+                    }
+                },
+                onOperatorNameChange = { operator = it },
+                onSelectCategory = { operatorCategoryId = it },
             )
 
             MachinePicker(state = state, selectedId = machineId, onSelect = { machineId = it })
@@ -845,6 +892,8 @@ private fun EditTripSheet(
                         tripTitle = title.trim(),
                         machineId = machineId,
                         workTaskId = workTaskId,
+                        operatorUserId = operatorUserId,
+                        operatorCategoryId = operatorCategoryId,
                     ) { ok -> saving = false; if (ok) onSaved() }
                 },
                 enabled = !saving,
@@ -964,6 +1013,98 @@ private fun WorkTaskPicker(state: AppUiState, selectedId: String?, onSelect: (St
                     },
                     onClick = { onSelect(t.id); open = false },
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Operator picker: link the trip to a real team member (resolved via the
+ * `get_vineyard_team_members` RPC) and/or an operator category, while keeping
+ * free-text entry as a fallback for legacy records and people not on the team.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun OperatorPicker(
+    state: AppUiState,
+    operatorUserId: String?,
+    operatorName: String,
+    operatorCategoryId: String?,
+    onSelectMember: (VineyardMember?) -> Unit,
+    onOperatorNameChange: (String) -> Unit,
+    onSelectCategory: (String?) -> Unit,
+) {
+    val members = state.members
+    val categories = state.operatorCategories
+    var memberMenu by remember { mutableStateOf(false) }
+    var categoryMenu by remember { mutableStateOf(false) }
+
+    val selectedMember = members.firstOrNull { it.userId == operatorUserId }
+    val memberFieldValue = when {
+        operatorUserId != null && selectedMember != null -> selectedMember.name
+        operatorUserId != null -> "Linked member unavailable"
+        else -> "Manual entry"
+    }
+
+    // Member dropdown is only useful when the team has loaded members.
+    if (members.isNotEmpty()) {
+        ExposedDropdownMenuBox(expanded = memberMenu, onExpandedChange = { memberMenu = it }) {
+            OutlinedTextField(
+                value = memberFieldValue,
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("Operator") },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = memberMenu) },
+                modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+            )
+            ExposedDropdownMenu(expanded = memberMenu, onDismissRequest = { memberMenu = false }) {
+                DropdownMenuItem(text = { Text("Manual entry") }, onClick = { onSelectMember(null); memberMenu = false })
+                members.forEach { m ->
+                    DropdownMenuItem(
+                        text = {
+                            val sub = m.operatorCategoryName?.takeIf { it.isNotBlank() }
+                            Text(if (sub != null) "${m.name} · $sub" else m.name)
+                        },
+                        onClick = { onSelectMember(m); memberMenu = false },
+                    )
+                }
+            }
+        }
+    }
+
+    // Free-text name: editable when no member is linked (manual / legacy).
+    if (operatorUserId == null) {
+        OutlinedTextField(
+            value = operatorName,
+            onValueChange = onOperatorNameChange,
+            label = { Text(if (members.isEmpty()) "Operator (optional)" else "Operator name") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+
+    // Operator category dropdown (only when the vineyard has categories).
+    if (categories.isNotEmpty()) {
+        val selectedCategory = categories.firstOrNull { it.id == operatorCategoryId }
+        val categoryValue = when {
+            operatorCategoryId != null && selectedCategory != null -> selectedCategory.displayName
+            operatorCategoryId != null -> "Linked category unavailable"
+            else -> "No category"
+        }
+        ExposedDropdownMenuBox(expanded = categoryMenu, onExpandedChange = { categoryMenu = it }) {
+            OutlinedTextField(
+                value = categoryValue,
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("Operator category") },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryMenu) },
+                modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+            )
+            ExposedDropdownMenu(expanded = categoryMenu, onDismissRequest = { categoryMenu = false }) {
+                DropdownMenuItem(text = { Text("No category") }, onClick = { onSelectCategory(null); categoryMenu = false })
+                categories.forEach { c ->
+                    DropdownMenuItem(text = { Text(c.displayName) }, onClick = { onSelectCategory(c.id); categoryMenu = false })
+                }
             }
         }
     }

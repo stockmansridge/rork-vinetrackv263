@@ -182,6 +182,8 @@ data class Trip(
     @SerialName("trip_title") val tripTitle: String? = null,
     @SerialName("machine_id") val machineId: String? = null,
     @SerialName("tractor_id") val tractorId: String? = null,
+    @SerialName("operator_user_id") val operatorUserId: String? = null,
+    @SerialName("operator_category_id") val operatorCategoryId: String? = null,
     @SerialName("completed_paths") val completedPaths: List<Double>? = null,
     @SerialName("skipped_paths") val skippedPaths: List<Double>? = null,
     @SerialName("path_points") val pathPoints: List<CoordinatePoint>? = null,
@@ -411,6 +413,64 @@ fun resolveTripMachineName(trip: Trip, machines: List<VineyardMachine>): String?
 /** Resolve the work task a trip is grouped under, or null when unlinked/unavailable. */
 fun resolveTripWorkTask(trip: Trip, workTasks: List<WorkTask>): WorkTask? =
     trip.workTaskId?.let { id -> workTasks.firstOrNull { it.id == id } }
+
+/**
+ * A vineyard team member, decoded from the `get_vineyard_team_members` RPC
+ * (sql/022 + sql/082). The RPC resolves a display-safe name plus the member's
+ * default operator category without weakening profiles RLS. Trips link to a
+ * member via `trips.operator_user_id` -> `vineyard_members.user_id`.
+ */
+@Serializable
+data class VineyardMember(
+    @SerialName("membership_id") val membershipId: String? = null,
+    @SerialName("vineyard_id") val vineyardId: String? = null,
+    @SerialName("user_id") val userId: String,
+    val role: String? = null,
+    @SerialName("display_name") val displayName: String? = null,
+    @SerialName("full_name") val fullName: String? = null,
+    val email: String? = null,
+    @SerialName("operator_category_id") val operatorCategoryId: String? = null,
+    @SerialName("operator_category_name") val operatorCategoryName: String? = null,
+) {
+    /** Best human label, mirroring the RPC's coalesced fallback chain. */
+    val name: String
+        get() = displayName?.takeIf { it.isNotBlank() }
+            ?: fullName?.takeIf { it.isNotBlank() }
+            ?: email?.takeIf { it.isNotBlank() }
+            ?: "User " + userId.take(8)
+}
+
+/**
+ * A vineyard operator/labour cost category — backs `public.operator_categories`
+ * (sql/011). Trips optionally link one via `trips.operator_category_id`.
+ */
+@Serializable
+data class OperatorCategory(
+    val id: String,
+    @SerialName("vineyard_id") val vineyardId: String,
+    val name: String = "",
+    @SerialName("cost_per_hour") val costPerHour: Double? = null,
+    @SerialName("deleted_at") val deletedAt: String? = null,
+) {
+    val displayName: String get() = name.trim().takeIf { it.isNotBlank() } ?: "Operator category"
+}
+
+/**
+ * Resolve a trip's linked operator display name. Prefers the linked team member
+ * (`operator_user_id`), then falls back to the free-text `person_name` snapshot
+ * for legacy rows or members who have since left the team. Returns null only
+ * when nothing resolves so the UI can show a friendly placeholder.
+ */
+fun resolveTripOperatorName(trip: Trip, members: List<VineyardMember>): String? {
+    trip.operatorUserId?.let { uid ->
+        members.firstOrNull { it.userId == uid }?.let { return it.name }
+    }
+    return trip.personName?.takeIf { it.isNotBlank() }
+}
+
+/** Resolve a trip's linked operator category, or null when unlinked/unavailable. */
+fun resolveTripOperatorCategory(trip: Trip, categories: List<OperatorCategory>): OperatorCategory? =
+    trip.operatorCategoryId?.let { id -> categories.firstOrNull { it.id == id } }
 
 @Serializable
 data class Pin(
