@@ -34,7 +34,15 @@ import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -74,7 +82,30 @@ fun HomeDashboard(
     modifier: Modifier = Modifier,
     onSwitchTab: (Int) -> Unit,
 ) {
-    Box(modifier = modifier.fillMaxSize()) {
+    var showMap by remember { mutableStateOf(false) }
+
+    AnimatedContent(
+        targetState = showMap,
+        transitionSpec = { fadeIn() togetherWith fadeOut() },
+        label = "home-map-nav",
+        modifier = modifier,
+    ) { mapVisible ->
+        if (mapVisible) {
+            VineyardMapScreen(state, onBack = { showMap = false })
+        } else {
+            DashboardContent(vm, state, onSwitchTab = onSwitchTab, onOpenMap = { showMap = true })
+        }
+    }
+}
+
+@Composable
+private fun DashboardContent(
+    vm: AppViewModel,
+    state: AppUiState,
+    onSwitchTab: (Int) -> Unit,
+    onOpenMap: () -> Unit,
+) {
+    Box(modifier = Modifier.fillMaxSize()) {
         // Vineyard gradient backdrop
         Box(
             modifier = Modifier
@@ -94,7 +125,7 @@ fun HomeDashboard(
         ) {
             HeaderRow(state.selectedVineyard, onRefresh = { vm.refresh() })
 
-            OverviewSection(state)
+            OverviewSection(state, onOpenMap)
 
             ToolsSection()
 
@@ -143,7 +174,7 @@ private fun HeaderRow(vineyard: Vineyard?, onRefresh: () -> Unit) {
 }
 
 @Composable
-private fun OverviewSection(state: AppUiState) {
+private fun OverviewSection(state: AppUiState, onOpenMap: () -> Unit) {
     val totalHectares = state.totalHectares
     val haLabel = if (totalHectares > 0) "${"%.1f".format(totalHectares)} ha under management" else "View map & summary"
     Column(
@@ -151,7 +182,7 @@ private fun OverviewSection(state: AppUiState) {
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         SectionHeader("Vineyard Overview")
-        VineyardCard {
+        VineyardCard(modifier = Modifier.clickable { onOpenMap() }) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 Box(
                     modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp))

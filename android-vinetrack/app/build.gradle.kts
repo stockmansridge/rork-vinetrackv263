@@ -51,6 +51,14 @@ android {
         )
         buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"$supabaseAnonKey\"")
+
+        val mapsApiKey = resolveBuildConfigValue(
+            "GOOGLE_MAPS_API_KEY",
+            "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY",
+            "ANDROID_MAPS_API_KEY",
+        )
+        buildConfigField("String", "MAPS_API_KEY", "\"$mapsApiKey\"")
+        manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey
     }
 
     buildTypes {
@@ -102,5 +110,6 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
     implementation(libs.koin.androidx.compose)
+    implementation(libs.maps.compose)
     debugImplementation(libs.androidx.ui.tooling)
 }
