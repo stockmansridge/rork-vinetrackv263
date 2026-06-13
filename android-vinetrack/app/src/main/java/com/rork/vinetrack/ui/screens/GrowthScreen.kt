@@ -75,6 +75,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.GrowthStageRecordRepository
+import com.rork.vinetrack.data.PaddockRepository
 import com.rork.vinetrack.data.model.GrowthStage
 import com.rork.vinetrack.data.model.GrowthStageRecord
 import com.rork.vinetrack.data.model.Paddock
@@ -151,7 +152,12 @@ private fun GrowthListView(
 ) {
     val vine = LocalVineColors.current
     val records = state.growthRecords
-    val phenologyBlocks = remember(state.paddocks) { state.paddocks.filter { it.hasPhenology } }
+    // Show every block so dates can be set even when none exist yet; blocks with
+    // dates are surfaced first.
+    val phenologyBlocks = remember(state.paddocks) {
+        state.paddocks.sortedByDescending { it.hasPhenology }
+    }
+    var editingBlock by remember { mutableStateOf<Paddock?>(null) }
 
     Scaffold(
         topBar = {
@@ -169,7 +175,7 @@ private fun GrowthListView(
             }
         },
     ) { padding ->
-        if (records.isEmpty() && phenologyBlocks.isEmpty()) {
+        if (records.isEmpty() && state.paddocks.isEmpty()) {
             Column(modifier = Modifier.fillMaxSize().padding(padding), verticalArrangement = Arrangement.Center) {
                 EmptyState(
                     icon = Icons.Filled.Spa,
@@ -197,7 +203,7 @@ private fun GrowthListView(
                     item {
                         VineyardCard {
                             phenologyBlocks.forEachIndexed { idx, block ->
-                                PhenologyBlockRow(block)
+                                PhenologyBlockRow(block, onEdit = { editingBlock = block })
                                 if (idx < phenologyBlocks.lastIndex) {
                                     Box(modifier = Modifier.fillMaxWidth().height(0.5.dp).background(vine.cardBorder))
                                 }
@@ -220,21 +226,142 @@ private fun GrowthListView(
             }
         }
     }
+
+    editingBlock?.let { block ->
+        PhenologyEditSheet(
+            vm = vm,
+            block = block,
+            onDismiss = { editingBlock = null },
+            onSaved = { editingBlock = null },
+        )
+    }
 }
 
 @Composable
-private fun PhenologyBlockRow(block: Paddock) {
+private fun PhenologyBlockRow(block: Paddock, onEdit: () -> Unit) {
     val vine = LocalVineColors.current
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(block.name, color = vine.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PhenoChip("Budburst", block.budburstDate)
-            PhenoChip("Flowering", block.floweringDate)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(block.name, color = vine.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Filled.Edit, contentDescription = "Edit phenology dates", tint = VineColors.LeafGreen, modifier = Modifier.size(18.dp))
+            }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PhenoChip("Veraison", block.veraisonDate)
-            PhenoChip("Harvest", block.harvestDate)
+        if (block.hasPhenology) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PhenoChip("Budburst", block.budburstDate)
+                PhenoChip("Flowering", block.floweringDate)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PhenoChip("Veraison", block.veraisonDate)
+                PhenoChip("Harvest", block.harvestDate)
+            }
+        } else {
+            Text("No phenology dates yet — tap edit to add", color = vine.textSecondary, fontSize = 12.sp)
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PhenologyEditSheet(
+    vm: AppViewModel,
+    block: Paddock,
+    onDismiss: () -> Unit,
+    onSaved: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    var budburst by remember { mutableStateOf(parseIsoToEpochMs(block.budburstDate)) }
+    var flowering by remember { mutableStateOf(parseIsoToEpochMs(block.floweringDate)) }
+    var veraison by remember { mutableStateOf(parseIsoToEpochMs(block.veraisonDate)) }
+    var harvest by remember { mutableStateOf(parseIsoToEpochMs(block.harvestDate)) }
+    var saving by remember { mutableStateOf(false) }
+
+    fun isoOrNull(ms: Long?): String? = ms?.let { Instant.ofEpochMilli(it).toString() }
+
+    fun save() {
+        if (saving) return
+        saving = true
+        val dates = PaddockRepository.PhenologyDates(
+            budburstDate = isoOrNull(budburst),
+            floweringDate = isoOrNull(flowering),
+            veraisonDate = isoOrNull(veraison),
+            harvestDate = isoOrNull(harvest),
+        )
+        vm.updatePaddockPhenologyDates(block.id, dates) { ok -> saving = false; if (ok) onSaved() }
+    }
+
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(
+            modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("Phenology dates", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+            Text(block.name, fontSize = 14.sp, color = vine.textSecondary)
+            Spacer(Modifier.height(4.dp))
+
+            MilestoneDateRow("Budburst", budburst, onChange = { budburst = it })
+            DividerG(vine.cardBorder)
+            MilestoneDateRow("Flowering", flowering, onChange = { flowering = it })
+            DividerG(vine.cardBorder)
+            MilestoneDateRow("Veraison", veraison, onChange = { veraison = it })
+            DividerG(vine.cardBorder)
+            MilestoneDateRow("Harvest", harvest, onChange = { harvest = it })
+
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = { save() },
+                enabled = !saving,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen),
+            ) {
+                if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
+                else Text("Save dates")
+            }
+        }
+    }
+}
+
+/**
+ * One phenology milestone editor: a toggle to set/clear the date plus a date
+ * picker when enabled. Turning the toggle off clears the date (sent as null).
+ */
+@Composable
+private fun MilestoneDateRow(label: String, epochMs: Long?, onChange: (Long?) -> Unit) {
+    val vine = LocalVineColors.current
+    var showPicker by remember { mutableStateOf(false) }
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(label, color = vine.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            androidx.compose.material3.Switch(
+                checked = epochMs != null,
+                onCheckedChange = { on -> onChange(if (on) (epochMs ?: System.currentTimeMillis()) else null) },
+            )
+        }
+        if (epochMs != null) {
+            OutlinedButton(onClick = { showPicker = true }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Filled.Schedule, contentDescription = null, modifier = Modifier.size(18.dp))
+                Text("  " + (formatGrowthDate(epochMs) ?: "Pick date"))
+            }
+        } else {
+            Text("Not set", color = vine.textSecondary, fontSize = 12.sp)
+        }
+    }
+
+    if (showPicker) {
+        val dpState = rememberDatePickerState(initialSelectedDateMillis = epochMs ?: System.currentTimeMillis())
+        DatePickerDialog(
+            onDismissRequest = { showPicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    dpState.selectedDateMillis?.let { onChange(it) }
+                    showPicker = false
+                }) { Text("OK") }
+            },
+            dismissButton = { TextButton(onClick = { showPicker = false }) { Text("Cancel") } },
+        ) { DatePicker(state = dpState) }
     }
 }
 

@@ -10,6 +10,7 @@ import com.rork.vinetrack.data.MaintenanceLogRepository
 import com.rork.vinetrack.data.PinPhotoImageUtil
 import com.rork.vinetrack.data.PinPhotoRepository
 import com.rork.vinetrack.data.GrowthStageRecordRepository
+import com.rork.vinetrack.data.PaddockRepository
 import com.rork.vinetrack.data.PinRepository
 import com.rork.vinetrack.data.SprayRecordRepository
 import com.rork.vinetrack.data.TripRepository
@@ -107,6 +108,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val sprayRepo = SprayRecordRepository(session)
     private val maintenanceRepo = MaintenanceLogRepository(session)
     private val growthRepo = GrowthStageRecordRepository(session)
+    private val paddockRepo = PaddockRepository(session)
 
     /** Foreground GPS tracker for the currently active trip (null when idle). */
     private var tracker: LocationTracker? = null
@@ -1210,6 +1212,42 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearGrowthError() {
         _ui.update { it.copy(growthError = null) }
+    }
+
+    // MARK: - Paddock phenology write path
+
+    /**
+     * PATCH only a block's phenology milestone dates (budburst/flowering/
+     * veraison/harvest). Optimistically updates the cached paddock and rolls
+     * back on failure. Geometry, rows, variety, and area are never touched.
+     */
+    fun updatePaddockPhenologyDates(paddockId: String, dates: PaddockRepository.PhenologyDates, onResult: (Boolean) -> Unit) {
+        val previous = _ui.value.paddocks
+        _ui.update { st ->
+            st.copy(paddocks = st.paddocks.map {
+                if (it.id == paddockId) it.copy(
+                    budburstDate = dates.budburstDate,
+                    floweringDate = dates.floweringDate,
+                    veraisonDate = dates.veraisonDate,
+                    harvestDate = dates.harvestDate,
+                ) else it
+            }, growthError = null)
+        }
+        viewModelScope.launch {
+            try {
+                val updated = paddockRepo.updatePhenologyDates(paddockId, dates)
+                _ui.update { st -> st.copy(paddocks = st.paddocks.map { if (it.id == paddockId) updated else it }) }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                _ui.update { it.copy(paddocks = previous) }; signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(paddocks = previous, growthError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(paddocks = previous, growthError = "Couldn't save phenology dates. Check your connection.") }
+                onResult(false)
+            }
+        }
     }
 
     private fun friendlyWriteError(code: Int): String = when (code) {
