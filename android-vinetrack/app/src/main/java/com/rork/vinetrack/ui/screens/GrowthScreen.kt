@@ -78,6 +78,7 @@ import com.rork.vinetrack.data.GrowthStageRecordRepository
 import com.rork.vinetrack.data.PaddockRepository
 import com.rork.vinetrack.data.model.GrowthStage
 import com.rork.vinetrack.data.model.GrowthStageRecord
+import com.rork.vinetrack.data.model.canonicalVarietyName
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.parseIsoToEpochMs
 import com.rork.vinetrack.data.model.resolveGrowthRecordBlockName
@@ -99,8 +100,15 @@ import java.util.Locale
  * `growth_stage_records`) plus a read-only per-block phenology summary derived
  * from the existing paddock budburst/flowering/veraison/harvest dates.
  */
+/** Top-level segments of the agronomy surface. */
+private enum class GrowthTab(val label: String) {
+    Growth("Growth"),
+    Varieties("Varieties"),
+}
+
 @Composable
 fun GrowthScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifier) {
+    var tab by remember { mutableStateOf(GrowthTab.Growth) }
     var selectedId by remember { mutableStateOf<String?>(null) }
     var creating by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<GrowthStageRecord?>(null) }
@@ -122,12 +130,21 @@ fun GrowthScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modif
                 onEdit = { editing = record },
             )
         } else {
-            GrowthListView(
-                vm = vm,
-                state = state,
-                onOpen = { selectedId = it.id },
-                onCreate = { creating = true },
-            )
+            when (tab) {
+                GrowthTab.Growth -> GrowthListView(
+                    vm = vm,
+                    state = state,
+                    tab = tab,
+                    onTabChange = { tab = it },
+                    onOpen = { selectedId = it.id },
+                    onCreate = { creating = true },
+                )
+                GrowthTab.Varieties -> VarietiesCatalogView(
+                    state = state,
+                    tab = tab,
+                    onTabChange = { tab = it },
+                )
+            }
         }
     }
 
@@ -142,11 +159,29 @@ fun GrowthScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modif
     }
 }
 
+@Composable
+private fun GrowthTabRow(tab: GrowthTab, onTabChange: (GrowthTab) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        GrowthTab.entries.forEach { entry ->
+            FilterChip(
+                selected = tab == entry,
+                onClick = { onTabChange(entry) },
+                label = { Text(entry.label) },
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun GrowthListView(
     vm: AppViewModel,
     state: AppUiState,
+    tab: GrowthTab,
+    onTabChange: (GrowthTab) -> Unit,
     onOpen: (GrowthStageRecord) -> Unit,
     onCreate: () -> Unit,
 ) {
@@ -175,18 +210,20 @@ private fun GrowthListView(
             }
         },
     ) { padding ->
-        if (records.isEmpty() && state.paddocks.isEmpty()) {
-            Column(modifier = Modifier.fillMaxSize().padding(padding), verticalArrangement = Arrangement.Center) {
-                EmptyState(
-                    icon = Icons.Filled.Spa,
-                    title = "No observations yet",
-                    message = "Record a vine growth stage to start tracking phenology across your blocks.",
-                )
-                state.growthError?.let {
-                    Text(it, color = VineColors.Destructive, fontSize = 13.sp, modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp))
+        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            GrowthTabRow(tab = tab, onTabChange = onTabChange)
+            if (records.isEmpty() && state.paddocks.isEmpty()) {
+                Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
+                    EmptyState(
+                        icon = Icons.Filled.Spa,
+                        title = "No observations yet",
+                        message = "Record a vine growth stage to start tracking phenology across your blocks.",
+                    )
+                    state.growthError?.let {
+                        Text(it, color = VineColors.Destructive, fontSize = 13.sp, modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp))
+                    }
                 }
-            }
-        } else {
+            } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(16.dp),
@@ -224,6 +261,7 @@ private fun GrowthListView(
                     )
                 }
             }
+            }
         }
     }
 
@@ -236,6 +274,131 @@ private fun GrowthListView(
         )
     }
 }
+
+/**
+ * Read-only vineyard-wide grape variety catalog. Lists every variety selection
+ * returned by `list_vineyard_grape_varieties`, badged built-in vs custom, with
+ * its optimal GDD target and how many blocks currently plant it (resolved from
+ * the existing `paddocks.variety_allocations` — no writes).
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun VarietiesCatalogView(
+    state: AppUiState,
+    tab: GrowthTab,
+    onTabChange: (GrowthTab) -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val varieties = remember(state.grapeVarieties) {
+        state.grapeVarieties
+            .filter { it.isActive }
+            .sortedBy { it.displayName.lowercase() }
+    }
+    // Precompute per-variety block usage from paddock allocations. Match on the
+    // stable variety key first, then fall back to a canonical-name comparison —
+    // mirrors how iOS resolves allocations back to managed varieties.
+    val usage = remember(varieties, state.paddocks) {
+        varieties.associate { variety ->
+            val canonical = variety.canonicalName
+            var blocks = 0
+            var area = 0.0
+            state.paddocks.forEach { paddock ->
+                val alloc = paddock.varietyAllocations.orEmpty().firstOrNull { a ->
+                    (a.varietyKey != null && a.varietyKey == variety.varietyKey) ||
+                        (a.displayName != null && canonicalVarietyName(a.displayName!!) == canonical)
+                }
+                if (alloc != null) {
+                    blocks += 1
+                    val pct = (alloc.displayPercent ?: 100.0).coerceIn(0.0, 100.0)
+                    area += paddock.areaHectares * pct / 100.0
+                }
+            }
+            variety.varietyKey to VarietyUsage(blocks, area)
+        }
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Growth & Phenology") },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = vine.cardBackground,
+                    titleContentColor = vine.textPrimary,
+                ),
+            )
+        },
+    ) { padding ->
+        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            GrowthTabRow(tab = tab, onTabChange = onTabChange)
+            if (varieties.isEmpty()) {
+                Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
+                    EmptyState(
+                        icon = Icons.Filled.Spa,
+                        title = "No varieties yet",
+                        message = "Grape varieties planted on your blocks will appear here once they're set up.",
+                    )
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    item { SectionHeader("Varieties · ${varieties.size}", onLight = true) }
+                    items(varieties.size) { index ->
+                        val variety = varieties[index]
+                        VarietyCatalogCard(
+                            variety = variety,
+                            usage = usage[variety.varietyKey] ?: VarietyUsage(0, 0.0),
+                        )
+                    }
+                    item {
+                        Text(
+                            "Read-only catalog. Varieties are managed from the vineyard setup.",
+                            color = vine.textSecondary, fontSize = 12.sp,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private data class VarietyUsage(val blocks: Int, val areaHectares: Double)
+
+@Composable
+private fun VarietyCatalogCard(variety: com.rork.vinetrack.data.model.GrapeVarietyRow, usage: VarietyUsage) {
+    val vine = LocalVineColors.current
+    VineyardCard {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Box(
+                modifier = Modifier.size(46.dp).clip(RoundedCornerShape(12.dp)).background(VineColors.DarkGreen.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Filled.Spa, contentDescription = null, tint = VineColors.DarkGreen, modifier = Modifier.size(22.dp))
+            }
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(variety.displayName, color = vine.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.weight(1f, fill = false))
+                    StatusBadge(if (variety.isCustom) "Custom" else "Built-in", if (variety.isCustom) VineColors.Orange else VineColors.LeafGreen)
+                }
+                val sub = buildList {
+                    variety.optimalGddOverride?.let { add("Optimal ${it.toInt()} GDD") }
+                    if (usage.blocks > 0) {
+                        add("${usage.blocks} block${if (usage.blocks == 1) "" else "s"}")
+                        if (usage.areaHectares > 0) add("${formatHa(usage.areaHectares)} ha")
+                    } else {
+                        add("No blocks")
+                    }
+                }
+                Text(sub.joinToString(" · "), color = vine.textSecondary, fontSize = 12.sp, maxLines = 1)
+            }
+        }
+    }
+}
+
+private fun formatHa(value: Double): String =
+    if (value >= 10) value.toInt().toString() else String.format(Locale.getDefault(), "%.1f", value)
 
 @Composable
 private fun PhenologyBlockRow(block: Paddock, onEdit: () -> Unit) {

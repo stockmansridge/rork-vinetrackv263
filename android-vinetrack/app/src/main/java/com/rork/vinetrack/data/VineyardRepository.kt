@@ -4,6 +4,7 @@ import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.OperatorCategory
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Pin
+import com.rork.vinetrack.data.model.GrapeVarietyRow
 import com.rork.vinetrack.data.model.GrowthStageRecord
 import com.rork.vinetrack.data.model.MaintenanceLog
 import com.rork.vinetrack.data.model.SprayEquipment
@@ -92,7 +93,7 @@ class VineyardRepository(private val session: SessionStore) {
                 append("Authorization", "Bearer $token")
             }
             contentType(ContentType.Application.Json)
-            setBody(TeamMembersArgs(vineyardId))
+            setBody(VineyardIdArg(vineyardId))
         }
         when {
             response.status.isSuccess() -> response.body()
@@ -102,7 +103,31 @@ class VineyardRepository(private val session: SessionStore) {
     }
 
     @Serializable
-    private data class TeamMembersArgs(@SerialName("p_vineyard_id") val vineyardId: String)
+    private data class VineyardIdArg(@SerialName("p_vineyard_id") val vineyardId: String)
+
+    /**
+     * Lists the vineyard's grape variety catalog selections via the
+     * SECURITY DEFINER `list_vineyard_grape_varieties` RPC (sql/073). Returns
+     * built-in selections + custom varieties; any vineyard member may read.
+     * Mirrors the iOS `SupabaseGrapeVarietyCatalogRepository.listVineyardVarieties`.
+     */
+    suspend fun listGrapeVarieties(vineyardId: String): List<GrapeVarietyRow> = withContext(Dispatchers.IO) {
+        if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("list_vineyard_grape_varieties")) {
+            headers {
+                append("apikey", SupabaseClient.anonKey)
+                append("Authorization", "Bearer $token")
+            }
+            contentType(ContentType.Application.Json)
+            setBody(VineyardIdArg(vineyardId))
+        }
+        when {
+            response.status.isSuccess() -> response.body()
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, "")
+        }
+    }
 
     private suspend inline fun <reified T> get(path: String): T {
         if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured

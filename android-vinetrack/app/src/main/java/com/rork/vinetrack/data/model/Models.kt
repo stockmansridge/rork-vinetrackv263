@@ -180,6 +180,38 @@ data class Paddock(
         get() = (flowPerEmitter ?: 0.0) > 0 && (emitterSpacing ?: 0.0) > 0
 }
 
+/**
+ * A vineyard-scoped grape variety selection, returned read-only by the
+ * `list_vineyard_grape_varieties` RPC. Mirrors the iOS `VineyardGrapeVarietyRow`
+ * contract: built-in varieties carry a stable catalog `variety_key`
+ * (e.g. `pinot_noir`); custom varieties use a `custom:<vineyardId>:<slug>` key
+ * and `is_custom == true`. `optimal_gdd_override` is the heat-unit ripening
+ * target when set.
+ */
+@Serializable
+data class GrapeVarietyRow(
+    val id: String,
+    @SerialName("vineyard_id") val vineyardId: String,
+    @SerialName("variety_key") val varietyKey: String,
+    @SerialName("display_name") val displayName: String,
+    @SerialName("is_custom") val isCustom: Boolean = false,
+    @SerialName("is_active") val isActive: Boolean = true,
+    @SerialName("optimal_gdd_override") val optimalGddOverride: Double? = null,
+    @SerialName("created_at") val createdAt: String? = null,
+    @SerialName("updated_at") val updatedAt: String? = null,
+) {
+    /** Canonical name used to match paddock variety allocations (mirrors iOS). */
+    val canonicalName: String get() = canonicalVarietyName(displayName)
+}
+
+/**
+ * Canonicalises a variety name the same way iOS `BuiltInGrapeVarietyCatalog`
+ * does: trim, lowercase, keep alphanumerics only. Used to match paddock
+ * `variety_allocations` back to catalog rows.
+ */
+fun canonicalVarietyName(name: String): String =
+    name.trim().lowercase().filter { it.isLetterOrDigit() }
+
 @Serializable
 data class Trip(
     val id: String,

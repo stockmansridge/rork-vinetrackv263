@@ -20,6 +20,7 @@ import com.rork.vinetrack.data.WorkTaskLineRepository
 import com.rork.vinetrack.data.auth.AuthRepository
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.CoordinatePoint
+import com.rork.vinetrack.data.model.GrapeVarietyRow
 import com.rork.vinetrack.data.model.GrowthStageRecord
 import com.rork.vinetrack.data.model.MaintenanceLog
 import com.rork.vinetrack.data.model.OperatorCategory
@@ -63,6 +64,7 @@ data class AppUiState(
     val sprayEquipment: List<SprayEquipment> = emptyList(),
     val maintenanceLogs: List<MaintenanceLog> = emptyList(),
     val growthRecords: List<GrowthStageRecord> = emptyList(),
+    val grapeVarieties: List<GrapeVarietyRow> = emptyList(),
     val isLoadingVineyardData: Boolean = false,
     val paddockError: String? = null,
     val pinError: String? = null,
@@ -1338,6 +1340,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } catch (e: Exception) {
             _ui.value.growthRecords
         }
+        // Grape variety catalog is an optional read-only reference list backing
+        // the agronomy Varieties surface; soft-fail to the existing list (or empty).
+        val grapeVarieties = try {
+            repo.listGrapeVarieties(vineyardId)
+        } catch (e: Exception) {
+            _ui.value.grapeVarieties
+        }
         _ui.update {
             it.copy(
                 paddocks = paddocks,
@@ -1351,6 +1360,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 sprayEquipment = sprayEquipment,
                 maintenanceLogs = maintenanceLogs,
                 growthRecords = growthRecords,
+                grapeVarieties = grapeVarieties,
                 isLoadingVineyardData = false,
                 paddockError = paddockError,
                 pinError = pinError,
