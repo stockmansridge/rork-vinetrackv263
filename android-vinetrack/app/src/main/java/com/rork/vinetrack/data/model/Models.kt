@@ -180,6 +180,8 @@ data class Trip(
     @SerialName("person_name") val personName: String? = null,
     @SerialName("trip_function") val tripFunction: String? = null,
     @SerialName("trip_title") val tripTitle: String? = null,
+    @SerialName("machine_id") val machineId: String? = null,
+    @SerialName("tractor_id") val tractorId: String? = null,
     @SerialName("completed_paths") val completedPaths: List<Double>? = null,
     @SerialName("skipped_paths") val skippedPaths: List<Double>? = null,
     @SerialName("path_points") val pathPoints: List<CoordinatePoint>? = null,
@@ -330,6 +332,85 @@ fun parseIsoToEpochMs(value: String?): Long? {
         }
     }
 }
+
+/**
+ * A vineyard machine (tractor, ATV, harvester, etc.) — backs
+ * `public.vineyard_machines`. Tractors are backfilled into this table with
+ * `machine_type = 'tractor'` and a `legacy_tractor_id`, so loading machines
+ * alone resolves both the preferred `machine_id` and the legacy `tractor_id`
+ * trip links (mirrors the iOS `EquipmentResolver`).
+ */
+@Serializable
+data class VineyardMachine(
+    val id: String,
+    @SerialName("vineyard_id") val vineyardId: String,
+    val name: String = "",
+    @SerialName("machine_type") val machineType: String? = null,
+    @SerialName("fuel_usage_l_per_hour") val fuelUsageLPerHour: Double? = null,
+    @SerialName("legacy_tractor_id") val legacyTractorId: String? = null,
+    @SerialName("deleted_at") val deletedAt: String? = null,
+) {
+    /** Display name, falling back to the machine-type label when unnamed. */
+    val displayName: String
+        get() = name.trim().takeIf { it.isNotBlank() } ?: machineTypeLabel(machineType)
+}
+
+/** Maps a `machine_type` raw value to its display label (mirrors iOS `VineyardMachineType`). */
+fun machineTypeLabel(raw: String?): String = when (raw) {
+    "tractor" -> "Tractor"
+    "atv" -> "ATV"
+    "side_by_side" -> "Side-by-side"
+    "harvester" -> "Harvester"
+    "utility_vehicle" -> "Utility vehicle"
+    "other_vineyard_machine" -> "Other vineyard machine"
+    else -> "Machine"
+}
+
+/**
+ * A work task — backs `public.work_tasks`. Trips optionally group under one
+ * work task via `trips.work_task_id` (see sql/102_trips_work_task_link.sql).
+ */
+@Serializable
+data class WorkTask(
+    val id: String,
+    @SerialName("vineyard_id") val vineyardId: String,
+    @SerialName("paddock_id") val paddockId: String? = null,
+    @SerialName("paddock_name") val paddockName: String? = null,
+    val date: String? = null,
+    @SerialName("task_type") val taskType: String? = null,
+    val notes: String? = null,
+    @SerialName("is_archived") val isArchived: Boolean = false,
+    @SerialName("deleted_at") val deletedAt: String? = null,
+) {
+    val startEpochMs: Long? get() = parseIsoToEpochMs(date)
+
+    /** User-facing label, mirroring the iOS work-task naming. */
+    val displayLabel: String
+        get() = taskType?.takeIf { it.isNotBlank() }
+            ?: paddockName?.takeIf { it.isNotBlank() }
+            ?: "Work task"
+}
+
+/**
+ * Resolve a trip's linked equipment display name, mirroring the iOS
+ * `EquipmentResolver.tripMachineName`: prefer the linked `machine_id`, then a
+ * machine backfilled from the legacy `tractor_id`. Returns null when no link
+ * resolves so the UI can show a friendly fallback.
+ */
+fun resolveTripMachineName(trip: Trip, machines: List<VineyardMachine>): String? {
+    trip.machineId?.let { mid ->
+        machines.firstOrNull { it.id == mid }?.let { return it.displayName }
+    }
+    trip.tractorId?.let { tid ->
+        machines.firstOrNull { it.legacyTractorId == tid && it.vineyardId == trip.vineyardId }
+            ?.let { return it.displayName }
+    }
+    return null
+}
+
+/** Resolve the work task a trip is grouped under, or null when unlinked/unavailable. */
+fun resolveTripWorkTask(trip: Trip, workTasks: List<WorkTask>): WorkTask? =
+    trip.workTaskId?.let { id -> workTasks.firstOrNull { it.id == id } }
 
 @Serializable
 data class Pin(

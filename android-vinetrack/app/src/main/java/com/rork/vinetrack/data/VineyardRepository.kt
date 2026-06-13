@@ -5,6 +5,8 @@ import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Pin
 import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.Vineyard
+import com.rork.vinetrack.data.model.VineyardMachine
+import com.rork.vinetrack.data.model.WorkTask
 import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.headers
@@ -33,6 +35,14 @@ class VineyardRepository(private val session: SessionStore) {
 
     suspend fun listTrips(vineyardId: String): List<Trip> = withContext(Dispatchers.IO) {
         get("trips?select=*&vineyard_id=eq.$vineyardId&deleted_at=is.null&order=start_time.desc")
+    }
+
+    suspend fun listMachines(vineyardId: String): List<VineyardMachine> = withContext(Dispatchers.IO) {
+        get("vineyard_machines?select=*&vineyard_id=eq.$vineyardId&deleted_at=is.null&order=name.asc")
+    }
+
+    suspend fun listWorkTasks(vineyardId: String): List<WorkTask> = withContext(Dispatchers.IO) {
+        get("work_tasks?select=*&vineyard_id=eq.$vineyardId&deleted_at=is.null&is_archived=eq.false&order=date.desc")
     }
 
     private suspend inline fun <reified T> get(path: String): T {

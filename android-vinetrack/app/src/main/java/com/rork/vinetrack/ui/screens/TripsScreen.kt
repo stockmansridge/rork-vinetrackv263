@@ -29,6 +29,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Agriculture
+import androidx.compose.material.icons.filled.Assignment
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Edit
@@ -94,6 +96,8 @@ import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.builtInTripFunctions
 import com.rork.vinetrack.data.model.formatTripDuration
+import com.rork.vinetrack.data.model.resolveTripMachineName
+import com.rork.vinetrack.data.model.resolveTripWorkTask
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.EmptyState
@@ -126,6 +130,7 @@ fun TripsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifi
                 state = state,
                 onSelect = { selectedId = it.id },
                 onStart = { starting = true },
+                onSelectActive = { selectedId = it.id },
             )
         } else {
             TripDetailView(
@@ -160,7 +165,7 @@ fun TripsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifi
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TripListView(state: AppUiState, onSelect: (Trip) -> Unit, onStart: () -> Unit) {
+private fun TripListView(state: AppUiState, onSelect: (Trip) -> Unit, onStart: () -> Unit, onSelectActive: (Trip) -> Unit) {
     val vine = LocalVineColors.current
     val active = state.activeTrip
     val finished = remember(state.trips) { state.trips.filterNot { it.isActive } }
@@ -229,7 +234,7 @@ private fun TripListView(state: AppUiState, onSelect: (Trip) -> Unit, onStart: (
                 ) {
                     if (active != null) {
                         item(key = "active-${active.id}") {
-                            ActiveTripBanner(active, onClick = { onSelect(active) })
+                            ActiveTripBanner(active, machineName = resolveTripMachineName(active, state.machines), onClick = { onSelectActive(active) })
                         }
                     }
                     if (finished.isNotEmpty()) {
@@ -253,7 +258,7 @@ private fun TripListView(state: AppUiState, onSelect: (Trip) -> Unit, onStart: (
 }
 
 @Composable
-private fun ActiveTripBanner(trip: Trip, onClick: () -> Unit) {
+private fun ActiveTripBanner(trip: Trip, machineName: String?, onClick: () -> Unit) {
     var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(trip.id, trip.isPaused) {
         while (true) {
@@ -278,6 +283,9 @@ private fun ActiveTripBanner(trip: Trip, onClick: () -> Unit) {
                     fontSize = 13.sp,
                     color = LocalVineColors.current.textSecondary,
                 )
+                machineName?.let {
+                    Text(it, fontSize = 12.sp, color = LocalVineColors.current.textSecondary, maxLines = 1)
+                }
             }
             StatusBadge(if (trip.isPaused) "Paused" else "Live", if (trip.isPaused) VineColors.Orange else VineColors.Warning)
         }
@@ -414,10 +422,29 @@ private fun TripDetailView(
 
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SectionHeader("Details", onLight = true)
+                val machineName = resolveTripMachineName(trip, state.machines)
+                val hasMachineLink = trip.machineId != null || trip.tractorId != null
+                val workTask = resolveTripWorkTask(trip, state.workTasks)
                 VineyardCard {
                     DetailRow(Icons.Filled.Grass, "Block", trip.paddockName?.takeIf { it.isNotBlank() } ?: "No block linked", VineColors.LeafGreen)
                     Divider(vine.cardBorder)
                     DetailRow(Icons.Filled.Person, "Operator", trip.personName?.takeIf { it.isNotBlank() } ?: "Not recorded", VineColors.EarthBrown)
+                    Divider(vine.cardBorder)
+                    DetailRow(
+                        Icons.Filled.Agriculture,
+                        "Equipment",
+                        machineName ?: if (hasMachineLink) "Linked equipment unavailable" else "No machine linked",
+                        VineColors.Orange,
+                    )
+                    if (trip.workTaskId != null) {
+                        Divider(vine.cardBorder)
+                        DetailRow(
+                            Icons.Filled.Assignment,
+                            "Work task",
+                            workTask?.displayLabel ?: "Linked task unavailable",
+                            VineColors.Indigo,
+                        )
+                    }
                     Divider(vine.cardBorder)
                     DetailRow(Icons.Filled.Schedule, "Started", formatTripDateTime(trip.startEpochMs) ?: "—", VineColors.Indigo)
                     trip.endEpochMs?.let {
@@ -557,6 +584,8 @@ private fun StartTripSheet(
     var functionRaw by remember { mutableStateOf(builtInTripFunctions.first().first) }
     var operator by remember { mutableStateOf("") }
     var title by remember { mutableStateOf("") }
+    var machineId by remember { mutableStateOf<String?>(null) }
+    var workTaskId by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
     var paddockMenu by remember { mutableStateOf(false) }
     var functionMenu by remember { mutableStateOf(false) }
@@ -571,6 +600,8 @@ private fun StartTripSheet(
             personName = operator.trim(),
             tripFunction = functionRaw,
             tripTitle = title.trim(),
+            machineId = machineId,
+            workTaskId = workTaskId,
         ) { ok ->
             saving = false
             if (ok) vm.activeTripIdOrNull()?.let(onStarted)
@@ -630,6 +661,9 @@ private fun StartTripSheet(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
+
+            MachinePicker(state = state, selectedId = machineId, onSelect = { machineId = it })
+            WorkTaskPicker(state = state, selectedId = workTaskId, onSelect = { workTaskId = it })
 
             OutlinedTextField(
                 value = title,
@@ -725,6 +759,8 @@ private fun EditTripSheet(
     }
     var operator by remember { mutableStateOf(trip.personName ?: "") }
     var title by remember { mutableStateOf(trip.tripTitle ?: "") }
+    var machineId by remember { mutableStateOf(trip.machineId) }
+    var workTaskId by remember { mutableStateOf(trip.workTaskId) }
     var saving by remember { mutableStateOf(false) }
     var paddockMenu by remember { mutableStateOf(false) }
     var functionMenu by remember { mutableStateOf(false) }
@@ -776,6 +812,10 @@ private fun EditTripSheet(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
+
+            MachinePicker(state = state, selectedId = machineId, onSelect = { machineId = it })
+            WorkTaskPicker(state = state, selectedId = workTaskId, onSelect = { workTaskId = it })
+
             OutlinedTextField(
                 value = title,
                 onValueChange = { title = it },
@@ -783,6 +823,14 @@ private fun EditTripSheet(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
+
+            if (trip.machineId != null && machineId == null || trip.workTaskId != null && workTaskId == null) {
+                Text(
+                    "Clearing an existing equipment or work-task link isn't supported yet — pick a different one to change it.",
+                    fontSize = 12.sp,
+                    color = vine.textSecondary,
+                )
+            }
 
             Button(
                 onClick = {
@@ -795,6 +843,8 @@ private fun EditTripSheet(
                         personName = operator.trim(),
                         tripFunction = functionRaw,
                         tripTitle = title.trim(),
+                        machineId = machineId,
+                        workTaskId = workTaskId,
                     ) { ok -> saving = false; if (ok) onSaved() }
                 },
                 enabled = !saving,
@@ -856,6 +906,64 @@ private fun TripPathMap(path: List<LatLng>, blocks: List<Paddock>) {
             }
             path.lastOrNull()?.let {
                 Marker(state = MarkerState(position = it), title = "End", icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED))
+            }
+        }
+    }
+}
+
+/** Equipment dropdown sourced from the vineyard's machines (incl. backfilled tractors). */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MachinePicker(state: AppUiState, selectedId: String?, onSelect: (String?) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    val machines = state.machines
+    val selectedName = machines.firstOrNull { it.id == selectedId }?.displayName
+        ?: if (selectedId != null) "Linked equipment unavailable" else "No equipment"
+    ExposedDropdownMenuBox(expanded = open, onExpandedChange = { open = it }) {
+        OutlinedTextField(
+            value = selectedName,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Equipment") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = open) },
+            modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+        )
+        ExposedDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(text = { Text("No equipment") }, onClick = { onSelect(null); open = false })
+            machines.forEach { m ->
+                DropdownMenuItem(text = { Text(m.displayName) }, onClick = { onSelect(m.id); open = false })
+            }
+        }
+    }
+}
+
+/** Work-task dropdown sourced from the vineyard's active work tasks. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun WorkTaskPicker(state: AppUiState, selectedId: String?, onSelect: (String?) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    val tasks = state.workTasks
+    val selectedLabel = tasks.firstOrNull { it.id == selectedId }?.displayLabel
+        ?: if (selectedId != null) "Linked task unavailable" else "No work task"
+    ExposedDropdownMenuBox(expanded = open, onExpandedChange = { open = it }) {
+        OutlinedTextField(
+            value = selectedLabel,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Work task") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = open) },
+            modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+        )
+        ExposedDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(text = { Text("No work task") }, onClick = { onSelect(null); open = false })
+            tasks.forEach { t ->
+                DropdownMenuItem(
+                    text = {
+                        val sub = formatTripDate(t.startEpochMs)
+                        Text(if (sub != null) "${t.displayLabel} · $sub" else t.displayLabel)
+                    },
+                    onClick = { onSelect(t.id); open = false },
+                )
             }
         }
     }

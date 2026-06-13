@@ -18,6 +18,8 @@ import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Pin
 import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.Vineyard
+import com.rork.vinetrack.data.model.VineyardMachine
+import com.rork.vinetrack.data.model.WorkTask
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -39,6 +41,8 @@ data class AppUiState(
     val paddocks: List<Paddock> = emptyList(),
     val pins: List<Pin> = emptyList(),
     val trips: List<Trip> = emptyList(),
+    val machines: List<VineyardMachine> = emptyList(),
+    val workTasks: List<WorkTask> = emptyList(),
     val isLoadingVineyardData: Boolean = false,
     val paddockError: String? = null,
     val pinError: String? = null,
@@ -185,7 +189,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         session.selectedVineyardId = id
         // Clear the previous vineyard's data so the UI doesn't briefly show
         // stale blocks/pins while the new vineyard loads.
-        _ui.update { it.copy(selectedVineyardId = id, paddocks = emptyList(), pins = emptyList(), trips = emptyList()) }
+        _ui.update { it.copy(selectedVineyardId = id, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList()) }
         viewModelScope.launch { loadVineyardData(id) }
     }
 
@@ -437,6 +441,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         personName: String?,
         tripFunction: String?,
         tripTitle: String?,
+        machineId: String? = null,
+        workTaskId: String? = null,
         onResult: (Boolean) -> Unit,
     ) {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
@@ -450,6 +456,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     personName = personName?.ifBlank { null },
                     tripFunction = tripFunction?.ifBlank { null },
                     tripTitle = tripTitle?.ifBlank { null },
+                    machineId = machineId,
+                    workTaskId = workTaskId,
                 )
                 _ui.update { it.copy(trips = listOf(created) + it.trips, tripBusy = false) }
                 beginTracking(created)
@@ -475,6 +483,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         personName: String?,
         tripFunction: String?,
         tripTitle: String?,
+        machineId: String? = null,
+        workTaskId: String? = null,
         onResult: (Boolean) -> Unit,
     ) {
         val previous = _ui.value.trips
@@ -488,6 +498,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     personName = personName?.ifBlank { null },
                     tripFunction = tripFunction?.ifBlank { null },
                     tripTitle = tripTitle?.ifBlank { null },
+                    machineId = machineId,
+                    workTaskId = workTaskId,
                 )
                 _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == tripId) updated else it }) }
                 onResult(true)
@@ -662,11 +674,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             tripError = "Couldn't load trips. Check your connection."
             _ui.value.trips
         }
+        // Equipment + work tasks are reference lists used by the trip forms.
+        // They're non-critical, so failures fall back to the existing list
+        // (or empty) without surfacing an error.
+        val machines = try {
+            repo.listMachines(vineyardId)
+        } catch (e: Exception) {
+            _ui.value.machines
+        }
+        val workTasks = try {
+            repo.listWorkTasks(vineyardId)
+        } catch (e: Exception) {
+            _ui.value.workTasks
+        }
         _ui.update {
             it.copy(
                 paddocks = paddocks,
                 pins = pins,
                 trips = trips,
+                machines = machines,
+                workTasks = workTasks,
                 isLoadingVineyardData = false,
                 paddockError = paddockError,
                 pinError = pinError,
