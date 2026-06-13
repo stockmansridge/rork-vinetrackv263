@@ -614,3 +614,140 @@ data class WorkTaskMachineLine(
         return equipmentNameSnapshot.trim().takeIf { it.isNotBlank() } ?: "Machine"
     }
 }
+
+/**
+ * A single chemical line within a spray tank mix. Serialized inside the
+ * `spray_records.tanks` JSONB array, so the property names must stay camelCase
+ * to match the iOS `SprayChemical` Codable keys exactly. `unit` is the
+ * `ChemicalUnit` raw value ("Litres", "mL", "Kg", "g").
+ */
+@Serializable
+data class SprayChemical(
+    val id: String,
+    val name: String = "",
+    val volumePerTank: Double = 0.0,
+    val ratePerHa: Double = 0.0,
+    val ratePer100L: Double = 0.0,
+    val costPerUnit: Double = 0.0,
+    val unit: String = "Litres",
+    val savedChemicalId: String? = null,
+) {
+    val costPerTank: Double get() = costPerUnit * volumePerTank
+}
+
+/**
+ * A row-range a tank was applied across — part of the iOS `SprayTank` JSONB
+ * shape. Android doesn't edit these yet but preserves them on round-trip.
+ */
+@Serializable
+data class TankRowApplication(
+    val id: String,
+    val startRow: Double = 0.5,
+    val endRow: Double = 0.5,
+)
+
+/**
+ * A single tank within a spray record. Serialized inside the
+ * `spray_records.tanks` JSONB array; property names mirror the iOS `SprayTank`
+ * Codable keys (camelCase) so records round-trip cleanly across platforms.
+ */
+@Serializable
+data class SprayTank(
+    val id: String,
+    val tankNumber: Int = 1,
+    val waterVolume: Double = 0.0,
+    val sprayRatePerHa: Double = 0.0,
+    val concentrationFactor: Double = 0.0,
+    val rowApplications: List<TankRowApplication> = emptyList(),
+    val chemicals: List<SprayChemical> = emptyList(),
+) {
+    private val effectiveConcentrationFactor: Double
+        get() = if (concentrationFactor > 0) concentrationFactor else 1.0
+
+    /** Hectares this tank covers, mirroring the iOS `areaPerTank` calc. */
+    val areaPerTank: Double
+        get() = if (sprayRatePerHa > 0) (waterVolume * effectiveConcentrationFactor) / sprayRatePerHa else 0.0
+}
+
+/**
+ * A completed spray application/compliance record — backs
+ * `public.spray_records` (sql/007). Soft-deleted via the
+ * `soft_delete_spray_record` RPC (owner/manager/supervisor only); inserts and
+ * updates follow membership RLS. The `tanks` JSONB holds the full tank-mix
+ * breakdown. Equipment uses the migration-safe `tractor` text snapshot plus
+ * optional `machine_id`/`tractor_id` links, exactly like iOS.
+ */
+@Serializable
+data class SprayRecord(
+    val id: String,
+    @SerialName("vineyard_id") val vineyardId: String,
+    @SerialName("trip_id") val tripId: String? = null,
+    val date: String? = null,
+    @SerialName("start_time") val startTime: String? = null,
+    @SerialName("end_time") val endTime: String? = null,
+    val temperature: Double? = null,
+    @SerialName("wind_speed") val windSpeed: Double? = null,
+    @SerialName("wind_direction") val windDirection: String? = null,
+    val humidity: Double? = null,
+    @SerialName("spray_reference") val sprayReference: String? = null,
+    val notes: String? = null,
+    @SerialName("number_of_fans_jets") val numberOfFansJets: String? = null,
+    @SerialName("average_speed") val averageSpeed: Double? = null,
+    @SerialName("equipment_type") val equipmentType: String? = null,
+    val tractor: String? = null,
+    @SerialName("tractor_gear") val tractorGear: String? = null,
+    @SerialName("machine_id") val machineId: String? = null,
+    @SerialName("tractor_id") val tractorId: String? = null,
+    @SerialName("spray_equipment_id") val sprayEquipmentId: String? = null,
+    @SerialName("is_template") val isTemplate: Boolean = false,
+    @SerialName("operation_type") val operationType: String? = null,
+    val tanks: List<SprayTank>? = null,
+    @SerialName("created_at") val createdAt: String? = null,
+    @SerialName("deleted_at") val deletedAt: String? = null,
+) {
+    val dateEpochMs: Long? get() = parseIsoToEpochMs(date ?: startTime)
+
+    /** User-facing label: the spray reference, else operation type, else a fallback. */
+    val displayLabel: String
+        get() = sprayReference?.takeIf { it.isNotBlank() }
+            ?: operationType?.takeIf { it.isNotBlank() }
+            ?: "Spray record"
+
+    val tankCount: Int get() = tanks?.size ?: 0
+
+    /** Total water volume across all tanks (litres). */
+    val totalWaterVolume: Double get() = tanks.orEmpty().sumOf { it.waterVolume }
+
+    /** Distinct chemical names used across all tanks, in encounter order. */
+    val chemicalNames: List<String>
+        get() = tanks.orEmpty()
+            .flatMap { it.chemicals }
+            .mapNotNull { it.name.trim().takeIf { n -> n.isNotBlank() } }
+            .distinct()
+
+    /**
+     * Best display name for the linked machine/tractor. Prefers the authoritative
+     * `tractor` text snapshot (matching iOS), then a live machine lookup.
+     */
+    fun displayMachine(machines: List<VineyardMachine>): String? {
+        tractor?.takeIf { it.isNotBlank() }?.let { return it }
+        machineId?.let { mid -> machines.firstOrNull { it.id == mid }?.let { return it.displayName } }
+        tractorId?.let { tid ->
+            machines.firstOrNull { it.legacyTractorId == tid && it.vineyardId == vineyardId }?.let { return it.displayName }
+        }
+        return null
+    }
+}
+
+/** Built-in spray operation types — raw values match the iOS `OperationType` enum. */
+val sprayOperationTypes: List<String> = listOf(
+    "Foliar Spray",
+    "Banded Spray",
+    "Spreader",
+)
+
+/** Compass wind-direction options, mirroring the iOS `WindDirection` enum. */
+val windDirectionOptions: List<String> = listOf(
+    "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+    "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
+)

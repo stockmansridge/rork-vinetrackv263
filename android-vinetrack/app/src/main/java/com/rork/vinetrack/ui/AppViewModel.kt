@@ -9,6 +9,7 @@ import com.rork.vinetrack.data.LocationTracker
 import com.rork.vinetrack.data.PinPhotoImageUtil
 import com.rork.vinetrack.data.PinPhotoRepository
 import com.rork.vinetrack.data.PinRepository
+import com.rork.vinetrack.data.SprayRecordRepository
 import com.rork.vinetrack.data.TripRepository
 import com.rork.vinetrack.data.VineyardRepository
 import com.rork.vinetrack.data.WorkTaskRepository
@@ -19,6 +20,7 @@ import com.rork.vinetrack.data.model.CoordinatePoint
 import com.rork.vinetrack.data.model.OperatorCategory
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Pin
+import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.Vineyard
 import com.rork.vinetrack.data.model.VineyardMachine
@@ -51,6 +53,7 @@ data class AppUiState(
     val workTasks: List<WorkTask> = emptyList(),
     val members: List<VineyardMember> = emptyList(),
     val operatorCategories: List<OperatorCategory> = emptyList(),
+    val sprayRecords: List<SprayRecord> = emptyList(),
     val isLoadingVineyardData: Boolean = false,
     val paddockError: String? = null,
     val pinError: String? = null,
@@ -69,6 +72,8 @@ data class AppUiState(
     val taskLinesLoading: Boolean = false,
     val taskLineBusy: Boolean = false,
     val taskLineError: String? = null,
+    val sprayBusy: Boolean = false,
+    val sprayError: String? = null,
 ) {
     val selectedVineyard: Vineyard? get() = vineyards.firstOrNull { it.id == selectedVineyardId }
     val openPins: Int get() = pins.count { !it.isCompleted }
@@ -87,6 +92,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val tripRepo = TripRepository(session)
     private val workTaskRepo = WorkTaskRepository(session)
     private val workTaskLineRepo = WorkTaskLineRepository(session)
+    private val sprayRepo = SprayRecordRepository(session)
 
     /** Foreground GPS tracker for the currently active trip (null when idle). */
     private var tracker: LocationTracker? = null
@@ -210,7 +216,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         session.selectedVineyardId = id
         // Clear the previous vineyard's data so the UI doesn't briefly show
         // stale blocks/pins while the new vineyard loads.
-        _ui.update { it.copy(selectedVineyardId = id, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList()) }
+        _ui.update { it.copy(selectedVineyardId = id, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), sprayRecords = emptyList()) }
         viewModelScope.launch { loadVineyardData(id) }
     }
 
@@ -988,6 +994,74 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // MARK: - Spray record write path
+
+    /** Log a new spray record, optimistically inserting it at the top of the list. */
+    fun createSprayRecord(input: SprayRecordRepository.SprayInput, onResult: (Boolean) -> Unit) {
+        val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
+        viewModelScope.launch {
+            _ui.update { it.copy(sprayBusy = true, sprayError = null) }
+            try {
+                val created = sprayRepo.createSprayRecord(vineyardId, input)
+                _ui.update { it.copy(sprayRecords = listOf(created) + it.sprayRecords, sprayBusy = false) }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                _ui.update { it.copy(sprayBusy = false) }; signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(sprayBusy = false, sprayError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(sprayBusy = false, sprayError = "Couldn't save the spray record. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /** Edit an existing spray record, reconciling the returned row. */
+    fun updateSprayRecord(id: String, input: SprayRecordRepository.SprayInput, onResult: (Boolean) -> Unit) {
+        val previous = _ui.value.sprayRecords
+        viewModelScope.launch {
+            _ui.update { it.copy(sprayBusy = true, sprayError = null) }
+            try {
+                val updated = sprayRepo.updateSprayRecord(id, input)
+                _ui.update { st -> st.copy(sprayRecords = st.sprayRecords.map { if (it.id == id) updated else it }, sprayBusy = false) }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                _ui.update { it.copy(sprayBusy = false) }; signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(sprayBusy = false, sprayRecords = previous, sprayError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(sprayBusy = false, sprayRecords = previous, sprayError = "Couldn't save the spray record. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /** Soft-delete a spray record via the server RPC, optimistically removing it. */
+    fun deleteSprayRecord(id: String, onResult: (Boolean) -> Unit) {
+        val previous = _ui.value.sprayRecords
+        _ui.update { st -> st.copy(sprayRecords = st.sprayRecords.filterNot { it.id == id }) }
+        viewModelScope.launch {
+            try {
+                sprayRepo.softDeleteSprayRecord(id)
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(sprayRecords = previous, sprayError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(sprayRecords = previous, sprayError = "Couldn't delete the spray record. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    fun clearSprayError() {
+        _ui.update { it.copy(sprayError = null) }
+    }
+
     private fun friendlyWriteError(code: Int): String = when (code) {
         403 -> "You don't have permission to do that."
         else -> "Something went wrong. Please try again."
@@ -1051,6 +1125,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } catch (e: Exception) {
             _ui.value.operatorCategories
         }
+        // Spray records are an operational list; soft-fail to the existing list.
+        val sprayRecords = try {
+            repo.listSprayRecords(vineyardId)
+        } catch (e: Exception) {
+            _ui.value.sprayRecords
+        }
         _ui.update {
             it.copy(
                 paddocks = paddocks,
@@ -1060,6 +1140,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 workTasks = workTasks,
                 members = members,
                 operatorCategories = operatorCategories,
+                sprayRecords = sprayRecords,
                 isLoadingVineyardData = false,
                 paddockError = paddockError,
                 pinError = pinError,

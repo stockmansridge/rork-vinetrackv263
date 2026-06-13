@@ -299,6 +299,8 @@ private fun RecentSection(state: AppUiState, onSwitchTab: (Int) -> Unit) {
             SummaryRow("Trips", state.trips.size, VineColors.Indigo) { onSwitchTab(3) }
             Divider(vine.cardBorder)
             SummaryRow("Work tasks", state.workTasks.size, VineColors.EarthBrown) { onSwitchTab(4) }
+            Divider(vine.cardBorder)
+            SummaryRow("Spray records", state.sprayRecords.size, VineColors.Cyan) { onSwitchTab(5) }
         }
     }
 }
