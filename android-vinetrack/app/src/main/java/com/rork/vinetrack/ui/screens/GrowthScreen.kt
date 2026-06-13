@@ -538,6 +538,14 @@ private fun GrowthSheet(
     var showDatePicker by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
 
+    // EL4 → budburst assist: only offered when this is an EL4 (Budburst)
+    // observation against a block that has no budburst date yet. Mirrors iOS,
+    // which suggests the observation date as the block's budburst date and never
+    // overwrites an existing one.
+    val budburstEligible = stage?.code == GrowthStage.BUDBURST_CODE &&
+        block != null && block?.budburstDate.isNullOrBlank()
+    var setBudburst by remember(budburstEligible) { mutableStateOf(budburstEligible) }
+
     val canSave = stage != null && !saving
 
     fun save() {
@@ -547,16 +555,38 @@ private fun GrowthSheet(
         // Snapshot the block's primary variety so historical records stay
         // readable if the allocation changes later (mirrors iOS).
         val variety = existing?.variety?.takeIf { it.isNotBlank() } ?: block?.primaryVarietyName
+        val observedIso = Instant.ofEpochMilli(observedMs).toString()
         val input = GrowthStageRecordRepository.GrowthInput(
             paddockId = block?.id,
             stageCode = chosen.code,
             stageLabel = chosen.description,
             variety = variety,
-            observedAt = Instant.ofEpochMilli(observedMs).toString(),
+            observedAt = observedIso,
             rowNumber = rowText.trim().toIntOrNull(),
             notes = notes.trim().ifBlank { null },
         )
-        val cb: (Boolean) -> Unit = { ok -> saving = false; if (ok) onSaved() }
+        // Capture the target block before the callback so a later picker change
+        // can't redirect the budburst write.
+        val budburstBlock = block?.takeIf { budburstEligible && setBudburst && it.budburstDate.isNullOrBlank() }
+        val cb: (Boolean) -> Unit = { ok ->
+            saving = false
+            if (ok) {
+                budburstBlock?.let { b ->
+                    // Preserve the block's other phenology dates; only fill the
+                    // blank budburst date from this EL4 observation.
+                    vm.updatePaddockPhenologyDates(
+                        b.id,
+                        PaddockRepository.PhenologyDates(
+                            budburstDate = observedIso,
+                            floweringDate = b.floweringDate,
+                            veraisonDate = b.veraisonDate,
+                            harvestDate = b.harvestDate,
+                        ),
+                    ) {}
+                }
+                onSaved()
+            }
+        }
         if (existing == null) vm.createGrowthStageRecord(input, cb) else vm.updateGrowthStageRecord(existing.id, input, cb)
     }
 
@@ -608,6 +638,28 @@ private fun GrowthSheet(
             OutlinedButton(onClick = { showDatePicker = true }, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Filled.Schedule, contentDescription = null, modifier = Modifier.size(18.dp))
                 Text("  " + (formatGrowthDate(observedMs) ?: "Pick date"))
+            }
+
+            // EL4 → budburst assist toggle (only when the block has no budburst date yet).
+            if (budburstEligible) {
+                Row(
+                    modifier = Modifier.fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(VineColors.LeafGreen.copy(alpha = 0.08f))
+                        .clickable { setBudburst = !setBudburst }
+                        .padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    androidx.compose.material3.Checkbox(checked = setBudburst, onCheckedChange = { setBudburst = it })
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("Set block budburst date", color = vine.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "${block?.name ?: "This block"} has no budburst date — use ${formatGrowthDate(observedMs) ?: "this observation"}.",
+                            color = vine.textSecondary, fontSize = 12.sp,
+                        )
+                    }
+                }
             }
 
             OutlinedTextField(
