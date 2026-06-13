@@ -63,7 +63,7 @@ fun BlocksScreen(state: AppUiState, modifier: Modifier = Modifier) {
         if (block == null) {
             BlockListView(state, onSelect = { selectedId = it.id })
         } else {
-            BlockDetailView(block, onBack = { selectedId = null })
+            BlockDetailView(block, state, onBack = { selectedId = null })
         }
     }
 }

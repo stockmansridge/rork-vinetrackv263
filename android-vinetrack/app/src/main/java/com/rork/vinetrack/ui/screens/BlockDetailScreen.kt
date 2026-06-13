@@ -42,8 +42,16 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.rork.vinetrack.data.model.GrowthStage
+import com.rork.vinetrack.data.model.GrowthStageRecord
+import com.rork.vinetrack.data.model.parseIsoToEpochMs
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.PaddockVarietyAllocation
+import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.StatusBadge
 import com.rork.vinetrack.ui.components.VineyardCard
@@ -52,7 +60,7 @@ import com.rork.vinetrack.ui.theme.VineColors
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BlockDetailView(block: Paddock, onBack: () -> Unit, modifier: Modifier = Modifier) {
+fun BlockDetailView(block: Paddock, state: AppUiState, onBack: () -> Unit, modifier: Modifier = Modifier) {
     val vine = LocalVineColors.current
     Scaffold(
         modifier = modifier,
@@ -81,6 +89,10 @@ fun BlockDetailView(block: Paddock, onBack: () -> Unit, modifier: Modifier = Mod
 
             VarietySection(block.varietyAllocations.orEmpty())
 
+            PhenologySection(block)
+
+            GrowthObservationsSection(block, state.growthRecords)
+
             GeometrySection(block)
 
             IrrigationSection(block)
@@ -93,6 +105,8 @@ fun BlockDetailView(block: Paddock, onBack: () -> Unit, modifier: Modifier = Mod
                     }
                 }
             }
+
+            ActivitySection(block, state)
 
             Spacer(Modifier.height(8.dp))
         }
@@ -189,6 +203,120 @@ private fun VarietyRow(alloc: PaddockVarietyAllocation) {
     }
 }
 
+/**
+ * Block phenology milestones (read-only here). Dates remain editable from the
+ * Growth screen via the safe partial PATCH path; this profile just surfaces them.
+ */
+@Composable
+private fun PhenologySection(block: Paddock) {
+    val vine = LocalVineColors.current
+    val milestones = listOf(
+        "Budburst" to block.budburstDate,
+        "Flowering" to block.floweringDate,
+        "Veraison" to block.veraisonDate,
+        "Harvest" to block.harvestDate,
+    )
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SectionHeader("Phenology", onLight = true)
+        VineyardCard {
+            if (!block.hasPhenology) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Icon(Icons.Filled.Info, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(18.dp))
+                    Text("No phenology dates yet. Add them from the Growth screen.", color = vine.textSecondary, fontSize = 14.sp)
+                }
+            } else {
+                milestones.forEachIndexed { index, (label, iso) ->
+                    val date = formatBlockDate(iso)
+                    DetailRow(label, date ?: "Not set")
+                    if (index < milestones.lastIndex) DividerLine()
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Recent E-L growth-stage observations recorded against this block. Read-only
+ * summary (top 5 by observed date); full detail/editing lives on the Growth screen.
+ */
+@Composable
+private fun GrowthObservationsSection(block: Paddock, records: List<GrowthStageRecord>) {
+    val vine = LocalVineColors.current
+    val blockRecords = records
+        .filter { it.paddockId == block.id }
+        .sortedByDescending { it.observedEpochMs ?: 0L }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SectionHeader("Growth observations", onLight = true)
+        VineyardCard {
+            if (blockRecords.isEmpty()) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Icon(Icons.Filled.Info, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(18.dp))
+                    Text("No growth-stage observations for this block yet.", color = vine.textSecondary, fontSize = 14.sp)
+                }
+            } else {
+                blockRecords.take(5).forEachIndexed { index, record ->
+                    GrowthObservationRow(record)
+                    if (index < minOf(blockRecords.size, 5) - 1) DividerLine()
+                }
+                if (blockRecords.size > 5) {
+                    Spacer(Modifier.height(8.dp))
+                    Text("+ ${blockRecords.size - 5} more on the Growth screen", color = vine.textSecondary, fontSize = 12.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GrowthObservationRow(record: GrowthStageRecord) {
+    val vine = LocalVineColors.current
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(
+            modifier = Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(VineColors.LeafGreen.copy(alpha = 0.15f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(record.stageCode.ifBlank { "EL" }, color = VineColors.DarkGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                GrowthStage.byCode(record.stageCode)?.description ?: record.displayStage,
+                color = vine.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 2,
+            )
+            val meta = buildList {
+                formatBlockDate(record.observedAt)?.let { add(it) }
+                record.variety?.takeIf { it.isNotBlank() }?.let { add(it) }
+            }
+            if (meta.isNotEmpty()) {
+                Text(meta.joinToString(" · "), color = vine.textSecondary, fontSize = 12.sp, maxLines = 1)
+            }
+        }
+    }
+}
+
+/**
+ * Lightweight cross-reference: how many trips and work tasks are linked to this
+ * block. Uses data already loaded in state — no extra fetches, no reporting surface.
+ */
+@Composable
+private fun ActivitySection(block: Paddock, state: AppUiState) {
+    val vine = LocalVineColors.current
+    val tripCount = state.trips.count { it.paddockId == block.id }
+    val taskCount = state.workTasks.count { it.paddockId == block.id }
+    if (tripCount == 0 && taskCount == 0) return
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SectionHeader("Linked activity", onLight = true)
+        VineyardCard {
+            DetailRow("Trips", tripCount.toString())
+            DividerLine()
+            DetailRow("Work tasks", taskCount.toString())
+        }
+    }
+}
+
 @Composable
 private fun GeometrySection(block: Paddock) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -281,6 +409,15 @@ private fun DetailRow(label: String, value: String) {
         Text(label, color = vine.textSecondary, modifier = Modifier.weight(1f), fontSize = 14.sp)
         Text(value, color = vine.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
     }
+}
+
+private val blockDateFormatter: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("d MMM yyyy", Locale.getDefault())
+
+/** Format an ISO timestamp to a short local date, or null when absent/unparseable. */
+private fun formatBlockDate(iso: String?): String? {
+    val ms = parseIsoToEpochMs(iso) ?: return null
+    return Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).format(blockDateFormatter)
 }
 
 @Composable
