@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import android.net.Uri
 import com.rork.vinetrack.data.BackendError
 import com.rork.vinetrack.data.LocationTracker
+import com.rork.vinetrack.data.MaintenanceLogRepository
 import com.rork.vinetrack.data.PinPhotoImageUtil
 import com.rork.vinetrack.data.PinPhotoRepository
 import com.rork.vinetrack.data.PinRepository
@@ -17,6 +18,7 @@ import com.rork.vinetrack.data.WorkTaskLineRepository
 import com.rork.vinetrack.data.auth.AuthRepository
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.CoordinatePoint
+import com.rork.vinetrack.data.model.MaintenanceLog
 import com.rork.vinetrack.data.model.OperatorCategory
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Pin
@@ -56,6 +58,7 @@ data class AppUiState(
     val operatorCategories: List<OperatorCategory> = emptyList(),
     val sprayRecords: List<SprayRecord> = emptyList(),
     val sprayEquipment: List<SprayEquipment> = emptyList(),
+    val maintenanceLogs: List<MaintenanceLog> = emptyList(),
     val isLoadingVineyardData: Boolean = false,
     val paddockError: String? = null,
     val pinError: String? = null,
@@ -76,6 +79,8 @@ data class AppUiState(
     val taskLineError: String? = null,
     val sprayBusy: Boolean = false,
     val sprayError: String? = null,
+    val maintenanceBusy: Boolean = false,
+    val maintenanceError: String? = null,
 ) {
     val selectedVineyard: Vineyard? get() = vineyards.firstOrNull { it.id == selectedVineyardId }
     val openPins: Int get() = pins.count { !it.isCompleted }
@@ -95,6 +100,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val workTaskRepo = WorkTaskRepository(session)
     private val workTaskLineRepo = WorkTaskLineRepository(session)
     private val sprayRepo = SprayRecordRepository(session)
+    private val maintenanceRepo = MaintenanceLogRepository(session)
 
     /** Foreground GPS tracker for the currently active trip (null when idle). */
     private var tracker: LocationTracker? = null
@@ -218,7 +224,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         session.selectedVineyardId = id
         // Clear the previous vineyard's data so the UI doesn't briefly show
         // stale blocks/pins while the new vineyard loads.
-        _ui.update { it.copy(selectedVineyardId = id, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), sprayRecords = emptyList(), sprayEquipment = emptyList()) }
+        _ui.update { it.copy(selectedVineyardId = id, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), sprayRecords = emptyList(), sprayEquipment = emptyList(), maintenanceLogs = emptyList()) }
         viewModelScope.launch { loadVineyardData(id) }
     }
 
@@ -1064,6 +1070,74 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { it.copy(sprayError = null) }
     }
 
+    // MARK: - Maintenance log write path
+
+    /** Log a new maintenance record, optimistically inserting it at the top. */
+    fun createMaintenanceLog(input: MaintenanceLogRepository.MaintenanceInput, onResult: (Boolean) -> Unit) {
+        val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
+        viewModelScope.launch {
+            _ui.update { it.copy(maintenanceBusy = true, maintenanceError = null) }
+            try {
+                val created = maintenanceRepo.createMaintenanceLog(vineyardId, input)
+                _ui.update { it.copy(maintenanceLogs = listOf(created) + it.maintenanceLogs, maintenanceBusy = false) }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                _ui.update { it.copy(maintenanceBusy = false) }; signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(maintenanceBusy = false, maintenanceError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(maintenanceBusy = false, maintenanceError = "Couldn't save the maintenance log. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /** Edit an existing maintenance log, reconciling the returned row. */
+    fun updateMaintenanceLog(id: String, input: MaintenanceLogRepository.MaintenanceInput, onResult: (Boolean) -> Unit) {
+        val previous = _ui.value.maintenanceLogs
+        viewModelScope.launch {
+            _ui.update { it.copy(maintenanceBusy = true, maintenanceError = null) }
+            try {
+                val updated = maintenanceRepo.updateMaintenanceLog(id, input)
+                _ui.update { st -> st.copy(maintenanceLogs = st.maintenanceLogs.map { if (it.id == id) updated else it }, maintenanceBusy = false) }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                _ui.update { it.copy(maintenanceBusy = false) }; signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(maintenanceBusy = false, maintenanceLogs = previous, maintenanceError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(maintenanceBusy = false, maintenanceLogs = previous, maintenanceError = "Couldn't save the maintenance log. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /** Soft-delete a maintenance log via the server RPC, optimistically removing it. */
+    fun deleteMaintenanceLog(id: String, onResult: (Boolean) -> Unit) {
+        val previous = _ui.value.maintenanceLogs
+        _ui.update { st -> st.copy(maintenanceLogs = st.maintenanceLogs.filterNot { it.id == id }) }
+        viewModelScope.launch {
+            try {
+                maintenanceRepo.softDeleteMaintenanceLog(id)
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(maintenanceLogs = previous, maintenanceError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(maintenanceLogs = previous, maintenanceError = "Couldn't delete the maintenance log. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    fun clearMaintenanceError() {
+        _ui.update { it.copy(maintenanceError = null) }
+    }
+
     private fun friendlyWriteError(code: Int): String = when (code) {
         403 -> "You don't have permission to do that."
         else -> "Something went wrong. Please try again."
@@ -1140,6 +1214,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } catch (e: Exception) {
             _ui.value.sprayEquipment
         }
+        // Maintenance logs are an operational list; soft-fail to the existing list.
+        val maintenanceLogs = try {
+            repo.listMaintenanceLogs(vineyardId)
+        } catch (e: Exception) {
+            _ui.value.maintenanceLogs
+        }
         _ui.update {
             it.copy(
                 paddocks = paddocks,
@@ -1151,6 +1231,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 operatorCategories = operatorCategories,
                 sprayRecords = sprayRecords,
                 sprayEquipment = sprayEquipment,
+                maintenanceLogs = maintenanceLogs,
                 isLoadingVineyardData = false,
                 paddockError = paddockError,
                 pinError = pinError,

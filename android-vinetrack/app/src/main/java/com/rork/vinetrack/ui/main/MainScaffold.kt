@@ -8,6 +8,7 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Assignment
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -26,6 +27,7 @@ import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.screens.BlocksScreen
 import com.rork.vinetrack.ui.screens.HomeDashboard
+import com.rork.vinetrack.ui.screens.MaintenanceScreen
 import com.rork.vinetrack.ui.screens.PinsScreen
 import com.rork.vinetrack.ui.screens.SettingsScreen
 import com.rork.vinetrack.ui.screens.SpraysScreen
@@ -41,6 +43,7 @@ private val tabs = listOf(
     TabItem("Trip", Icons.Filled.DirectionsCar),
     TabItem("Tasks", Icons.Filled.Assignment),
     TabItem("Spray", Icons.Filled.WaterDrop),
+    TabItem("Service", Icons.Filled.Build),
     TabItem("Settings", Icons.Filled.Settings),
 )
 
@@ -70,7 +73,8 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState) {
             3 -> TripsScreen(vm, state, modifier)
             4 -> WorkTasksScreen(vm, state, modifier)
             5 -> SpraysScreen(vm, state, modifier)
-            6 -> SettingsScreen(vm, state, modifier)
+            6 -> MaintenanceScreen(vm, state, modifier)
+            7 -> SettingsScreen(vm, state, modifier)
         }
     }
 }

@@ -132,7 +132,7 @@ private fun DashboardContent(
 
             OverviewSection(state, onOpenMap)
 
-            ToolsSection(onOpenWorkTasks = { onSwitchTab(4) })
+            ToolsSection(onOpenWorkTasks = { onSwitchTab(4) }, onOpenMaintenance = { onSwitchTab(6) })
 
             RecentSection(state, onSwitchTab)
 
@@ -254,7 +254,7 @@ private fun OverviewSection(state: AppUiState, onOpenMap: () -> Unit) {
 }
 
 @Composable
-private fun ToolsSection(onOpenWorkTasks: () -> Unit) {
+private fun ToolsSection(onOpenWorkTasks: () -> Unit, onOpenMaintenance: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -268,7 +268,11 @@ private fun ToolsSection(onOpenWorkTasks: () -> Unit) {
             userScrollEnabled = false,
         ) {
             items(operationalTools) { tool ->
-                val onClick = if (tool.title == "Work Tasks") onOpenWorkTasks else null
+                val onClick = when (tool.title) {
+                    "Work Tasks" -> onOpenWorkTasks
+                    "Maintenance Log" -> onOpenMaintenance
+                    else -> null
+                }
                 OperationalTile(
                     tool.title,
                     tool.subtitle,
@@ -301,6 +305,8 @@ private fun RecentSection(state: AppUiState, onSwitchTab: (Int) -> Unit) {
             SummaryRow("Work tasks", state.workTasks.size, VineColors.EarthBrown) { onSwitchTab(4) }
             Divider(vine.cardBorder)
             SummaryRow("Spray records", state.sprayRecords.size, VineColors.Cyan) { onSwitchTab(5) }
+            Divider(vine.cardBorder)
+            SummaryRow("Maintenance logs", state.maintenanceLogs.size, VineColors.EarthBrown) { onSwitchTab(6) }
         }
     }
 }
