@@ -5,12 +5,15 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import android.net.Uri
 import com.rork.vinetrack.data.BackendError
+import com.rork.vinetrack.data.LocationTracker
 import com.rork.vinetrack.data.PinPhotoImageUtil
 import com.rork.vinetrack.data.PinPhotoRepository
 import com.rork.vinetrack.data.PinRepository
+import com.rork.vinetrack.data.TripRepository
 import com.rork.vinetrack.data.VineyardRepository
 import com.rork.vinetrack.data.auth.AuthRepository
 import com.rork.vinetrack.data.auth.SessionStore
+import com.rork.vinetrack.data.model.CoordinatePoint
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Pin
 import com.rork.vinetrack.data.model.Trip
@@ -41,11 +44,14 @@ data class AppUiState(
     val pinError: String? = null,
     val tripError: String? = null,
     val pinPhotoBusy: Boolean = false,
+    val tripBusy: Boolean = false,
+    val isTracking: Boolean = false,
 ) {
     val selectedVineyard: Vineyard? get() = vineyards.firstOrNull { it.id == selectedVineyardId }
     val openPins: Int get() = pins.count { !it.isCompleted }
     val totalHectares: Double get() = paddocks.sumOf { it.areaHectares }
     val activeTrips: Int get() = trips.count { it.isActive }
+    val activeTrip: Trip? get() = trips.firstOrNull { it.isActive }
 }
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
@@ -55,6 +61,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = VineyardRepository(session)
     private val pinRepo = PinRepository(session)
     private val pinPhotoRepo = PinPhotoRepository(session)
+    private val tripRepo = TripRepository(session)
+
+    /** Foreground GPS tracker for the currently active trip (null when idle). */
+    private var tracker: LocationTracker? = null
+    private var pointsSinceSave = 0
+    private var lastSaveMs = 0L
 
     private val _ui = MutableStateFlow(AppUiState())
     val ui: StateFlow<AppUiState> = _ui.asStateFlow()
@@ -411,6 +423,206 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 onResult(null)
             }
         }
+    }
+
+    // MARK: - Trip write path
+
+    /**
+     * Start a new trip: create the active row on Supabase, then begin
+     * foreground GPS capture if location permission has been granted.
+     */
+    fun startTrip(
+        paddockId: String?,
+        paddockName: String?,
+        personName: String?,
+        tripFunction: String?,
+        tripTitle: String?,
+        onResult: (Boolean) -> Unit,
+    ) {
+        val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
+        viewModelScope.launch {
+            _ui.update { it.copy(tripBusy = true, tripError = null) }
+            try {
+                val created = tripRepo.createTrip(
+                    vineyardId = vineyardId,
+                    paddockId = paddockId,
+                    paddockName = paddockName?.ifBlank { null },
+                    personName = personName?.ifBlank { null },
+                    tripFunction = tripFunction?.ifBlank { null },
+                    tripTitle = tripTitle?.ifBlank { null },
+                )
+                _ui.update { it.copy(trips = listOf(created) + it.trips, tripBusy = false) }
+                beginTracking(created)
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                _ui.update { it.copy(tripBusy = false) }
+                signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(tripBusy = false, tripError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(tripBusy = false, tripError = "Couldn't start the trip. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /** Edit an active or finished trip's job details (no progress changes). */
+    fun updateTripMetadata(
+        tripId: String,
+        paddockId: String?,
+        paddockName: String?,
+        personName: String?,
+        tripFunction: String?,
+        tripTitle: String?,
+        onResult: (Boolean) -> Unit,
+    ) {
+        val previous = _ui.value.trips
+        viewModelScope.launch {
+            _ui.update { it.copy(tripError = null) }
+            try {
+                val updated = tripRepo.updateMetadata(
+                    id = tripId,
+                    paddockId = paddockId,
+                    paddockName = paddockName?.ifBlank { null },
+                    personName = personName?.ifBlank { null },
+                    tripFunction = tripFunction?.ifBlank { null },
+                    tripTitle = tripTitle?.ifBlank { null },
+                )
+                _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == tripId) updated else it }) }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(trips = previous, tripError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(trips = previous, tripError = "Couldn't save the trip. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /** Pause or resume GPS capture for the active trip. */
+    fun setTripPaused(tripId: String, paused: Boolean) {
+        _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == tripId) it.copy(isPaused = paused) else it }) }
+        val trip = _ui.value.trips.firstOrNull { it.id == tripId } ?: return
+        viewModelScope.launch {
+            try {
+                tripRepo.saveProgress(tripId, trip.pathPoints ?: emptyList(), trip.totalDistance ?: 0.0, paused)
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    /** Finish the active trip: stop capture and persist the final track. */
+    fun endTrip(notes: String?, onResult: (Boolean) -> Unit) {
+        val trip = _ui.value.activeTrip ?: run { onResult(false); return }
+        val capturedPoints = tracker?.points?.toList() ?: trip.pathPoints ?: emptyList()
+        val capturedDistance = tracker?.distanceMetres ?: trip.totalDistance ?: 0.0
+        tracker?.stop()
+        tracker = null
+        _ui.update { it.copy(isTracking = false) }
+        viewModelScope.launch {
+            _ui.update { it.copy(tripBusy = true, tripError = null) }
+            try {
+                val ended = tripRepo.endTrip(trip.id, capturedPoints, capturedDistance, notes?.ifBlank { null })
+                _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == trip.id) ended else it }, tripBusy = false) }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                _ui.update { it.copy(tripBusy = false) }
+                signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(tripBusy = false, tripError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(tripBusy = false, tripError = "Couldn't end the trip. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /** Soft-delete a trip via the server RPC, optimistically removing it. */
+    fun deleteTrip(tripId: String, onResult: (Boolean) -> Unit) {
+        val previous = _ui.value.trips
+        if (_ui.value.activeTrip?.id == tripId) {
+            tracker?.stop(); tracker = null
+            _ui.update { it.copy(isTracking = false) }
+        }
+        _ui.update { st -> st.copy(trips = st.trips.filterNot { it.id == tripId }) }
+        viewModelScope.launch {
+            try {
+                tripRepo.softDeleteTrip(tripId)
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(trips = previous, tripError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(trips = previous, tripError = "Couldn't delete the trip. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /**
+     * Resume foreground capture for an already-active trip (e.g. after the
+     * Trips tab opens and location permission has just been granted). No-op
+     * when already tracking or there's no active trip.
+     */
+    fun resumeTrackingForActive() {
+        if (tracker != null) return
+        val trip = _ui.value.activeTrip ?: return
+        beginTracking(trip)
+    }
+
+    fun clearTripError() {
+        _ui.update { it.copy(tripError = null) }
+    }
+
+    /** Id of the currently active trip, if any (used to navigate after start). */
+    fun activeTripIdOrNull(): String? = _ui.value.activeTrip?.id
+
+    private fun beginTracking(trip: Trip) {
+        val t = LocationTracker(getApplication())
+        if (!t.hasPermission) {
+            tracker = null
+            _ui.update { it.copy(isTracking = false) }
+            return
+        }
+        tracker = t
+        pointsSinceSave = 0
+        lastSaveMs = System.currentTimeMillis()
+        _ui.update { it.copy(isTracking = true) }
+        t.start(seed = trip.pathPoints ?: emptyList()) { points, distance ->
+            _ui.update { st ->
+                st.copy(trips = st.trips.map { if (it.id == trip.id) it.copy(pathPoints = points, totalDistance = distance) else it })
+            }
+            maybeAutosave(trip.id, points, distance)
+        }
+    }
+
+    /** Throttle server writes: persist roughly every 8 fixes or 20 seconds. */
+    private fun maybeAutosave(tripId: String, points: List<CoordinatePoint>, distance: Double) {
+        pointsSinceSave++
+        val now = System.currentTimeMillis()
+        if (pointsSinceSave < 8 && now - lastSaveMs < 20_000L) return
+        pointsSinceSave = 0
+        lastSaveMs = now
+        val paused = _ui.value.trips.firstOrNull { it.id == tripId }?.isPaused ?: false
+        viewModelScope.launch {
+            try {
+                tripRepo.saveProgress(tripId, points, distance, paused)
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    override fun onCleared() {
+        tracker?.stop()
+        tracker = null
+        super.onCleared()
     }
 
     private fun friendlyWriteError(code: Int): String = when (code) {

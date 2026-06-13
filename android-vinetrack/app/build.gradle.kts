@@ -111,6 +111,7 @@ dependencies {
     implementation(libs.coil.network.okhttp)
     implementation(libs.koin.androidx.compose)
     implementation(libs.maps.compose)
+    implementation(libs.play.services.location)
     implementation(libs.androidx.exifinterface)
     debugImplementation(libs.androidx.ui.tooling)
 }

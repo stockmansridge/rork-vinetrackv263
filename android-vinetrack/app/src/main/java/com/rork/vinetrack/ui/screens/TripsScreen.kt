@@ -1,5 +1,8 @@
 package com.rork.vinetrack.ui.screens
 
+import android.Manifest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -25,48 +28,91 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DirectionsCar
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Grass
 import androidx.compose.material.icons.filled.Notes
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Straighten
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MenuAnchorType
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.google.android.gms.maps.CameraUpdateFactory
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
+import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.LatLngBounds
+import com.google.maps.android.compose.GoogleMap
+import com.google.maps.android.compose.MapProperties
+import com.google.maps.android.compose.MapType
+import com.google.maps.android.compose.MapUiSettings
+import com.google.maps.android.compose.Marker
+import com.google.maps.android.compose.MarkerState
+import com.google.maps.android.compose.Polygon
+import com.google.maps.android.compose.Polyline
+import com.google.maps.android.compose.rememberCameraPositionState
+import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Trip
+import com.rork.vinetrack.data.model.builtInTripFunctions
+import com.rork.vinetrack.data.model.formatTripDuration
 import com.rork.vinetrack.ui.AppUiState
+import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.EmptyState
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.StatusBadge
 import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
+import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 @Composable
-fun TripsScreen(state: AppUiState, modifier: Modifier = Modifier) {
+fun TripsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifier) {
     var selectedId by remember { mutableStateOf<String?>(null) }
+    var starting by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<Trip?>(null) }
+
     val selected = state.trips.firstOrNull { it.id == selectedId }
 
     AnimatedContent(
@@ -76,17 +122,49 @@ fun TripsScreen(state: AppUiState, modifier: Modifier = Modifier) {
         modifier = modifier,
     ) { trip ->
         if (trip == null) {
-            TripListView(state, onSelect = { selectedId = it.id })
+            TripListView(
+                state = state,
+                onSelect = { selectedId = it.id },
+                onStart = { starting = true },
+            )
         } else {
-            TripDetailView(trip, onBack = { selectedId = null })
+            TripDetailView(
+                vm = vm,
+                state = state,
+                tripId = trip.id,
+                onBack = { selectedId = null },
+                onEdit = { editing = it },
+            )
         }
+    }
+
+    if (starting) {
+        StartTripSheet(
+            vm = vm,
+            state = state,
+            onDismiss = { starting = false },
+            onStarted = { id -> starting = false; selectedId = id },
+        )
+    }
+
+    editing?.let { trip ->
+        EditTripSheet(
+            vm = vm,
+            state = state,
+            trip = trip,
+            onDismiss = { editing = null },
+            onSaved = { editing = null },
+        )
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TripListView(state: AppUiState, onSelect: (Trip) -> Unit) {
+private fun TripListView(state: AppUiState, onSelect: (Trip) -> Unit, onStart: () -> Unit) {
     val vine = LocalVineColors.current
+    val active = state.activeTrip
+    val finished = remember(state.trips) { state.trips.filterNot { it.isActive } }
+
     Scaffold(
         containerColor = vine.appBackground,
         topBar = {
@@ -94,6 +172,17 @@ private fun TripListView(state: AppUiState, onSelect: (Trip) -> Unit) {
                 title = { Text("Trips") },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
+        },
+        floatingActionButton = {
+            if (active == null) {
+                FloatingActionButton(
+                    onClick = onStart,
+                    containerColor = VineColors.PrimaryAccent,
+                    contentColor = Color.White,
+                ) {
+                    Icon(Icons.Filled.Add, contentDescription = "Start trip")
+                }
+            }
         },
     ) { padding ->
         when {
@@ -103,7 +192,7 @@ private fun TripListView(state: AppUiState, onSelect: (Trip) -> Unit) {
                 }
             }
 
-            state.tripError != null && state.trips.isEmpty() -> {
+            state.trips.isEmpty() && state.tripError != null -> {
                 Box(Modifier.fillMaxSize().padding(padding).padding(16.dp), contentAlignment = Alignment.Center) {
                     EmptyState(
                         icon = Icons.Filled.DirectionsCar,
@@ -114,12 +203,21 @@ private fun TripListView(state: AppUiState, onSelect: (Trip) -> Unit) {
             }
 
             state.trips.isEmpty() -> {
-                Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                    EmptyState(
-                        icon = Icons.Filled.DirectionsCar,
-                        title = "No trips yet",
-                        message = "Trips logged on the iOS app record GPS rows, distance and field work. They appear here with duration, operator and notes.",
-                    )
+                Box(Modifier.fillMaxSize().padding(padding).padding(24.dp), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        EmptyState(
+                            icon = Icons.Filled.DirectionsCar,
+                            title = "No trips yet",
+                            message = "Start a trip to record field work with live GPS tracking, duration and distance.",
+                        )
+                        Button(
+                            onClick = onStart,
+                            colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent),
+                        ) {
+                            Icon(Icons.Filled.Add, contentDescription = null)
+                            Text("  Start a trip")
+                        }
+                    }
                 }
             }
 
@@ -129,20 +227,59 @@ private fun TripListView(state: AppUiState, onSelect: (Trip) -> Unit) {
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    item {
-                        Text(
-                            "${state.trips.size} trips",
-                            color = vine.textSecondary,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.padding(bottom = 4.dp),
-                        )
+                    if (active != null) {
+                        item(key = "active-${active.id}") {
+                            ActiveTripBanner(active, onClick = { onSelect(active) })
+                        }
                     }
-                    items(state.trips, key = { it.id }) { trip ->
+                    if (finished.isNotEmpty()) {
+                        item(key = "history-header") {
+                            Text(
+                                "History · ${finished.size}",
+                                color = vine.textSecondary,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(top = if (active != null) 8.dp else 0.dp, bottom = 2.dp),
+                            )
+                        }
+                    }
+                    items(finished, key = { it.id }) { trip ->
                         TripRow(trip, onClick = { onSelect(trip) })
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ActiveTripBanner(trip: Trip, onClick: () -> Unit) {
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(trip.id, trip.isPaused) {
+        while (true) {
+            nowMs = System.currentTimeMillis()
+            delay(1000)
+        }
+    }
+    val elapsed = liveDurationSeconds(trip, nowMs)
+
+    VineyardCard(modifier = Modifier.clickable(onClick = onClick)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(
+                modifier = Modifier.size(44.dp).clip(CircleShape).background(VineColors.Warning.copy(alpha = 0.18f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Filled.DirectionsCar, contentDescription = null, tint = VineColors.Warning)
+            }
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(trip.displayLabel, fontWeight = FontWeight.Bold, color = LocalVineColors.current.textPrimary, fontSize = 16.sp, maxLines = 1)
+                Text(
+                    clockDuration(elapsed) + " · " + (formatDistance(trip.totalDistance) ?: "0 m"),
+                    fontSize = 13.sp,
+                    color = LocalVineColors.current.textSecondary,
+                )
+            }
+            StatusBadge(if (trip.isPaused) "Paused" else "Live", if (trip.isPaused) VineColors.Orange else VineColors.Warning)
         }
     }
 }
@@ -170,15 +307,12 @@ private fun TripRow(trip: Trip, onClick: () -> Unit) {
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     trip.activeDurationSeconds?.let {
-                        Text(formatDuration(it), fontSize = 12.sp, color = vine.textSecondary)
+                        Text(formatTripDuration(it), fontSize = 12.sp, color = vine.textSecondary)
                     }
                     formatDistance(trip.totalDistance)?.let {
                         Text(it, fontSize = 12.sp, color = vine.textSecondary)
                     }
                 }
-            }
-            if (trip.isActive) {
-                StatusBadge(if (trip.isPaused) "Paused" else "Active", VineColors.Warning)
             }
             Icon(
                 Icons.AutoMirrored.Filled.KeyboardArrowRight,
@@ -191,8 +325,31 @@ private fun TripRow(trip: Trip, onClick: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TripDetailView(trip: Trip, onBack: () -> Unit) {
+private fun TripDetailView(
+    vm: AppViewModel,
+    state: AppUiState,
+    tripId: String,
+    onBack: () -> Unit,
+    onEdit: (Trip) -> Unit,
+) {
     val vine = LocalVineColors.current
+    val trip = state.trips.firstOrNull { it.id == tripId }
+    var confirmDelete by remember { mutableStateOf(false) }
+    var ending by remember { mutableStateOf(false) }
+
+    // The trip can disappear after delete — bail out cleanly.
+    LaunchedEffect(trip == null) { if (trip == null) onBack() }
+    if (trip == null) return
+
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(trip.isActive, trip.isPaused) {
+        while (trip.isActive) {
+            nowMs = System.currentTimeMillis()
+            delay(1000)
+        }
+    }
+    val durationSeconds = if (trip.isActive) liveDurationSeconds(trip, nowMs) else (trip.activeDurationSeconds ?: 0L)
+
     Scaffold(
         containerColor = vine.appBackground,
         topBar = {
@@ -201,6 +358,11 @@ private fun TripDetailView(trip: Trip, onBack: () -> Unit) {
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { onEdit(trip) }) {
+                        Icon(Icons.Filled.Edit, contentDescription = "Edit trip")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
@@ -216,15 +378,29 @@ private fun TripDetailView(trip: Trip, onBack: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             if (trip.isActive) {
-                Box(modifier = Modifier.fillMaxWidth()) {
-                    StatusBadge(if (trip.isPaused) "Paused" else "Active now", VineColors.Warning)
+                ActiveTripControls(
+                    vm = vm,
+                    trip = trip,
+                    durationSeconds = durationSeconds,
+                    busy = state.tripBusy,
+                    tracking = state.isTracking,
+                    onEndConfirmed = { ending = true },
+                )
+            }
+
+            // Path map
+            val path = trip.pathPoints?.mapNotNull { it.toLatLng() } ?: emptyList()
+            if (path.size >= 2) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SectionHeader("Track", onLight = true)
+                    TripPathMap(path = path, blocks = state.paddocks)
                 }
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SectionHeader("Summary", onLight = true)
                 VineyardCard {
-                    DetailRow(Icons.Filled.Schedule, "Duration", trip.activeDurationSeconds?.let { formatDuration(it) } ?: "—", VineColors.Indigo)
+                    DetailRow(Icons.Filled.Schedule, "Duration", formatTripDuration(durationSeconds), VineColors.Indigo)
                     Divider(vine.cardBorder)
                     DetailRow(Icons.Filled.Straighten, "Distance", formatDistance(trip.totalDistance) ?: "—", VineColors.Cyan)
                     Divider(vine.cardBorder)
@@ -263,13 +439,430 @@ private fun TripDetailView(trip: Trip, onBack: () -> Unit) {
                 }
             }
 
+            if (!trip.isActive) {
+                TextButton(
+                    onClick = { confirmDelete = true },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Filled.Delete, contentDescription = null, tint = VineColors.Destructive)
+                    Text("  Delete trip", color = VineColors.Destructive)
+                }
+            }
+
             Spacer(Modifier.height(8.dp))
+        }
+    }
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete trip?") },
+            text = { Text("This removes the trip for your whole team. This can't be undone here.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDelete = false
+                    vm.deleteTrip(trip.id) {}
+                }) { Text("Delete", color = VineColors.Destructive) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+        )
+    }
+
+    if (ending) {
+        EndTripSheet(
+            vm = vm,
+            onDismiss = { ending = false },
+            onEnded = { ending = false },
+        )
+    }
+}
+
+@Composable
+private fun ActiveTripControls(
+    vm: AppViewModel,
+    trip: Trip,
+    durationSeconds: Long,
+    busy: Boolean,
+    tracking: Boolean,
+    onEndConfirmed: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+
+    // If location permission is granted after the trip started, resume capture.
+    val permLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { granted ->
+        if (granted.values.any { it }) vm.resumeTrackingForActive()
+    }
+
+    VineyardCard {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                StatusBadge(if (trip.isPaused) "Paused" else "Recording", if (trip.isPaused) VineColors.Orange else VineColors.Warning)
+                Spacer(Modifier.weight(1f))
+                Text(clockDuration(durationSeconds), fontWeight = FontWeight.Bold, fontSize = 22.sp, color = vine.textPrimary)
+            }
+
+            if (!tracking) {
+                Text(
+                    "GPS tracking is off. Allow location to record this trip's path.",
+                    fontSize = 12.sp,
+                    color = VineColors.Orange,
+                )
+                OutlinedButton(
+                    onClick = {
+                        permLauncher.launch(
+                            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Enable GPS tracking") }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(
+                    onClick = { vm.setTripPaused(trip.id, !trip.isPaused) },
+                    enabled = !busy,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(if (trip.isPaused) Icons.Filled.PlayArrow else Icons.Filled.Pause, contentDescription = null)
+                    Text(if (trip.isPaused) "  Resume" else "  Pause")
+                }
+                Button(
+                    onClick = onEndConfirmed,
+                    enabled = !busy,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = VineColors.Destructive),
+                ) {
+                    Icon(Icons.Filled.Stop, contentDescription = null)
+                    Text("  End trip")
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun StartTripSheet(
+    vm: AppViewModel,
+    state: AppUiState,
+    onDismiss: () -> Unit,
+    onStarted: (String) -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    var paddockId by remember { mutableStateOf<String?>(null) }
+    var functionRaw by remember { mutableStateOf(builtInTripFunctions.first().first) }
+    var operator by remember { mutableStateOf("") }
+    var title by remember { mutableStateOf("") }
+    var saving by remember { mutableStateOf(false) }
+    var paddockMenu by remember { mutableStateOf(false) }
+    var functionMenu by remember { mutableStateOf(false) }
+
+    fun start() {
+        if (saving) return
+        saving = true
+        val paddock = state.paddocks.firstOrNull { it.id == paddockId }
+        vm.startTrip(
+            paddockId = paddockId,
+            paddockName = paddock?.name,
+            personName = operator.trim(),
+            tripFunction = functionRaw,
+            tripTitle = title.trim(),
+        ) { ok ->
+            saving = false
+            if (ok) vm.activeTripIdOrNull()?.let(onStarted)
+        }
+    }
+
+    val permLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { _ -> start() } // start regardless; tracking begins if any permission granted
+
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Text("Start a trip", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+
+            // Operation type
+            ExposedDropdownMenuBox(expanded = functionMenu, onExpandedChange = { functionMenu = it }) {
+                OutlinedTextField(
+                    value = builtInTripFunctions.firstOrNull { it.first == functionRaw }?.second ?: "Trip",
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Operation") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = functionMenu) },
+                    modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                )
+                ExposedDropdownMenu(expanded = functionMenu, onDismissRequest = { functionMenu = false }) {
+                    builtInTripFunctions.forEach { (raw, label) ->
+                        DropdownMenuItem(text = { Text(label) }, onClick = { functionRaw = raw; functionMenu = false })
+                    }
+                }
+            }
+
+            // Block
+            ExposedDropdownMenuBox(expanded = paddockMenu, onExpandedChange = { paddockMenu = it }) {
+                OutlinedTextField(
+                    value = state.paddocks.firstOrNull { it.id == paddockId }?.name ?: "No block",
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Block") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = paddockMenu) },
+                    modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                )
+                ExposedDropdownMenu(expanded = paddockMenu, onDismissRequest = { paddockMenu = false }) {
+                    DropdownMenuItem(text = { Text("No block") }, onClick = { paddockId = null; paddockMenu = false })
+                    state.paddocks.forEach { p ->
+                        DropdownMenuItem(text = { Text(p.name) }, onClick = { paddockId = p.id; paddockMenu = false })
+                    }
+                }
+            }
+
+            OutlinedTextField(
+                value = operator,
+                onValueChange = { operator = it },
+                label = { Text("Operator (optional)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            OutlinedTextField(
+                value = title,
+                onValueChange = { title = it },
+                label = { Text("Notes / title (optional)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            Text(
+                "Your path is recorded with GPS while the app is open. Background tracking is coming soon.",
+                fontSize = 12.sp,
+                color = vine.textSecondary,
+            )
+
+            Button(
+                onClick = {
+                    permLauncher.launch(
+                        arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+                    )
+                },
+                enabled = !saving,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent),
+            ) {
+                if (saving) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
+                } else {
+                    Icon(Icons.Filled.PlayArrow, contentDescription = null)
+                    Text("  Start trip")
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun EndTripSheet(vm: AppViewModel, onDismiss: () -> Unit, onEnded: () -> Unit) {
+    val vine = LocalVineColors.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var notes by remember { mutableStateOf("") }
+    var saving by remember { mutableStateOf(false) }
+
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Text("End trip", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+            Text("Add any completion notes before finishing.", fontSize = 13.sp, color = vine.textSecondary)
+            OutlinedTextField(
+                value = notes,
+                onValueChange = { notes = it },
+                label = { Text("Completion notes (optional)") },
+                modifier = Modifier.fillMaxWidth().height(110.dp),
+            )
+            Button(
+                onClick = {
+                    saving = true
+                    vm.endTrip(notes.trim().ifBlank { null }) { ok -> saving = false; if (ok) onEnded() }
+                },
+                enabled = !saving,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Destructive),
+            ) {
+                if (saving) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
+                } else {
+                    Icon(Icons.Filled.Stop, contentDescription = null)
+                    Text("  Finish trip")
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun EditTripSheet(
+    vm: AppViewModel,
+    state: AppUiState,
+    trip: Trip,
+    onDismiss: () -> Unit,
+    onSaved: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    var paddockId by remember { mutableStateOf(trip.paddockId) }
+    var functionRaw by remember {
+        mutableStateOf(trip.tripFunction?.takeIf { raw -> builtInTripFunctions.any { it.first == raw } } ?: builtInTripFunctions.first().first)
+    }
+    var operator by remember { mutableStateOf(trip.personName ?: "") }
+    var title by remember { mutableStateOf(trip.tripTitle ?: "") }
+    var saving by remember { mutableStateOf(false) }
+    var paddockMenu by remember { mutableStateOf(false) }
+    var functionMenu by remember { mutableStateOf(false) }
+
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Text("Edit trip", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+
+            ExposedDropdownMenuBox(expanded = functionMenu, onExpandedChange = { functionMenu = it }) {
+                OutlinedTextField(
+                    value = builtInTripFunctions.firstOrNull { it.first == functionRaw }?.second ?: "Trip",
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Operation") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = functionMenu) },
+                    modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                )
+                ExposedDropdownMenu(expanded = functionMenu, onDismissRequest = { functionMenu = false }) {
+                    builtInTripFunctions.forEach { (raw, label) ->
+                        DropdownMenuItem(text = { Text(label) }, onClick = { functionRaw = raw; functionMenu = false })
+                    }
+                }
+            }
+
+            ExposedDropdownMenuBox(expanded = paddockMenu, onExpandedChange = { paddockMenu = it }) {
+                OutlinedTextField(
+                    value = state.paddocks.firstOrNull { it.id == paddockId }?.name ?: "No block",
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Block") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = paddockMenu) },
+                    modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                )
+                ExposedDropdownMenu(expanded = paddockMenu, onDismissRequest = { paddockMenu = false }) {
+                    DropdownMenuItem(text = { Text("No block") }, onClick = { paddockId = null; paddockMenu = false })
+                    state.paddocks.forEach { p ->
+                        DropdownMenuItem(text = { Text(p.name) }, onClick = { paddockId = p.id; paddockMenu = false })
+                    }
+                }
+            }
+
+            OutlinedTextField(
+                value = operator,
+                onValueChange = { operator = it },
+                label = { Text("Operator") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = title,
+                onValueChange = { title = it },
+                label = { Text("Notes / title") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            Button(
+                onClick = {
+                    saving = true
+                    val paddock = state.paddocks.firstOrNull { it.id == paddockId }
+                    vm.updateTripMetadata(
+                        tripId = trip.id,
+                        paddockId = paddockId,
+                        paddockName = paddock?.name,
+                        personName = operator.trim(),
+                        tripFunction = functionRaw,
+                        tripTitle = title.trim(),
+                    ) { ok -> saving = false; if (ok) onSaved() }
+                },
+                enabled = !saving,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent),
+            ) {
+                Text("Save changes")
+            }
         }
     }
 }
 
 @Composable
-private fun DetailRow(icon: ImageVector, label: String, value: String, tint: androidx.compose.ui.graphics.Color) {
+private fun TripPathMap(path: List<LatLng>, blocks: List<Paddock>) {
+    val cameraPositionState = rememberCameraPositionState()
+    val bounds = remember(path) {
+        val b = LatLngBounds.builder()
+        path.forEach { b.include(it) }
+        runCatching { b.build() }.getOrNull()
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(240.dp)
+            .clip(RoundedCornerShape(16.dp)),
+    ) {
+        GoogleMap(
+            modifier = Modifier.fillMaxSize(),
+            cameraPositionState = cameraPositionState,
+            properties = MapProperties(mapType = MapType.HYBRID),
+            uiSettings = MapUiSettings(
+                zoomControlsEnabled = false,
+                mapToolbarEnabled = false,
+                scrollGesturesEnabled = true,
+                zoomGesturesEnabled = true,
+            ),
+            onMapLoaded = {
+                if (bounds != null) {
+                    runCatching { cameraPositionState.move(CameraUpdateFactory.newLatLngBounds(bounds, 80)) }
+                }
+            },
+        ) {
+            // Subtle block context behind the track.
+            blocks.filter { it.hasGeometry }.forEach { block ->
+                val poly = block.polygonPoints?.mapNotNull { it.toLatLng() } ?: emptyList()
+                if (poly.size >= 3) {
+                    Polygon(
+                        points = poly,
+                        fillColor = VineColors.LeafGreen.copy(alpha = 0.12f),
+                        strokeColor = VineColors.LeafGreen.copy(alpha = 0.7f),
+                        strokeWidth = 3f,
+                    )
+                }
+            }
+            Polyline(points = path, color = VineColors.Cyan, width = 7f)
+            path.firstOrNull()?.let {
+                Marker(state = MarkerState(position = it), title = "Start", icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_GREEN))
+            }
+            path.lastOrNull()?.let {
+                Marker(state = MarkerState(position = it), title = "End", icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED))
+            }
+        }
+    }
+}
+
+@Composable
+private fun DetailRow(icon: ImageVector, label: String, value: String, tint: Color) {
     val vine = LocalVineColors.current
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
@@ -288,17 +881,24 @@ private fun DetailRow(icon: ImageVector, label: String, value: String, tint: and
 }
 
 @Composable
-private fun Divider(color: androidx.compose.ui.graphics.Color) {
+private fun Divider(color: Color) {
     Box(modifier = Modifier.fillMaxWidth().height(0.5.dp).background(color))
 }
 
-/** "X min" / "X h Y min" — mirrors the shared iOS `RegionFormatter` duration style. */
-private fun formatDuration(seconds: Long): String {
-    if (seconds < 60) return "0 min"
-    val totalMinutes = seconds / 60
-    val hours = totalMinutes / 60
-    val minutes = totalMinutes % 60
-    return if (hours > 0) "$hours h $minutes min" else "$minutes min"
+/** Live elapsed seconds for an active trip, holding still while paused. */
+private fun liveDurationSeconds(trip: Trip, nowMs: Long): Long {
+    val start = trip.startEpochMs ?: return 0L
+    val end = if (trip.isActive) nowMs else (trip.endEpochMs ?: nowMs)
+    return ((end - start) / 1000).coerceAtLeast(0)
+}
+
+/** HH:MM:SS style for the live timer. */
+private fun clockDuration(seconds: Long): String {
+    val s = seconds.coerceAtLeast(0)
+    val h = s / 3600
+    val m = (s % 3600) / 60
+    val sec = s % 60
+    return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%02d:%02d".format(m, sec)
 }
 
 private fun formatDistance(metres: Double?): String? {
@@ -315,3 +915,6 @@ private fun formatTripDateTime(epochMs: Long?): String? {
     epochMs ?: return null
     return SimpleDateFormat("d MMM yyyy, h:mm a", Locale.getDefault()).format(Date(epochMs))
 }
+
+private fun com.rork.vinetrack.data.model.CoordinatePoint.toLatLng(): LatLng? =
+    LatLng(latitude, longitude)

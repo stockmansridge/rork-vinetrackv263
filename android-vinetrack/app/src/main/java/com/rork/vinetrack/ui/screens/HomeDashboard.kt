@@ -24,6 +24,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Coronavirus
+import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.LocalGasStation
 import androidx.compose.material.icons.filled.LocationOn
@@ -125,6 +126,10 @@ private fun DashboardContent(
         ) {
             HeaderRow(state.selectedVineyard, onRefresh = { vm.refresh() })
 
+            state.activeTrip?.let { active ->
+                ActiveTripCard(active, onClick = { onSwitchTab(3) })
+            }
+
             OverviewSection(state, onOpenMap)
 
             ToolsSection()
@@ -169,6 +174,43 @@ private fun HeaderRow(vineyard: Vineyard?, onRefresh: () -> Unit) {
             contentAlignment = Alignment.Center,
         ) {
             Icon(Icons.Filled.Refresh, contentDescription = "Refresh", tint = Color.White, modifier = Modifier.size(20.dp))
+        }
+    }
+}
+
+@Composable
+private fun ActiveTripCard(trip: com.rork.vinetrack.data.model.Trip, onClick: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        SectionHeader("Active Trip")
+        VineyardCard(modifier = Modifier.clickable { onClick() }) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Box(
+                    modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp))
+                        .background(VineColors.Warning.copy(alpha = 0.18f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Filled.DirectionsCar, contentDescription = null, tint = VineColors.Warning)
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        trip.displayLabel,
+                        fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
+                        color = LocalVineColors.current.textPrimary, maxLines = 1,
+                    )
+                    Text(
+                        (if (trip.isPaused) "Paused" else "Recording now") +
+                            (trip.paddockName?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
+                        fontSize = 12.sp, color = LocalVineColors.current.textSecondary,
+                    )
+                }
+                Box(
+                    modifier = Modifier.size(10.dp).clip(CircleShape)
+                        .background(if (trip.isPaused) VineColors.Orange else VineColors.Warning),
+                )
+            }
         }
     }
 }

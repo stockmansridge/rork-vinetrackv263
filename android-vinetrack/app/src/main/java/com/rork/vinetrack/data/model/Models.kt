@@ -182,6 +182,7 @@ data class Trip(
     @SerialName("trip_title") val tripTitle: String? = null,
     @SerialName("completed_paths") val completedPaths: List<Double>? = null,
     @SerialName("skipped_paths") val skippedPaths: List<Double>? = null,
+    @SerialName("path_points") val pathPoints: List<CoordinatePoint>? = null,
     @SerialName("total_tanks") val totalTanks: Int? = null,
     @SerialName("completion_notes") val completionNotes: String? = null,
     @SerialName("work_task_id") val workTaskId: String? = null,
@@ -239,6 +240,47 @@ data class Trip(
             total += end - lastStart
             return total / 1000
         }
+}
+
+/**
+ * Built-in operation types offered when starting a trip, as (rawValue, label)
+ * pairs. Raw values match the iOS `TripFunction` enum so the `trip_function`
+ * column stays stable across platforms.
+ */
+val builtInTripFunctions: List<Pair<String, String>> = listOf(
+    "slashing" to "Slashing",
+    "mulching" to "Mulching",
+    "mowing" to "Mowing",
+    "spraying" to "Spraying",
+    "fertilising" to "Fertilising",
+    "undervineWeeding" to "Undervine weeding",
+    "interRowCultivation" to "Inter-row cultivation",
+    "pruning" to "Pruning",
+    "shootThinning" to "Shoot thinning",
+    "canopyWork" to "Canopy work",
+    "harrowing" to "Harrowing",
+    "irrigationCheck" to "Irrigation check",
+    "repairs" to "Repairs",
+    "seeding" to "Seeding",
+    "spreading" to "Spreading",
+    "other" to "Other",
+)
+
+/**
+ * Friendly elapsed-duration string. Always uses "min" (never "m") and omits
+ * the minutes component on whole hours — mirrors the iOS shared
+ * `RegionFormatter.formatDuration`.
+ */
+fun formatTripDuration(seconds: Long): String {
+    val safe = if (seconds > 0) seconds else 0
+    val totalMinutes = ((safe + 30) / 60)
+    val hours = totalMinutes / 60
+    val minutes = totalMinutes % 60
+    return when {
+        hours > 0 && minutes > 0 -> "$hours h $minutes min"
+        hours > 0 -> "$hours h"
+        else -> "$minutes min"
+    }
 }
 
 /** Maps a stored `trip_function` raw value to its display name (mirrors iOS `TripFunction`). */
