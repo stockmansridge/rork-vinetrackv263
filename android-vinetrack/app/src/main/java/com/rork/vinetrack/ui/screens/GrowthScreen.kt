@@ -725,6 +725,9 @@ private fun GrowthRecordCard(record: GrowthStageRecord, blockName: String?, onCl
                     Text(parts.joinToString(" · "), color = vine.textSecondary, fontSize = 12.sp, maxLines = 1)
                 }
             }
+            if (!record.photoPaths.isNullOrEmpty()) {
+                Icon(Icons.Filled.PhotoCamera, contentDescription = "Has photo", tint = VineColors.LeafGreen, modifier = Modifier.size(16.dp))
+            }
             if (record.isFromPin) {
                 Icon(Icons.Filled.PushPin, contentDescription = "From map pin", tint = vine.textSecondary, modifier = Modifier.size(16.dp))
             }
