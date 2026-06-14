@@ -25,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Grass
 import androidx.compose.material.icons.filled.Group
@@ -36,6 +37,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Scale
 import androidx.compose.material.icons.filled.Spa
 import androidx.compose.material.icons.filled.WaterDrop
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -126,7 +128,7 @@ private fun DashboardContent(
                 .padding(vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            HeaderRow(state.selectedVineyard, onRefresh = { vm.refresh() })
+            HeaderRow(state.selectedVineyard, syncing = state.isLoadingVineyardData, onRefresh = { vm.refresh() })
 
             state.activeTrip?.let { active ->
                 ActiveTripCard(active, onClick = { onOpenTab(MainTab.Trips) })
@@ -151,7 +153,7 @@ private fun DashboardContent(
 }
 
 @Composable
-private fun HeaderRow(vineyard: Vineyard?, onRefresh: () -> Unit) {
+private fun HeaderRow(vineyard: Vineyard?, syncing: Boolean, onRefresh: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -174,15 +176,32 @@ private fun HeaderRow(vineyard: Vineyard?, onRefresh: () -> Unit) {
             modifier = Modifier.weight(1f),
             maxLines = 1,
         )
-        Box(
-            modifier = Modifier
-                .size(36.dp)
-                .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.16f))
-                .clickable { onRefresh() },
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(Icons.Filled.Refresh, contentDescription = "Refresh", tint = Color.White, modifier = Modifier.size(20.dp))
+        SyncStatusChip(syncing = syncing, onRefresh = onRefresh)
+    }
+}
+
+/** Compact iOS-style status chip: shows a spinner while syncing, otherwise a tappable Refresh pill. */
+@Composable
+private fun SyncStatusChip(syncing: Boolean, onRefresh: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(Color.White.copy(alpha = 0.16f))
+            .clickable(enabled = !syncing) { onRefresh() }
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        if (syncing) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(14.dp),
+                strokeWidth = 2.dp,
+                color = Color.White,
+            )
+            Text("Syncing", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        } else {
+            Icon(Icons.Filled.Refresh, contentDescription = "Refresh", tint = Color.White, modifier = Modifier.size(15.dp))
+            Text("Refresh", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
         }
     }
 }
@@ -267,6 +286,7 @@ private fun TodaySection(state: AppUiState, onOpenPins: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         SectionHeader("Today")
+        WeatherPlaceholderCard()
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -296,6 +316,34 @@ private fun TodaySection(state: AppUiState, onOpenPins: () -> Unit) {
                 )
             }
             Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(18.dp))
+        }
+    }
+}
+
+/** Non-tappable weather card placeholder until a forecast source is wired up. */
+@Composable
+private fun WeatherPlaceholderCard() {
+    val vine = LocalVineColors.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 64.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(vine.cardBackground)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(
+            modifier = Modifier.size(30.dp).clip(RoundedCornerShape(8.dp))
+                .background(VineColors.Info.copy(alpha = 0.15f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.Filled.Cloud, contentDescription = null, tint = VineColors.Info, modifier = Modifier.size(18.dp))
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text("Weather", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, maxLines = 1)
+            Text("Forecast not connected yet", fontSize = 12.sp, color = vine.textSecondary, maxLines = 1)
         }
     }
 }
