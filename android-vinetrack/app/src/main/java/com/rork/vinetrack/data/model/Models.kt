@@ -34,6 +34,22 @@ data class CoordinatePoint(
     val longitude: Double,
 )
 
+/**
+ * A single Repairs/Growth launcher button, decoded from the canonical iOS
+ * `vineyard_button_configs.config_data` JSONB. Vineyard-scoped and shared with
+ * iOS/portal. Android renders these read-only; editing happens on iOS/web.
+ */
+@Serializable
+data class LauncherButton(
+    val id: String? = null,
+    @SerialName("vineyardId") val vineyardId: String? = null,
+    val name: String = "",
+    val color: String = "",
+    val index: Int = 0,
+    val mode: String = "Repairs",
+    @SerialName("isGrowthStageButton") val isGrowthStageButton: Boolean = false,
+)
+
 @Serializable
 data class PaddockRow(
     val number: Int = 0,

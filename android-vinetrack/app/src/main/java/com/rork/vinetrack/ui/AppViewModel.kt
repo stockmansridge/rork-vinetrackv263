@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import android.net.Uri
 import com.rork.vinetrack.data.BackendError
+import com.rork.vinetrack.data.ButtonConfigRepository
 import com.rork.vinetrack.data.FuelLogRepository
 import com.rork.vinetrack.data.LocationTracker
 import com.rork.vinetrack.data.MaintenanceLogRepository
@@ -27,6 +28,7 @@ import com.rork.vinetrack.data.model.GrapeVarietyRow
 import com.rork.vinetrack.data.model.GrowthStageRecord
 import com.rork.vinetrack.data.model.HistoricalBlockResult
 import com.rork.vinetrack.data.model.HistoricalYieldRecord
+import com.rork.vinetrack.data.model.LauncherButton
 import com.rork.vinetrack.data.model.MaintenanceLog
 import com.rork.vinetrack.data.model.OperatorCategory
 import com.rork.vinetrack.data.model.Paddock
@@ -71,6 +73,10 @@ data class AppUiState(
     val maintenanceLogs: List<MaintenanceLog> = emptyList(),
     val growthRecords: List<GrowthStageRecord> = emptyList(),
     val fuelLogs: List<TractorFuelLog> = emptyList(),
+    /** Per-vineyard Repairs launcher buttons from `vineyard_button_configs` (empty = use defaults). */
+    val repairButtons: List<LauncherButton> = emptyList(),
+    /** Per-vineyard Growth launcher buttons from `vineyard_button_configs` (empty = use defaults). */
+    val growthButtons: List<LauncherButton> = emptyList(),
     val grapeVarieties: List<GrapeVarietyRow> = emptyList(),
     val yieldRecords: List<HistoricalYieldRecord> = emptyList(),
     val isLoadingVineyardData: Boolean = false,
@@ -126,6 +132,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val paddockRepo = PaddockRepository(session)
     private val yieldRepo = YieldRepository(session)
     private val fuelRepo = FuelLogRepository(session)
+    private val buttonConfigRepo = ButtonConfigRepository(session)
 
     /** Foreground GPS tracker for the currently active trip (null when idle). */
     private var tracker: LocationTracker? = null
@@ -249,7 +256,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         session.selectedVineyardId = id
         // Clear the previous vineyard's data so the UI doesn't briefly show
         // stale blocks/pins while the new vineyard loads.
-        _ui.update { it.copy(selectedVineyardId = id, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), sprayRecords = emptyList(), sprayEquipment = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), yieldRecords = emptyList()) }
+        _ui.update { it.copy(selectedVineyardId = id, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), sprayRecords = emptyList(), sprayEquipment = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), repairButtons = emptyList(), growthButtons = emptyList(), yieldRecords = emptyList()) }
         viewModelScope.launch { loadVineyardData(id) }
     }
 
@@ -1710,6 +1717,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } catch (e: Exception) {
             _ui.value.fuelLogs
         }
+        // Per-vineyard launcher button configuration shared with iOS/portal.
+        // Read-only on Android; soft-fail to the existing config (or empty so the
+        // launcher falls back to its built-in defaults).
+        val launcherButtons = try {
+            buttonConfigRepo.fetch(vineyardId)
+        } catch (e: Exception) {
+            ButtonConfigRepository.LauncherButtons(
+                repair = _ui.value.repairButtons,
+                growth = _ui.value.growthButtons,
+            )
+        }
         // Grape variety catalog is an optional read-only reference list backing
         // the agronomy Varieties surface; soft-fail to the existing list (or empty).
         val grapeVarieties = try {
@@ -1737,6 +1755,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 maintenanceLogs = maintenanceLogs,
                 growthRecords = growthRecords,
                 fuelLogs = fuelLogs,
+                repairButtons = launcherButtons.repair,
+                growthButtons = launcherButtons.growth,
                 grapeVarieties = grapeVarieties,
                 yieldRecords = yieldRecords,
                 isLoadingVineyardData = false,

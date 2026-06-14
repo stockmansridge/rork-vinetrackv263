@@ -486,7 +486,16 @@ fun PinCategoryLauncherScreen(
                 Text("RIGHT", fontSize = 11.sp, fontWeight = FontWeight.Black, color = vine.textSecondary, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             }
 
-            val categories = if (mode == "Repairs") repairCategories else growthCategories
+            // Prefer the vineyard's shared button configuration (synced with
+            // iOS/portal); fall back to the built-in defaults when none exists.
+            // Growth Stage buttons are excluded here — they have their own
+            // dedicated full-width button above.
+            val remoteButtons = if (mode == "Repairs") state.repairButtons else state.growthButtons
+            val categories: List<PinCategory> = remoteButtons
+                .filterNot { it.isGrowthStageButton }
+                .distinctBy { it.name + "|" + it.color }
+                .map { PinCategory(it.name, launcherColor(it.color)) }
+                .ifEmpty { if (mode == "Repairs") repairCategories else growthCategories }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     categories.forEach { cat ->
@@ -522,10 +531,24 @@ fun PinCategoryLauncherScreen(
     }
 
     if (showCustomiseSoon) {
+        val usingCustom = (if (mode == "Repairs") state.repairButtons else state.growthButtons)
+            .any { !it.isGrowthStageButton }
         AlertDialog(
             onDismissRequest = { showCustomiseSoon = false },
-            title = { Text("Custom buttons") },
-            text = { Text("Custom button setup is coming soon. For now these match your iOS defaults.") },
+            title = { Text("Launcher buttons") },
+            text = {
+                Text(
+                    if (usingCustom) {
+                        "These buttons come from your vineyard's shared setup and stay in " +
+                            "sync across the team. To rename, recolour or reorder them, edit " +
+                            "the buttons on iOS or the web portal — changes appear here automatically."
+                    } else {
+                        "You're using the default buttons. Set up custom Repairs and Growth " +
+                            "buttons for your whole team on iOS or the web portal, and they'll " +
+                            "sync here automatically."
+                    },
+                )
+            },
             confirmButton = { TextButton(onClick = { showCustomiseSoon = false }) { Text("OK") } },
         )
     }
@@ -545,6 +568,23 @@ private val growthCategories = listOf(
     PinCategory("Downy", Color(0xFFE6B800)),
     PinCategory("Blackberries", VineColors.Destructive),
 )
+
+/** Map an iOS `ButtonConfig.color` token to the matching Android brand colour. */
+private fun launcherColor(token: String): Color = when (token.trim().lowercase()) {
+    "blue" -> VineColors.Primary
+    "brown" -> VineColors.EarthBrown
+    "green" -> VineColors.LeafGreen
+    "darkgreen" -> VineColors.DarkGreen
+    "red" -> VineColors.Destructive
+    "gray", "grey" -> Color(0xFF8E8E93)
+    "yellow" -> Color(0xFFE6B800)
+    "orange" -> VineColors.Orange
+    "purple" -> VineColors.Purple
+    "pink" -> VineColors.Pink
+    "cyan" -> VineColors.Cyan
+    "indigo" -> VineColors.Indigo
+    else -> VineColors.Primary
+}
 
 @Composable
 private fun ModeToggleButton(label: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
