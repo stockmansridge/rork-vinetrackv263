@@ -302,6 +302,7 @@ fun PinCategoryLauncherScreen(
     val vine = LocalVineColors.current
     var mode by rememberSaveable { mutableStateOf(if (initialMode == "Growth") "Growth" else "Repairs") }
     var editing by remember { mutableStateOf<PinEditTarget?>(null) }
+    var showGrowthStageSheet by remember { mutableStateOf(false) }
     var showCustomiseSoon by remember { mutableStateOf(false) }
     val vineyardName = state.selectedVineyard?.name?.takeIf { it.isNotBlank() } ?: "Vineyard"
 
@@ -342,11 +343,11 @@ fun PinCategoryLauncherScreen(
                 ModeToggleButton("Growth", mode == "Growth", Modifier.weight(1f)) { mode = "Growth" }
             }
 
-            // Growth Stage full-width button (Growth mode only).
+            // Growth Stage full-width button (Growth mode only). Opens the
+            // canonical E-L growth-stage authoring sheet (shared with the Growth
+            // screen) rather than a generic Growth pin.
             if (mode == "Growth") {
-                GrowthStageButton {
-                    editing = PinEditTarget.New(mode = "Growth", category = "Growth Stage", titleDefault = "Growth Stage")
-                }
+                GrowthStageButton { showGrowthStageSheet = true }
             }
 
             // LEFT / RIGHT column labels.
@@ -378,6 +379,16 @@ fun PinCategoryLauncherScreen(
     val target = editing
     if (target != null) {
         PinEditSheetHost(vm, state, target, onDismiss = { editing = null })
+    }
+
+    if (showGrowthStageSheet) {
+        GrowthSheet(
+            vm = vm,
+            state = state,
+            existing = null,
+            onDismiss = { showGrowthStageSheet = false },
+            onSaved = { showGrowthStageSheet = false },
+        )
     }
 
     if (showCustomiseSoon) {

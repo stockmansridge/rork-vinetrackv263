@@ -957,14 +957,21 @@ private fun GrowthPhotoSection(
     }
 }
 
+/**
+ * E-L growth-stage authoring sheet. Reused by the Growth screen (list create/edit)
+ * and by the Repairs/Growth launcher's Growth Stage button so both paths create the
+ * same canonical `growth_stage_records` row (with variety snapshot + EL4 budburst
+ * assist). Not private so the launcher in PinsScreen can call it.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun GrowthSheet(
+fun GrowthSheet(
     vm: AppViewModel,
     state: AppUiState,
     existing: GrowthStageRecord?,
     onDismiss: () -> Unit,
     onSaved: () -> Unit,
+    initialBlock: Paddock? = null,
 ) {
     val vine = LocalVineColors.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -973,7 +980,7 @@ private fun GrowthSheet(
         mutableStateOf(GrowthStage.byCode(existing?.stageCode) ?: GrowthStage.byCode(GrowthStage.BUDBURST_CODE))
     }
     var block by remember {
-        mutableStateOf(existing?.paddockId?.let { id -> state.paddocks.firstOrNull { it.id == id } })
+        mutableStateOf(existing?.paddockId?.let { id -> state.paddocks.firstOrNull { it.id == id } } ?: initialBlock)
     }
     var observedMs by remember { mutableStateOf(existing?.observedEpochMs ?: System.currentTimeMillis()) }
     var rowText by remember { mutableStateOf(existing?.rowNumber?.toString() ?: "") }
