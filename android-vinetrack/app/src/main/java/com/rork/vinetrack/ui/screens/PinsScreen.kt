@@ -27,8 +27,10 @@ import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Grass
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Photo
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.outlined.AddAPhoto
 import androidx.compose.material.icons.outlined.Circle
@@ -60,11 +62,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -91,6 +95,7 @@ fun PinsScreen(
     modifier: Modifier = Modifier,
     onBack: (() -> Unit)? = null,
     initialMode: String? = null,
+    onOpenLauncher: ((String) -> Unit)? = null,
 ) {
     val vine = LocalVineColors.current
     var editing by remember { mutableStateOf<PinEditTarget?>(null) }
@@ -131,7 +136,10 @@ fun PinsScreen(
                         icon = Icons.Filled.Build,
                         color = RepairColor,
                         modifier = Modifier.weight(1f),
-                        onClick = { editing = PinEditTarget.New("Repairs") },
+                        onClick = {
+                            if (onOpenLauncher != null) onOpenLauncher("Repairs")
+                            else editing = PinEditTarget.New("Repairs")
+                        },
                     )
                     PinModeEntryCard(
                         title = "Growth",
@@ -139,7 +147,10 @@ fun PinsScreen(
                         icon = Icons.Filled.Grass,
                         color = GrowthColor,
                         modifier = Modifier.weight(1f),
-                        onClick = { editing = PinEditTarget.New("Growth") },
+                        onClick = {
+                            if (onOpenLauncher != null) onOpenLauncher("Growth")
+                            else editing = PinEditTarget.New("Growth")
+                        },
                     )
                 }
             }
@@ -211,48 +222,252 @@ fun PinsScreen(
 
     val target = editing
     if (target != null) {
-        PinEditSheet(
-            vm = vm,
-            state = state,
-            target = target,
-            paddocks = state.paddocks,
-            onDismiss = { editing = null },
-            onSave = { fields, photoUri, onDone ->
-                when (target) {
-                    is PinEditTarget.New -> {
-                        val loc = defaultLocation(fields.paddockId, state)
-                        vm.createPin(
-                            title = fields.title,
-                            mode = fields.mode,
-                            category = fields.category,
-                            notes = fields.notes,
-                            paddockId = fields.paddockId,
-                            rowNumber = fields.rowNumber,
-                            isCompleted = fields.isCompleted,
-                            latitude = loc?.first,
-                            longitude = loc?.second,
-                            photoUri = photoUri,
-                        ) { ok -> onDone(ok); if (ok) editing = null }
+        PinEditSheetHost(vm, state, target, onDismiss = { editing = null })
+    }
+}
+
+/**
+ * Wraps [PinEditSheet] with the standard create/update/delete wiring so both the
+ * Observations list and the Repairs/Growth launcher share one save path.
+ */
+@Composable
+private fun PinEditSheetHost(
+    vm: AppViewModel,
+    state: AppUiState,
+    target: PinEditTarget,
+    onDismiss: () -> Unit,
+) {
+    PinEditSheet(
+        vm = vm,
+        state = state,
+        target = target,
+        paddocks = state.paddocks,
+        onDismiss = onDismiss,
+        onSave = { fields, photoUri, onDone ->
+            when (target) {
+                is PinEditTarget.New -> {
+                    val loc = defaultLocation(fields.paddockId, state)
+                    vm.createPin(
+                        title = fields.title,
+                        mode = fields.mode,
+                        category = fields.category,
+                        notes = fields.notes,
+                        paddockId = fields.paddockId,
+                        rowNumber = fields.rowNumber,
+                        isCompleted = fields.isCompleted,
+                        latitude = loc?.first,
+                        longitude = loc?.second,
+                        photoUri = photoUri,
+                    ) { ok -> onDone(ok); if (ok) onDismiss() }
+                }
+                is PinEditTarget.Existing -> {
+                    vm.updatePin(
+                        pinId = target.pin.id,
+                        title = fields.title,
+                        mode = fields.mode,
+                        category = fields.category,
+                        notes = fields.notes,
+                        paddockId = fields.paddockId,
+                        rowNumber = fields.rowNumber,
+                        isCompleted = fields.isCompleted,
+                    ) { ok -> onDone(ok); if (ok) onDismiss() }
+                }
+            }
+        },
+        onDelete = { onDone ->
+            if (target is PinEditTarget.Existing) {
+                vm.deletePin(target.pin.id) { ok -> onDone(ok); if (ok) onDismiss() }
+            }
+        },
+    )
+}
+
+/**
+ * iOS PinDropView parity — a quick-action category launcher. Shows a Repairs /
+ * Growth toggle and a 2-column grid of large colour-coded category buttons with
+ * LEFT / RIGHT columns. Tapping a category opens the shared pin create sheet
+ * pre-filled with the chosen mode, category and side. The Observations list
+ * (PinsScreen) remains the place to review, edit, complete and delete pins.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PinCategoryLauncherScreen(
+    vm: AppViewModel,
+    state: AppUiState,
+    modifier: Modifier = Modifier,
+    initialMode: String = "Repairs",
+    onBack: () -> Unit,
+    onOpenList: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    var mode by rememberSaveable { mutableStateOf(if (initialMode == "Growth") "Growth" else "Repairs") }
+    var editing by remember { mutableStateOf<PinEditTarget?>(null) }
+    var showCustomiseSoon by remember { mutableStateOf(false) }
+    val vineyardName = state.selectedVineyard?.name?.takeIf { it.isNotBlank() } ?: "Vineyard"
+
+    Scaffold(
+        modifier = modifier,
+        containerColor = vine.appBackground,
+        topBar = {
+            TopAppBar(
+                title = {
+                    Column {
+                        Text(if (mode == "Repairs") "Repairs" else "Growth", fontWeight = FontWeight.Bold)
+                        Text(vineyardName, fontSize = 12.sp, color = vine.textSecondary)
                     }
-                    is PinEditTarget.Existing -> {
-                        vm.updatePin(
-                            pinId = target.pin.id,
-                            title = fields.title,
-                            mode = fields.mode,
-                            category = fields.category,
-                            notes = fields.notes,
-                            paddockId = fields.paddockId,
-                            rowNumber = fields.rowNumber,
-                            isCompleted = fields.isCompleted,
-                        ) { ok -> onDone(ok); if (ok) editing = null }
+                },
+                navigationIcon = { BackNavIcon(onBack) },
+                actions = {
+                    IconButton(onClick = onOpenList) {
+                        Icon(Icons.Filled.LocationOn, contentDescription = "Observations list", tint = vine.textSecondary)
+                    }
+                    IconButton(onClick = { showCustomiseSoon = true }) {
+                        Icon(Icons.Filled.Tune, contentDescription = "Customise buttons", tint = vine.textSecondary)
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
+            )
+        },
+    ) { padding ->
+        Column(
+            modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            // Repairs / Growth toggle.
+            Row(
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(vine.textSecondary.copy(alpha = 0.12f)).padding(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                ModeToggleButton("Repairs", mode == "Repairs", Modifier.weight(1f)) { mode = "Repairs" }
+                ModeToggleButton("Growth", mode == "Growth", Modifier.weight(1f)) { mode = "Growth" }
+            }
+
+            // Growth Stage full-width button (Growth mode only).
+            if (mode == "Growth") {
+                GrowthStageButton {
+                    editing = PinEditTarget.New(mode = "Growth", category = "Growth Stage", titleDefault = "Growth Stage")
+                }
+            }
+
+            // LEFT / RIGHT column labels.
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("LEFT", fontSize = 11.sp, fontWeight = FontWeight.Black, color = vine.textSecondary, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                Text("RIGHT", fontSize = 11.sp, fontWeight = FontWeight.Black, color = vine.textSecondary, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            }
+
+            val categories = if (mode == "Repairs") repairCategories else growthCategories
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    categories.forEach { cat ->
+                        CategoryTile(cat) {
+                            editing = PinEditTarget.New(mode = mode, category = cat.name, side = "Left", titleDefault = cat.name)
+                        }
                     }
                 }
-            },
-            onDelete = { onDone ->
-                if (target is PinEditTarget.Existing) {
-                    vm.deletePin(target.pin.id) { ok -> onDone(ok); if (ok) editing = null }
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    categories.forEach { cat ->
+                        CategoryTile(cat) {
+                            editing = PinEditTarget.New(mode = mode, category = cat.name, side = "Right", titleDefault = cat.name)
+                        }
+                    }
                 }
-            },
+            }
+        }
+    }
+
+    val target = editing
+    if (target != null) {
+        PinEditSheetHost(vm, state, target, onDismiss = { editing = null })
+    }
+
+    if (showCustomiseSoon) {
+        AlertDialog(
+            onDismissRequest = { showCustomiseSoon = false },
+            title = { Text("Custom buttons") },
+            text = { Text("Custom button setup is coming soon. For now these match your iOS defaults.") },
+            confirmButton = { TextButton(onClick = { showCustomiseSoon = false }) { Text("OK") } },
+        )
+    }
+}
+
+private data class PinCategory(val name: String, val color: Color)
+
+private val repairCategories = listOf(
+    PinCategory("Irrigation", VineColors.Primary),
+    PinCategory("Broken Post", VineColors.EarthBrown),
+    PinCategory("Vine Issue", VineColors.LeafGreen),
+    PinCategory("Other", VineColors.Destructive),
+)
+
+private val growthCategories = listOf(
+    PinCategory("Powdery", Color(0xFF8E8E93)),
+    PinCategory("Downy", Color(0xFFE6B800)),
+    PinCategory("Blackberries", VineColors.Destructive),
+)
+
+@Composable
+private fun ModeToggleButton(label: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(9.dp))
+            .background(if (selected) VineColors.Primary else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = if (selected) Color.White else LocalVineColors.current.textSecondary,
+        )
+    }
+}
+
+@Composable
+private fun GrowthStageButton(onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(VineColors.DarkGreen)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(Icons.Filled.Grass, contentDescription = null, tint = Color.White)
+        Column(modifier = Modifier.weight(1f)) {
+            Text("Growth Stage", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            Text("Record the current E-L stage", fontSize = 12.sp, color = Color.White.copy(alpha = 0.9f))
+        }
+        Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = Color.White.copy(alpha = 0.85f))
+    }
+}
+
+@Composable
+private fun CategoryTile(category: PinCategory, onClick: () -> Unit) {
+    val light = category.color.luminance() > 0.6f
+    val fg = if (light) Color.Black else Color.White
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(92.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(category.color)
+            .clickable(onClick = onClick)
+            .padding(10.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(Icons.Filled.LocationOn, contentDescription = null, tint = fg)
+        Text(
+            category.name,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Black,
+            color = fg,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            maxLines = 2,
         )
     }
 }
@@ -314,7 +529,12 @@ private fun PinRow(pin: Pin, onClick: () -> Unit, onToggle: () -> Unit) {
 }
 
 private sealed interface PinEditTarget {
-    data class New(val mode: String) : PinEditTarget
+    data class New(
+        val mode: String,
+        val category: String? = null,
+        val side: String? = null,
+        val titleDefault: String? = null,
+    ) : PinEditTarget
     data class Existing(val pin: Pin) : PinEditTarget
 }
 
@@ -403,11 +623,12 @@ private fun PinEditSheet(
         state.pins.firstOrNull { it.id == t.pin.id } ?: t.pin
     }
 
-    val initialMode = (target as? PinEditTarget.New)?.mode ?: "Repairs"
-    var title by remember { mutableStateOf(existing?.title ?: "") }
+    val newTarget = target as? PinEditTarget.New
+    val initialMode = newTarget?.mode ?: "Repairs"
+    var title by remember { mutableStateOf(existing?.title ?: newTarget?.titleDefault ?: newTarget?.category ?: "") }
     var mode by remember { mutableStateOf(existing?.mode?.takeIf { it in pinModes } ?: initialMode) }
-    var category by remember { mutableStateOf(existing?.category ?: "") }
-    var notes by remember { mutableStateOf(existing?.notes ?: "") }
+    var category by remember { mutableStateOf(existing?.category ?: newTarget?.category ?: "") }
+    var notes by remember { mutableStateOf(existing?.notes ?: newTarget?.side?.let { "$it side" } ?: "") }
     var paddockId by remember { mutableStateOf(existing?.paddockId) }
     var rowText by remember { mutableStateOf("") }
     var isCompleted by remember { mutableStateOf(existing?.isCompleted ?: false) }

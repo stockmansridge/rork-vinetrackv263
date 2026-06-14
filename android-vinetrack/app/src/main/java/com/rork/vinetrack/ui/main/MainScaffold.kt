@@ -22,6 +22,7 @@ import com.rork.vinetrack.ui.screens.HomeDashboard
 import com.rork.vinetrack.ui.screens.IrrigationScreen
 import com.rork.vinetrack.ui.screens.MaintenanceScreen
 import com.rork.vinetrack.ui.screens.MoreScreen
+import com.rork.vinetrack.ui.screens.PinCategoryLauncherScreen
 import com.rork.vinetrack.ui.screens.PinsScreen
 import com.rork.vinetrack.ui.screens.SettingsScreen
 import com.rork.vinetrack.ui.screens.SpraysScreen
@@ -36,14 +37,16 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState) {
     var tool by rememberSaveable { mutableStateOf<ToolRoute?>(null) }
     // Optional Observations mode ("Repairs"/"Growth") when opening the Pins tool.
     var pinMode by rememberSaveable { mutableStateOf<String?>(null) }
+    // Repairs/Growth quick-action category launcher ("Repairs"/"Growth"). Null = closed.
+    var launcherMode by rememberSaveable { mutableStateOf<String?>(null) }
 
     Scaffold(
         bottomBar = {
             NavigationBar {
                 MainTab.entries.forEach { entry ->
                     NavigationBarItem(
-                        selected = tab == entry && tool == null,
-                        onClick = { tab = entry; tool = null; pinMode = null },
+                        selected = tab == entry && tool == null && launcherMode == null,
+                        onClick = { tab = entry; tool = null; pinMode = null; launcherMode = null },
                         icon = { Icon(entry.icon, contentDescription = entry.label) },
                         label = { Text(entry.label) },
                     )
@@ -53,9 +56,25 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState) {
     ) { padding ->
         val modifier = Modifier.padding(padding)
         val openTool = tool
-        if (openTool != null) {
+        val openLauncher = launcherMode
+        if (openLauncher != null) {
+            BackHandler { launcherMode = null }
+            PinCategoryLauncherScreen(
+                vm = vm,
+                state = state,
+                modifier = modifier,
+                initialMode = openLauncher,
+                onBack = { launcherMode = null },
+                onOpenList = { launcherMode = null; tab = MainTab.More; tool = ToolRoute.Pins; pinMode = null },
+            )
+        } else if (openTool != null) {
             BackHandler { tool = null }
-            ToolHost(openTool, vm, state, modifier, onBack = { tool = null }, pinMode = pinMode)
+            ToolHost(
+                openTool, vm, state, modifier,
+                onBack = { tool = null },
+                pinMode = pinMode,
+                onOpenLauncher = { mode -> launcherMode = mode },
+            )
         } else when (tab) {
             MainTab.Home -> HomeDashboard(
                 vm = vm,
@@ -63,7 +82,13 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState) {
                 modifier = modifier,
                 onOpenTab = { tab = it },
                 onOpenTool = { tab = MainTab.More; tool = it; pinMode = null },
-                onOpenObservations = { mode -> tab = MainTab.More; tool = ToolRoute.Pins; pinMode = mode },
+                onOpenObservations = { mode ->
+                    if (mode == null) {
+                        tab = MainTab.More; tool = ToolRoute.Pins; pinMode = null
+                    } else {
+                        launcherMode = mode
+                    }
+                },
             )
             MainTab.Blocks -> BlocksScreen(state, modifier)
             MainTab.Trips -> TripsScreen(vm, state, modifier)
@@ -81,9 +106,10 @@ private fun ToolHost(
     modifier: Modifier,
     onBack: () -> Unit,
     pinMode: String?,
+    onOpenLauncher: (String) -> Unit,
 ) {
     when (route) {
-        ToolRoute.Pins -> PinsScreen(vm, state, modifier, onBack, initialMode = pinMode)
+        ToolRoute.Pins -> PinsScreen(vm, state, modifier, onBack, initialMode = pinMode, onOpenLauncher = onOpenLauncher)
         ToolRoute.Growth -> GrowthScreen(vm, state, modifier, onBack)
         ToolRoute.Irrigation -> IrrigationScreen(state, modifier, onBack)
         ToolRoute.Spray -> SpraysScreen(vm, state, modifier, onBack)
