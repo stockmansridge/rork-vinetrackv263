@@ -4,6 +4,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Assignment
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Coronavirus
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Grass
 import androidx.compose.material.icons.filled.Home
@@ -53,6 +54,7 @@ enum class ToolRoute(
     Pins("Pins", "Map markers & issues", Icons.Filled.LocationOn, VineColors.Orange, ToolGroup.Vineyard),
     Growth("Growth & Varieties", "Phenology & catalog", Icons.Filled.Spa, VineColors.LeafGreen, ToolGroup.Vineyard),
     Irrigation("Irrigation", "Water planning", Icons.Filled.Opacity, VineColors.Cyan, ToolGroup.Vineyard),
+    DiseaseRisk("Disease Risk", "Downy, Powdery & Botrytis", Icons.Filled.Coronavirus, VineColors.LeafGreen, ToolGroup.Operations),
     Spray("Spray", "Applications & programs", Icons.Filled.WaterDrop, VineColors.Info, ToolGroup.Operations),
     Yield("Yield", "Forecasts & harvest", Icons.Filled.Scale, VineColors.Orange, ToolGroup.Records),
     Maintenance("Service & Maintenance", "Equipment & repairs", Icons.Filled.Build, VineColors.EarthBrown, ToolGroup.Records),

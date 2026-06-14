@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.screens.BlocksScreen
+import com.rork.vinetrack.ui.screens.DiseaseRiskScreen
 import com.rork.vinetrack.ui.screens.FuelLogScreen
 import com.rork.vinetrack.ui.screens.GrowthScreen
 import com.rork.vinetrack.ui.screens.HomeDashboard
@@ -112,6 +113,7 @@ private fun ToolHost(
         ToolRoute.Pins -> PinsScreen(vm, state, modifier, onBack, initialMode = pinMode, onOpenLauncher = onOpenLauncher)
         ToolRoute.Growth -> GrowthScreen(vm, state, modifier, onBack)
         ToolRoute.Irrigation -> IrrigationScreen(state, modifier, onBack)
+        ToolRoute.DiseaseRisk -> DiseaseRiskScreen(state, modifier, onBack)
         ToolRoute.Spray -> SpraysScreen(vm, state, modifier, onBack)
         ToolRoute.Yield -> YieldScreen(vm, state, modifier, onBack)
         ToolRoute.Maintenance -> MaintenanceScreen(vm, state, modifier, onBack)

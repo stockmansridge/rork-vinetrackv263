@@ -26,6 +26,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Coronavirus
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Grass
 import androidx.compose.material.icons.filled.Group
@@ -459,7 +460,7 @@ private fun OperationalToolsSection(onOpenTab: (MainTab) -> Unit, onOpenTool: (T
         ToolItem("Maintenance Log", "Repairs & jobs", Icons.Filled.Build, VineColors.EarthBrown) { onOpenTool(ToolRoute.Maintenance) },
         ToolItem("Fuel Log", "Fills & usage rate", Icons.Filled.LocalGasStation, VineColors.Pink) { onOpenTool(ToolRoute.FuelLog) },
         ToolItem("Irrigation Advisor", "Water planning", Icons.Filled.Opacity, VineColors.Cyan) { onOpenTool(ToolRoute.Irrigation) },
-        ToolItem("Disease Risk", "Coming soon", Icons.Filled.Spa, VineColors.LeafGreen, comingSoon = true),
+        ToolItem("Disease Risk", "Downy, Powdery & Botrytis", Icons.Filled.Coronavirus, VineColors.LeafGreen) { onOpenTool(ToolRoute.DiseaseRisk) },
         ToolItem("Yields", "Forecasts & harvest", Icons.Filled.Scale, VineColors.Orange) { onOpenTool(ToolRoute.Yield) },
         ToolItem("Growth & Varieties", "Phenology & catalog", Icons.Filled.Spa, VineColors.LeafGreen) { onOpenTool(ToolRoute.Growth) },
         ToolItem("Spray", "Applications & programs", Icons.Filled.WaterDrop, VineColors.Info) { onOpenTool(ToolRoute.Spray) },
