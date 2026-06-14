@@ -33,6 +33,8 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState) {
     var tab by rememberSaveable { mutableStateOf(MainTab.Home) }
     // Secondary surface opened on top of the More hub. Null = showing a tab root.
     var tool by rememberSaveable { mutableStateOf<ToolRoute?>(null) }
+    // Optional Observations mode ("Repairs"/"Growth") when opening the Pins tool.
+    var pinMode by rememberSaveable { mutableStateOf<String?>(null) }
 
     Scaffold(
         bottomBar = {
@@ -40,7 +42,7 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState) {
                 MainTab.entries.forEach { entry ->
                     NavigationBarItem(
                         selected = tab == entry && tool == null,
-                        onClick = { tab = entry; tool = null },
+                        onClick = { tab = entry; tool = null; pinMode = null },
                         icon = { Icon(entry.icon, contentDescription = entry.label) },
                         label = { Text(entry.label) },
                     )
@@ -52,14 +54,15 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState) {
         val openTool = tool
         if (openTool != null) {
             BackHandler { tool = null }
-            ToolHost(openTool, vm, state, modifier, onBack = { tool = null })
+            ToolHost(openTool, vm, state, modifier, onBack = { tool = null }, pinMode = pinMode)
         } else when (tab) {
             MainTab.Home -> HomeDashboard(
                 vm = vm,
                 state = state,
                 modifier = modifier,
                 onOpenTab = { tab = it },
-                onOpenTool = { tab = MainTab.More; tool = it },
+                onOpenTool = { tab = MainTab.More; tool = it; pinMode = null },
+                onOpenObservations = { mode -> tab = MainTab.More; tool = ToolRoute.Pins; pinMode = mode },
             )
             MainTab.Blocks -> BlocksScreen(state, modifier)
             MainTab.Trips -> TripsScreen(vm, state, modifier)
@@ -76,9 +79,10 @@ private fun ToolHost(
     state: AppUiState,
     modifier: Modifier,
     onBack: () -> Unit,
+    pinMode: String?,
 ) {
     when (route) {
-        ToolRoute.Pins -> PinsScreen(vm, state, modifier, onBack)
+        ToolRoute.Pins -> PinsScreen(vm, state, modifier, onBack, initialMode = pinMode)
         ToolRoute.Growth -> GrowthScreen(vm, state, modifier, onBack)
         ToolRoute.Irrigation -> IrrigationScreen(state, modifier, onBack)
         ToolRoute.Spray -> SpraysScreen(vm, state, modifier, onBack)

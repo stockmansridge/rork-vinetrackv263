@@ -85,11 +85,17 @@ import com.rork.vinetrack.ui.theme.VineColors
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PinsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifier, onBack: (() -> Unit)? = null) {
+fun PinsScreen(
+    vm: AppViewModel,
+    state: AppUiState,
+    modifier: Modifier = Modifier,
+    onBack: (() -> Unit)? = null,
+    initialMode: String? = null,
+) {
     val vine = LocalVineColors.current
     var editing by remember { mutableStateOf<PinEditTarget?>(null) }
     // null = All; otherwise a PinMode raw value ("Repairs" / "Growth").
-    var modeFilter by remember { mutableStateOf<String?>(null) }
+    var modeFilter by remember { mutableStateOf<String?>(initialMode) }
     // null = All statuses; true = Completed; false = Open.
     var statusFilter by remember { mutableStateOf<Boolean?>(null) }
 

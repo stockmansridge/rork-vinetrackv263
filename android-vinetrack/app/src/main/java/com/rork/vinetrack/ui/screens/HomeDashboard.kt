@@ -1,5 +1,9 @@
 package com.rork.vinetrack.ui.screens
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -10,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -18,22 +23,21 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.BarChart
-import androidx.compose.material.icons.filled.Scale
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.DirectionsCar
+import androidx.compose.material.icons.filled.Grass
 import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.LocalGasStation
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Opacity
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Scale
 import androidx.compose.material.icons.filled.Spa
 import androidx.compose.material.icons.filled.WaterDrop
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -68,6 +72,7 @@ fun HomeDashboard(
     modifier: Modifier = Modifier,
     onOpenTab: (MainTab) -> Unit,
     onOpenTool: (ToolRoute) -> Unit,
+    onOpenObservations: (String?) -> Unit,
 ) {
     var showMap by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -82,7 +87,14 @@ fun HomeDashboard(
         if (mapVisible) {
             VineyardMapScreen(state, defaults = mapDefaults, onBack = { showMap = false })
         } else {
-            DashboardContent(vm, state, onOpenTab = onOpenTab, onOpenTool = onOpenTool, onOpenMap = { showMap = true })
+            DashboardContent(
+                vm = vm,
+                state = state,
+                onOpenTab = onOpenTab,
+                onOpenTool = onOpenTool,
+                onOpenObservations = onOpenObservations,
+                onOpenMap = { showMap = true },
+            )
         }
     }
 }
@@ -93,6 +105,7 @@ private fun DashboardContent(
     state: AppUiState,
     onOpenTab: (MainTab) -> Unit,
     onOpenTool: (ToolRoute) -> Unit,
+    onOpenObservations: (String?) -> Unit,
     onOpenMap: () -> Unit,
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
@@ -119,13 +132,18 @@ private fun DashboardContent(
                 ActiveTripCard(active, onClick = { onOpenTab(MainTab.Trips) })
             }
 
+            InfoCard()
+
+            TodaySection(state, onOpenPins = { onOpenObservations(null) })
+
+            QuickActionsSection(
+                onRepairs = { onOpenObservations("Repairs") },
+                onGrowth = { onOpenObservations("Growth") },
+            )
+
             OverviewSection(state, onOpenMap)
 
-            QuickActionsSection(onOpenTab = onOpenTab, onOpenTool = onOpenTool)
-
-            YieldSection(state, onOpenYield = { onOpenTool(ToolRoute.Yield) })
-
-            RecentSection(state, onOpenTab = onOpenTab, onOpenTool = onOpenTool)
+            OperationalToolsSection(onOpenTab = onOpenTab, onOpenTool = onOpenTool)
 
             Spacer(Modifier.height(24.dp))
         }
@@ -206,10 +224,137 @@ private fun ActiveTripCard(trip: com.rork.vinetrack.data.model.Trip, onClick: ()
     }
 }
 
+/** Lightweight onboarding/info card mirroring the iOS carousel/setup card slot. */
+@Composable
+private fun InfoCard() {
+    Box(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(
+                    Brush.linearGradient(listOf(VineColors.LeafGreen, VineColors.DarkGreen))
+                )
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Box(
+                modifier = Modifier.size(48.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.22f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Filled.Spa, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Repairs & Growth", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Use the quick actions below to log repairs and growth observations in the field.",
+                    color = Color.White.copy(alpha = 0.85f), fontSize = 12.sp,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TodaySection(state: AppUiState, onOpenPins: () -> Unit) {
+    val vine = LocalVineColors.current
+    val open = state.openPins
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        SectionHeader("Today")
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 64.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(vine.cardBackground)
+                .clickable { onOpenPins() }
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(
+                modifier = Modifier.size(30.dp).clip(RoundedCornerShape(8.dp))
+                    .background(VineColors.Orange.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Filled.LocationOn, contentDescription = null, tint = VineColors.Orange, modifier = Modifier.size(18.dp))
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "$open pin${if (open == 1) "" else "s"} need attention",
+                    fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, maxLines = 1,
+                )
+                Text(
+                    if (open == 0) "All caught up" else "Open Observations to review",
+                    fontSize = 12.sp, color = vine.textSecondary, maxLines = 1,
+                )
+            }
+            Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(18.dp))
+        }
+    }
+}
+
+@Composable
+private fun QuickActionsSection(onRepairs: () -> Unit, onGrowth: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        SectionHeader("Quick Actions")
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+            QuickActionCard(
+                title = "Repairs",
+                icon = Icons.Filled.Build,
+                colors = listOf(VineColors.Orange, VineColors.Orange.copy(alpha = 0.75f)),
+                modifier = Modifier.weight(1f),
+                onClick = onRepairs,
+            )
+            QuickActionCard(
+                title = "Growth",
+                icon = Icons.Filled.Grass,
+                colors = listOf(VineColors.LeafGreen, VineColors.DarkGreen),
+                modifier = Modifier.weight(1f),
+                onClick = onGrowth,
+            )
+        }
+    }
+}
+
+@Composable
+private fun QuickActionCard(
+    title: String,
+    icon: ImageVector,
+    colors: List<Color>,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .heightIn(min = 76.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(Brush.linearGradient(colors))
+            .clickable { onClick() }
+            .padding(12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Spacer(Modifier.height(4.dp))
+        Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(26.dp))
+        Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+        Spacer(Modifier.height(4.dp))
+    }
+}
+
 @Composable
 private fun OverviewSection(state: AppUiState, onOpenMap: () -> Unit) {
     val totalHectares = state.totalHectares
-    val haLabel = if (totalHectares > 0) "${"%.1f".format(totalHectares)} ha under management" else "View map & summary"
+    val totalVines = state.paddocks.sumOf { it.effectiveVineCount }
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -230,170 +375,90 @@ private fun OverviewSection(state: AppUiState, onOpenMap: () -> Unit) {
                         fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
                         color = LocalVineColors.current.textPrimary,
                     )
-                    Text(haLabel, fontSize = 12.sp, color = LocalVineColors.current.textSecondary)
+                    Text("View map & summary", fontSize = 12.sp, color = LocalVineColors.current.textSecondary)
                 }
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = LocalVineColors.current.textSecondary)
             }
             Spacer(Modifier.height(14.dp))
             Row(modifier = Modifier.fillMaxWidth()) {
-                OverviewStat("${state.paddocks.size}", "Blocks", Icons.Filled.Map, VineColors.LeafGreen, Modifier.weight(1f))
-                OverviewStat("${state.pins.size}", "Pins", Icons.Filled.LocationOn, VineColors.Orange, Modifier.weight(1f))
-                OverviewStat("${state.openPins}", "Open", Icons.Filled.Spa, VineColors.DarkGreen, Modifier.weight(1f))
+                OverviewStat("${state.paddocks.size}", "Blocks", Icons.Filled.Grass, VineColors.LeafGreen, Modifier.weight(1f))
+                OverviewStat(
+                    if (totalHectares >= 100) "%.0f".format(totalHectares) else "%.1f".format(totalHectares),
+                    "Hectares", Icons.Filled.Map, VineColors.Orange, Modifier.weight(1f),
+                )
+                OverviewStat(formattedCount(totalVines), "Vines", Icons.Filled.Spa, VineColors.DarkGreen, Modifier.weight(1f))
             }
         }
     }
 }
 
-private data class QuickAction(val label: String, val icon: ImageVector, val tint: Color, val onClick: () -> Unit)
+private fun formattedCount(value: Int): String =
+    if (value >= 1000) "%.1fk".format(value / 1000.0) else "$value"
+
+private data class ToolItem(
+    val title: String,
+    val subtitle: String,
+    val icon: ImageVector,
+    val tint: Color,
+    val comingSoon: Boolean = false,
+    val onClick: (() -> Unit)? = null,
+)
 
 @Composable
-private fun QuickActionsSection(onOpenTab: (MainTab) -> Unit, onOpenTool: (ToolRoute) -> Unit) {
-    val actions = listOf(
-        QuickAction("Tasks", Icons.Filled.Group, VineColors.Indigo) { onOpenTab(MainTab.Tasks) },
-        QuickAction("Spray", Icons.Filled.WaterDrop, VineColors.Info) { onOpenTool(ToolRoute.Spray) },
-        QuickAction("Growth", Icons.Filled.Spa, VineColors.LeafGreen) { onOpenTool(ToolRoute.Growth) },
-        QuickAction("Irrigation", Icons.Filled.Opacity, VineColors.Cyan) { onOpenTool(ToolRoute.Irrigation) },
+private fun OperationalToolsSection(onOpenTab: (MainTab) -> Unit, onOpenTool: (ToolRoute) -> Unit) {
+    val tools = listOf(
+        ToolItem("Work Tasks", "Log & calculate", Icons.Filled.Group, VineColors.Indigo) { onOpenTab(MainTab.Tasks) },
+        ToolItem("Maintenance Log", "Repairs & jobs", Icons.Filled.Build, VineColors.EarthBrown) { onOpenTool(ToolRoute.Maintenance) },
+        ToolItem("Fuel Log", "Coming soon", Icons.Filled.LocalGasStation, VineColors.Pink, comingSoon = true),
+        ToolItem("Irrigation Advisor", "Water planning", Icons.Filled.Opacity, VineColors.Cyan) { onOpenTool(ToolRoute.Irrigation) },
+        ToolItem("Disease Risk", "Coming soon", Icons.Filled.Spa, VineColors.LeafGreen, comingSoon = true),
+        ToolItem("Yields", "Forecasts & harvest", Icons.Filled.Scale, VineColors.Orange) { onOpenTool(ToolRoute.Yield) },
+        ToolItem("Growth & Varieties", "Phenology & catalog", Icons.Filled.Spa, VineColors.LeafGreen) { onOpenTool(ToolRoute.Growth) },
+        ToolItem("Spray", "Applications & programs", Icons.Filled.WaterDrop, VineColors.Info) { onOpenTool(ToolRoute.Spray) },
     )
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        SectionHeader("Quick Actions")
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            actions.forEach { action ->
-                QuickActionTile(action, modifier = Modifier.weight(1f))
+        SectionHeader("Operational Tools")
+        tools.chunked(2).forEach { rowItems ->
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                rowItems.forEach { item ->
+                    ToolCard(item, modifier = Modifier.weight(1f))
+                }
+                if (rowItems.size == 1) Spacer(Modifier.weight(1f))
             }
         }
     }
 }
 
 @Composable
-private fun QuickActionTile(action: QuickAction, modifier: Modifier = Modifier) {
+private fun ToolCard(item: ToolItem, modifier: Modifier = Modifier) {
     val vine = LocalVineColors.current
+    val alpha = if (item.comingSoon) 0.55f else 1f
     Column(
         modifier = modifier
+            .height(138.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(vine.cardBackground)
-            .clickable { action.onClick() }
-            .padding(vertical = 14.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Box(
-            modifier = Modifier.size(40.dp).clip(RoundedCornerShape(11.dp)).background(action.tint.copy(alpha = 0.15f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(action.icon, contentDescription = null, tint = action.tint, modifier = Modifier.size(20.dp))
-        }
-        Text(action.label, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = vine.textPrimary, maxLines = 1)
-    }
-}
-
-@Composable
-private fun YieldSection(state: AppUiState, onOpenYield: () -> Unit) {
-    val vine = LocalVineColors.current
-    val latest = state.yieldRecords.maxByOrNull { it.year * 100 + (it.archivedEpochMs?.let { 1 } ?: 0) }
-        ?: state.yieldRecords.firstOrNull()
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            .then(if (item.onClick != null) Modifier.clickable { item.onClick.invoke() } else Modifier)
+            .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        SectionHeader("Yield")
-        VineyardCard(modifier = Modifier.clickable { onOpenYield() }) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                Box(
-                    modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp))
-                        .background(VineColors.Orange.copy(alpha = 0.15f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(Icons.Filled.Scale, contentDescription = null, tint = VineColors.Orange)
-                }
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        latest?.let { "${it.season} ${it.year}".trim() }?.takeIf { it.isNotBlank() } ?: "No yield records",
-                        fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
-                        color = vine.textPrimary, maxLines = 1,
-                    )
-                    Text(
-                        if (latest != null) "Latest season summary" else "Tap to record yields",
-                        fontSize = 12.sp, color = vine.textSecondary,
-                    )
-                }
-                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = vine.textSecondary)
-            }
-            if (latest != null) {
-                Spacer(Modifier.height(14.dp))
-                Row(modifier = Modifier.fillMaxWidth()) {
-                    OverviewStat(
-                        "%.1f t".format(latest.totalYieldTonnes),
-                        "Estimated", Icons.Filled.BarChart, VineColors.Orange, Modifier.weight(1f),
-                    )
-                    val actual = latest.totalActualYieldTonnes
-                    OverviewStat(
-                        if (actual != null) "%.1f t".format(actual) else "—",
-                        "Actual", Icons.Filled.Scale, VineColors.LeafGreen, Modifier.weight(1f),
-                    )
-                    val tha = latest.actualYieldPerHectare ?: latest.yieldPerHectare
-                    OverviewStat(
-                        if (latest.totalAreaHectares > 0) "%.1f".format(tha) else "—",
-                        "t/ha", Icons.Filled.Map, VineColors.DarkGreen, Modifier.weight(1f),
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun RecentSection(state: AppUiState, onOpenTab: (MainTab) -> Unit, onOpenTool: (ToolRoute) -> Unit) {
-    val vine = LocalVineColors.current
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        SectionHeader("Recent")
-        VineyardCard {
-            SummaryRow("Blocks", state.paddocks.size, VineColors.LeafGreen) { onOpenTab(MainTab.Blocks) }
-            Divider(vine.cardBorder)
-            SummaryRow("Pins", state.pins.size, VineColors.Destructive) { onOpenTool(ToolRoute.Pins) }
-            Divider(vine.cardBorder)
-            SummaryRow("Open pins", state.openPins, VineColors.Orange) { onOpenTool(ToolRoute.Pins) }
-            Divider(vine.cardBorder)
-            SummaryRow("Trips", state.trips.size, VineColors.Indigo) { onOpenTab(MainTab.Trips) }
-            Divider(vine.cardBorder)
-            SummaryRow("Work tasks", state.workTasks.size, VineColors.EarthBrown) { onOpenTab(MainTab.Tasks) }
-            Divider(vine.cardBorder)
-            SummaryRow("Spray records", state.sprayRecords.size, VineColors.Cyan) { onOpenTool(ToolRoute.Spray) }
-            Divider(vine.cardBorder)
-            SummaryRow("Growth observations", state.growthRecords.size, VineColors.LeafGreen) { onOpenTool(ToolRoute.Growth) }
-            Divider(vine.cardBorder)
-            SummaryRow("Maintenance logs", state.maintenanceLogs.size, VineColors.EarthBrown) { onOpenTool(ToolRoute.Maintenance) }
-            Divider(vine.cardBorder)
-            SummaryRow("Yield records", state.yieldRecords.size, VineColors.Orange) { onOpenTool(ToolRoute.Yield) }
-        }
-    }
-}
-
-@Composable
-private fun SummaryRow(label: String, value: Int, tint: Color, onClick: () -> Unit) {
-    val vine = LocalVineColors.current
-    Row(
-        modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
         Box(
-            modifier = Modifier.size(22.dp).clip(CircleShape).background(tint.copy(alpha = 0.18f)),
+            modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp))
+                .background(item.tint.copy(alpha = 0.15f * alpha)),
             contentAlignment = Alignment.Center,
         ) {
-            Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(tint))
+            Icon(item.icon, contentDescription = null, tint = item.tint.copy(alpha = alpha), modifier = Modifier.size(22.dp))
         }
-        Text(label, color = vine.textPrimary, modifier = Modifier.weight(1f))
-        Text("$value", fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                item.title,
+                fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                color = vine.textPrimary.copy(alpha = alpha), maxLines = 2,
+            )
+            Text(item.subtitle, fontSize = 12.sp, color = vine.textSecondary.copy(alpha = alpha), maxLines = 2)
+        }
     }
-}
-
-@Composable
-private fun Divider(color: Color) {
-    Box(modifier = Modifier.fillMaxWidth().height(0.5.dp).background(color))
 }
