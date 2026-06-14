@@ -90,11 +90,13 @@ fun PinsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifie
     var editing by remember { mutableStateOf<PinEditTarget?>(null) }
     // null = All; otherwise a PinMode raw value ("Repairs" / "Growth").
     var modeFilter by remember { mutableStateOf<String?>(null) }
+    // null = All statuses; true = Completed; false = Open.
+    var statusFilter by remember { mutableStateOf<Boolean?>(null) }
 
-    val visiblePins = remember(state.pins, modeFilter) {
-        when (modeFilter) {
-            null -> state.pins
-            else -> state.pins.filter { it.mode == modeFilter }
+    val visiblePins = remember(state.pins, modeFilter, statusFilter) {
+        state.pins.filter { pin ->
+            (modeFilter == null || pin.mode == modeFilter) &&
+                (statusFilter == null || pin.isCompleted == statusFilter)
         }
     }
 
@@ -145,13 +147,46 @@ fun PinsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifie
                 }
             }
 
+            // Status filter chips (combine with the mode filter above).
+            item(key = "__status") {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PinModeFilterChip("All statuses", statusFilter == null, vine.textSecondary) { statusFilter = null }
+                    PinModeFilterChip("Open", statusFilter == false, VineColors.Warning) { statusFilter = false }
+                    PinModeFilterChip("Completed", statusFilter == true, VineColors.Success) { statusFilter = true }
+                }
+            }
+
             if (visiblePins.isEmpty()) {
                 item(key = "__empty") {
                     Box(Modifier.fillMaxWidth().padding(top = 24.dp), contentAlignment = Alignment.Center) {
-                        val (icon, title, message) = when (modeFilter) {
-                            "Repairs" -> Triple(Icons.Filled.Build, "No repair observations yet", "Tap Repairs above to log a repair, hazard or fault for your team.")
-                            "Growth" -> Triple(Icons.Filled.Grass, "No growth observations yet", "Tap Growth above to record a canopy, phenology or growth-stage observation.")
-                            else -> Triple(Icons.Filled.LocationOn, "No observations yet", "Drop pins for repairs and growth observations. They sync to your team automatically.")
+                        val modeWord = when (modeFilter) {
+                            "Repairs" -> "repair"
+                            "Growth" -> "growth"
+                            else -> null
+                        }
+                        val statusWord = when (statusFilter) {
+                            true -> "completed"
+                            false -> "open"
+                            else -> null
+                        }
+                        val icon = when (modeFilter) {
+                            "Repairs" -> Icons.Filled.Build
+                            "Growth" -> Icons.Filled.Grass
+                            else -> Icons.Filled.LocationOn
+                        }
+                        val title = if (statusWord == null && modeWord == null) {
+                            "No observations yet"
+                        } else {
+                            "No " + listOfNotNull(statusWord, modeWord).joinToString(" ") + " observations"
+                        }
+                        val message = when {
+                            modeFilter == "Repairs" && statusFilter == null ->
+                                "Tap Repairs above to log a repair, hazard or fault for your team."
+                            modeFilter == "Growth" && statusFilter == null ->
+                                "Tap Growth above to record a canopy, phenology or growth-stage observation."
+                            statusFilter == false -> "Nothing outstanding here — open observations will appear once logged."
+                            statusFilter == true -> "Completed observations will appear here once they're marked done."
+                            else -> "Drop pins for repairs and growth observations. They sync to your team automatically."
                         }
                         EmptyState(icon = icon, title = title, message = message)
                     }
