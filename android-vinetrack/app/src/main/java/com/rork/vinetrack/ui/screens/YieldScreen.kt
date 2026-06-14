@@ -75,6 +75,7 @@ import com.rork.vinetrack.data.YieldRepository
 import com.rork.vinetrack.data.model.HistoricalBlockResult
 import com.rork.vinetrack.data.model.HistoricalYieldRecord
 import com.rork.vinetrack.data.model.Paddock
+import com.rork.vinetrack.data.model.canonicalVarietyName
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.EmptyState
@@ -98,29 +99,42 @@ import java.util.Locale
 @Composable
 fun YieldScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifier) {
     var selectedId by remember { mutableStateOf<String?>(null) }
+    var selectedVarietyKey by remember { mutableStateOf<String?>(null) }
     var creating by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<HistoricalYieldRecord?>(null) }
 
+    // Vineyard-wide per-variety totals, derived from block results matched back to
+    // current paddock allocations. Recomputed only when records/paddocks change.
+    val varietySummaries = remember(state.yieldRecords, state.paddocks) {
+        computeVarietyYieldSummaries(state.yieldRecords, state.paddocks)
+    }
+
     val selected = state.yieldRecords.firstOrNull { it.id == selectedId }
+    val selectedVariety = varietySummaries.firstOrNull { it.key == selectedVarietyKey }
 
     AnimatedContent(
-        targetState = selected,
+        targetState = Triple(selected, selectedVariety, selected != null || selectedVariety != null),
         transitionSpec = { fadeIn() togetherWith fadeOut() },
         label = "yield-nav",
         modifier = modifier,
-    ) { record ->
-        if (record != null) {
-            YieldDetailView(
+    ) { (record, variety, _) ->
+        when {
+            record != null -> YieldDetailView(
                 state = state,
                 record = record,
                 onBack = { selectedId = null },
                 onEdit = { editing = record },
                 onDelete = { vm.deleteYieldRecord(record.id) { ok -> if (ok) selectedId = null } },
             )
-        } else {
-            YieldListView(
+            variety != null -> VarietyYieldDetailView(
+                summary = variety,
+                onBack = { selectedVarietyKey = null },
+            )
+            else -> YieldListView(
                 state = state,
+                varietySummaries = varietySummaries,
                 onOpen = { selectedId = it.id },
+                onOpenVariety = { selectedVarietyKey = it.key },
                 onCreate = { creating = true },
             )
         }
@@ -151,7 +165,9 @@ fun YieldScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifi
 @Composable
 private fun YieldListView(
     state: AppUiState,
+    varietySummaries: List<VarietyYieldSummary>,
     onOpen: (HistoricalYieldRecord) -> Unit,
+    onOpenVariety: (VarietyYieldSummary) -> Unit,
     onCreate: () -> Unit,
 ) {
     val vine = LocalVineColors.current
@@ -218,6 +234,13 @@ private fun YieldListView(
                         }
                         items(yearRecords.size, key = { yearRecords[it].id }) { idx ->
                             YieldRecordCard(record = yearRecords[idx], onClick = { onOpen(yearRecords[idx]) })
+                        }
+                    }
+
+                    if (varietySummaries.isNotEmpty()) {
+                        item(key = "variety-hdr") { SectionHeader("By Variety", onLight = true) }
+                        items(varietySummaries.size, key = { "var-${varietySummaries[it].key}" }) { idx ->
+                            VarietyYieldCard(summary = varietySummaries[idx], onClick = { onOpenVariety(varietySummaries[idx]) })
                         }
                     }
                 }
@@ -599,6 +622,240 @@ private fun EditYieldActualsSheet(
             ) {
                 if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
                 else Text("Save changes")
+            }
+        }
+    }
+}
+
+/**
+ * Aggregated yield for a single grape variety across every loaded yield record.
+ * Derived (read-only) by attributing each block result's tonnes/area to the
+ * variety/varieties currently allocated on the matching paddock. Mixed blocks
+ * are split proportionally by allocation percent; blocks whose paddock or
+ * allocation can't be resolved fall under an "Unknown variety" bucket.
+ */
+data class VarietyYieldSummary(
+    val key: String,
+    val displayName: String,
+    val estimatedTonnes: Double,
+    val actualTonnes: Double?,
+    val areaHectares: Double,
+    val contributions: List<VarietyYieldContribution>,
+) {
+    /** Prefer actual t/ha when actuals exist, otherwise estimated. */
+    val tonnesPerHectare: Double?
+        get() {
+            if (areaHectares <= 0) return null
+            val tonnes = actualTonnes ?: estimatedTonnes
+            return tonnes / areaHectares
+        }
+}
+
+/** One block-in-a-season slice contributing to a [VarietyYieldSummary]. */
+data class VarietyYieldContribution(
+    val recordId: String,
+    val seasonLabel: String,
+    val blockName: String,
+    val sharePercent: Double,
+    val estimatedTonnes: Double,
+    val actualTonnes: Double?,
+    val areaHectares: Double,
+)
+
+private const val UNKNOWN_VARIETY_KEY = "__unknown__"
+
+/**
+ * Build vineyard-wide per-variety yield totals from archived records. Matches
+ * each block result back to its current paddock allocations (variety-key-first
+ * is unnecessary here since block results store no variety; we resolve via
+ * paddockId), splitting mixed-variety blocks by allocation percent. Prefers
+ * actual tonnes where recorded, otherwise estimated. Sorted by the larger of
+ * actual/estimated tonnes descending, with "Unknown variety" last.
+ */
+fun computeVarietyYieldSummaries(
+    records: List<HistoricalYieldRecord>,
+    paddocks: List<Paddock>,
+): List<VarietyYieldSummary> {
+    if (records.isEmpty()) return emptyList()
+    val paddockById = paddocks.associateBy { it.id }
+
+    data class Acc(
+        var displayName: String,
+        var estimated: Double = 0.0,
+        var actual: Double = 0.0,
+        var hasActual: Boolean = false,
+        var area: Double = 0.0,
+        val contributions: MutableList<VarietyYieldContribution> = mutableListOf(),
+    )
+
+    val acc = LinkedHashMap<String, Acc>()
+
+    fun bucket(key: String, name: String): Acc = acc.getOrPut(key) { Acc(displayName = name) }
+
+    records.forEach { record ->
+        val seasonLabel = record.season.ifBlank { "Season ${record.year}" }
+        record.blocks.forEach { block ->
+            val paddock = paddockById[block.paddockId]
+            val allocations = paddock?.varietyAllocations.orEmpty()
+                .filter { !it.displayName.isNullOrBlank() }
+
+            // Build (key, displayName, share) splits for this block.
+            val splits: List<Triple<String, String, Double>> = if (allocations.isEmpty()) {
+                listOf(Triple(UNKNOWN_VARIETY_KEY, "Unknown variety", 1.0))
+            } else {
+                val totalPct = allocations.sumOf { it.displayPercent ?: 0.0 }
+                allocations.map { a ->
+                    val name = a.displayName!!
+                    val key = a.varietyKey?.takeIf { it.isNotBlank() }
+                        ?: "name:${canonicalVarietyName(name)}"
+                    val share = if (totalPct > 0) (a.displayPercent ?: 0.0) / totalPct
+                    else 1.0 / allocations.size
+                    Triple(key, name, share)
+                }
+            }
+
+            splits.forEach { (key, name, share) ->
+                if (share <= 0) return@forEach
+                val b = bucket(key, name)
+                val est = block.yieldTonnes * share
+                val area = block.areaHectares * share
+                b.estimated += est
+                b.area += area
+                val actual = block.actualYieldTonnes?.let { it * share }
+                if (actual != null) {
+                    b.actual += actual
+                    b.hasActual = true
+                }
+                b.contributions.add(
+                    VarietyYieldContribution(
+                        recordId = record.id,
+                        seasonLabel = seasonLabel,
+                        blockName = block.paddockName,
+                        sharePercent = share * 100.0,
+                        estimatedTonnes = est,
+                        actualTonnes = actual,
+                        areaHectares = area,
+                    ),
+                )
+            }
+        }
+    }
+
+    return acc.entries
+        .map { (key, a) ->
+            VarietyYieldSummary(
+                key = key,
+                displayName = a.displayName,
+                estimatedTonnes = a.estimated,
+                actualTonnes = if (a.hasActual) a.actual else null,
+                areaHectares = a.area,
+                contributions = a.contributions.sortedWith(
+                    compareByDescending<VarietyYieldContribution> { it.actualTonnes ?: it.estimatedTonnes },
+                ),
+            )
+        }
+        .sortedWith(
+            compareBy<VarietyYieldSummary> { it.key == UNKNOWN_VARIETY_KEY }
+                .thenByDescending { it.actualTonnes ?: it.estimatedTonnes },
+        )
+}
+
+@Composable
+private fun VarietyYieldCard(summary: VarietyYieldSummary, onClick: () -> Unit) {
+    val vine = LocalVineColors.current
+    val isUnknown = summary.key == UNKNOWN_VARIETY_KEY
+    VineyardCard(modifier = Modifier.clickable { onClick() }) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Box(
+                modifier = Modifier.size(46.dp).clip(RoundedCornerShape(12.dp))
+                    .background((if (isUnknown) vine.textSecondary else VineColors.LeafGreen).copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Filled.Spa, contentDescription = null, tint = if (isUnknown) vine.textSecondary else VineColors.DarkGreen, modifier = Modifier.size(22.dp))
+            }
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(summary.displayName, color = vine.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                val parts = buildList {
+                    if (summary.areaHectares > 0) add("${formatHaY(summary.areaHectares)} ha")
+                    summary.tonnesPerHectare?.let { add("${formatTonnes(it)} t/ha") }
+                    val blocks = summary.contributions.map { it.blockName }.distinct().size
+                    add("$blocks block${if (blocks == 1) "" else "s"}")
+                }
+                Text(parts.joinToString(" · "), color = vine.textSecondary, fontSize = 12.sp, maxLines = 1)
+            }
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                val actual = summary.actualTonnes
+                Text("${formatTonnes(actual ?: summary.estimatedTonnes)} t", color = vine.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text(if (actual != null) "actual" else "est.", color = vine.textSecondary, fontSize = 11.sp)
+            }
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = vine.textSecondary)
+        }
+    }
+}
+
+@Composable
+private fun VarietyYieldDetailView(summary: VarietyYieldSummary, onBack: () -> Unit) {
+    val vine = LocalVineColors.current
+    Box(modifier = Modifier.fillMaxSize().background(vine.appBackground)) {
+        Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 32.dp)) {
+            Row(modifier = Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = vine.textPrimary) }
+                Text("Variety Yield", color = vine.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            }
+
+            Column(modifier = Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                VineyardCard {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Box(
+                            modifier = Modifier.size(54.dp).clip(RoundedCornerShape(14.dp)).background(VineColors.LeafGreen.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center,
+                        ) { Icon(Icons.Filled.Spa, contentDescription = null, tint = VineColors.DarkGreen, modifier = Modifier.size(24.dp)) }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(summary.displayName, color = vine.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                            val blocks = summary.contributions.map { it.blockName }.distinct().size
+                            Text("$blocks block${if (blocks == 1) "" else "s"} · ${summary.contributions.map { it.recordId }.distinct().size} record${if (summary.contributions.map { it.recordId }.distinct().size == 1) "" else "s"}", color = vine.textSecondary, fontSize = 13.sp)
+                        }
+                    }
+                }
+
+                VineyardCard {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        YieldStat("Estimated", "${formatTonnes(summary.estimatedTonnes)} t", Icons.Filled.Agriculture, VineColors.LeafGreen, Modifier.weight(1f))
+                        YieldStat("Actual", summary.actualTonnes?.let { "${formatTonnes(it)} t" } ?: "—", Icons.Filled.Scale, VineColors.Info, Modifier.weight(1f))
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        YieldStat("t/ha", summary.tonnesPerHectare?.let { formatTonnes(it) } ?: "—", Icons.Filled.SquareFoot, VineColors.Orange, Modifier.weight(1f))
+                        YieldStat("Area", "${formatHaY(summary.areaHectares)} ha", Icons.Filled.SquareFoot, VineColors.EarthBrown, Modifier.weight(1f))
+                    }
+                }
+
+                SectionHeader("Contributing Blocks", onLight = true)
+                VineyardCard {
+                    summary.contributions.forEachIndexed { idx, c ->
+                        Column(modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(c.blockName, color = vine.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                                Text("${formatTonnes(c.actualTonnes ?: c.estimatedTonnes)} t", color = vine.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                            }
+                            val parts = buildList {
+                                add(c.seasonLabel)
+                                if (c.sharePercent < 99.5) add("${c.sharePercent.toInt()}% of block")
+                                if (c.areaHectares > 0) add("${formatHaY(c.areaHectares)} ha")
+                                if (c.actualTonnes != null) add("est. ${formatTonnes(c.estimatedTonnes)} t")
+                            }
+                            Text(parts.joinToString(" · "), color = vine.textSecondary, fontSize = 12.sp)
+                        }
+                        if (idx < summary.contributions.lastIndex) {
+                            Box(modifier = Modifier.fillMaxWidth().height(0.5.dp).background(vine.cardBorder))
+                        }
+                    }
+                }
+
+                Text(
+                    "Variety totals are derived from each block's current variety allocation. Mixed-variety blocks are split by allocation share.",
+                    color = vine.textSecondary, fontSize = 12.sp,
+                )
             }
         }
     }
