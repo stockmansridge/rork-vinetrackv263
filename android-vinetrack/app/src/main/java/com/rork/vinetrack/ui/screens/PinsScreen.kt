@@ -23,10 +23,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Grass
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.outlined.AddAPhoto
 import androidx.compose.material.icons.outlined.Circle
@@ -42,7 +44,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
@@ -63,6 +64,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.layout.ContentScale
@@ -85,42 +88,76 @@ import com.rork.vinetrack.ui.theme.VineColors
 fun PinsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifier, onBack: (() -> Unit)? = null) {
     val vine = LocalVineColors.current
     var editing by remember { mutableStateOf<PinEditTarget?>(null) }
+    // null = All; otherwise a PinMode raw value ("Repairs" / "Growth").
+    var modeFilter by remember { mutableStateOf<String?>(null) }
+
+    val visiblePins = remember(state.pins, modeFilter) {
+        when (modeFilter) {
+            null -> state.pins
+            else -> state.pins.filter { it.mode == modeFilter }
+        }
+    }
 
     Scaffold(
         modifier = modifier,
         containerColor = vine.appBackground,
         topBar = {
             TopAppBar(
-                title = { Text("Pins") },
+                title = { Text("Observations") },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
         },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = { editing = PinEditTarget.New },
-                containerColor = VineColors.PrimaryAccent,
-                contentColor = androidx.compose.ui.graphics.Color.White,
-            ) {
-                Icon(Icons.Filled.Add, contentDescription = "Add pin")
-            }
-        },
     ) { padding ->
-        if (state.pins.isEmpty()) {
-            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                EmptyState(
-                    icon = Icons.Filled.LocationOn,
-                    title = "No pins yet",
-                    message = "Drop pins for repairs, observations and hazards. They sync to your team automatically.",
-                )
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            // Colour-specific quick-add entry points (iOS Repairs / Growth parity).
+            item(key = "__entry") {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    PinModeEntryCard(
+                        title = "Repairs",
+                        subtitle = "Log a repair or hazard",
+                        icon = Icons.Filled.Build,
+                        color = RepairColor,
+                        modifier = Modifier.weight(1f),
+                        onClick = { editing = PinEditTarget.New("Repairs") },
+                    )
+                    PinModeEntryCard(
+                        title = "Growth",
+                        subtitle = "Record an observation",
+                        icon = Icons.Filled.Grass,
+                        color = GrowthColor,
+                        modifier = Modifier.weight(1f),
+                        onClick = { editing = PinEditTarget.New("Growth") },
+                    )
+                }
             }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                items(state.pins, key = { it.id }) { pin ->
+
+            // Mode filter chips.
+            item(key = "__filter") {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PinModeFilterChip("All", modeFilter == null, vine.textSecondary) { modeFilter = null }
+                    PinModeFilterChip("Repairs", modeFilter == "Repairs", RepairColor) { modeFilter = "Repairs" }
+                    PinModeFilterChip("Growth", modeFilter == "Growth", GrowthColor) { modeFilter = "Growth" }
+                }
+            }
+
+            if (visiblePins.isEmpty()) {
+                item(key = "__empty") {
+                    Box(Modifier.fillMaxWidth().padding(top = 24.dp), contentAlignment = Alignment.Center) {
+                        val (icon, title, message) = when (modeFilter) {
+                            "Repairs" -> Triple(Icons.Filled.Build, "No repair observations yet", "Tap Repairs above to log a repair, hazard or fault for your team.")
+                            "Growth" -> Triple(Icons.Filled.Grass, "No growth observations yet", "Tap Growth above to record a canopy, phenology or growth-stage observation.")
+                            else -> Triple(Icons.Filled.LocationOn, "No observations yet", "Drop pins for repairs and growth observations. They sync to your team automatically.")
+                        }
+                        EmptyState(icon = icon, title = title, message = message)
+                    }
+                }
+            } else {
+                items(visiblePins, key = { it.id }) { pin ->
                     PinRow(
                         pin = pin,
                         onClick = { editing = PinEditTarget.Existing(pin) },
@@ -197,19 +234,31 @@ private fun defaultLocation(paddockId: String?, state: AppUiState): Pair<Double,
 @Composable
 private fun PinRow(pin: Pin, onClick: () -> Unit, onToggle: () -> Unit) {
     val vine = LocalVineColors.current
-    val tint = if (pin.isCompleted) VineColors.Success else VineColors.Destructive
+    val modeColor = pinModeColor(pin.mode)
     VineyardCard(modifier = Modifier.clickable(onClick = onClick)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Box(
-                modifier = Modifier.size(40.dp).clip(CircleShape).background(tint.copy(alpha = 0.15f)),
+                modifier = Modifier.size(40.dp).clip(CircleShape).background(modeColor.copy(alpha = 0.15f)),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(Icons.Filled.LocationOn, contentDescription = null, tint = tint)
+                Icon(pinModeIcon(pin.mode), contentDescription = null, tint = modeColor)
             }
-            Column(modifier = Modifier.fillMaxWidth().weight(1f)) {
+            Column(modifier = Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(pin.displayTitle, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
                 if (!pin.notes.isNullOrBlank()) {
                     Text(pin.notes, fontSize = 13.sp, color = vine.textSecondary, maxLines = 2)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val modeLabel = if (pin.mode?.contains("growth", ignoreCase = true) == true) "Growth" else "Repairs"
+                    StatusBadge(modeLabel, modeColor)
+                    if (pin.isCompleted) {
+                        StatusBadge("Done", VineColors.Success)
+                    } else {
+                        StatusBadge("Open", VineColors.Warning)
+                    }
+                    if (pin.hasPhoto) {
+                        Icon(Icons.Filled.Photo, contentDescription = "Has photo", tint = vine.textSecondary, modifier = Modifier.size(16.dp))
+                    }
                 }
             }
             IconButton(onClick = onToggle) {
@@ -224,8 +273,63 @@ private fun PinRow(pin: Pin, onClick: () -> Unit, onToggle: () -> Unit) {
 }
 
 private sealed interface PinEditTarget {
-    data object New : PinEditTarget
+    data class New(val mode: String) : PinEditTarget
     data class Existing(val pin: Pin) : PinEditTarget
+}
+
+/** Repairs accent (wine red) and Growth accent (leaf green) — iOS observation parity. */
+private val RepairColor = VineColors.VineRed
+private val GrowthColor = VineColors.LeafGreen
+
+/** Mode-specific accent for a pin's stored `mode` raw value. */
+private fun pinModeColor(mode: String?): Color =
+    if (mode?.contains("growth", ignoreCase = true) == true) GrowthColor else RepairColor
+
+/** Mode-specific glyph for a pin's stored `mode` raw value. */
+private fun pinModeIcon(mode: String?): ImageVector =
+    if (mode?.contains("growth", ignoreCase = true) == true) Icons.Filled.Grass else Icons.Filled.Build
+
+/** Large colour-coded entry card that opens the create sheet with a preset mode. */
+@Composable
+private fun PinModeEntryCard(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    color: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(color)
+            .clickable(onClick = onClick)
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(
+            modifier = Modifier.size(40.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.22f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, contentDescription = null, tint = Color.White)
+        }
+        Text(title, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        Text(subtitle, fontSize = 12.sp, color = Color.White.copy(alpha = 0.9f))
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PinModeFilterChip(label: String, selected: Boolean, accent: Color, onClick: () -> Unit) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = { Text(label) },
+        colors = FilterChipDefaults.filterChipColors(
+            selectedContainerColor = accent.copy(alpha = 0.18f),
+            selectedLabelColor = accent,
+        ),
+    )
 }
 
 private data class PinFields(
@@ -258,8 +362,9 @@ private fun PinEditSheet(
         state.pins.firstOrNull { it.id == t.pin.id } ?: t.pin
     }
 
+    val initialMode = (target as? PinEditTarget.New)?.mode ?: "Repairs"
     var title by remember { mutableStateOf(existing?.title ?: "") }
-    var mode by remember { mutableStateOf(existing?.mode?.takeIf { it in pinModes } ?: "Repairs") }
+    var mode by remember { mutableStateOf(existing?.mode?.takeIf { it in pinModes } ?: initialMode) }
     var category by remember { mutableStateOf(existing?.category ?: "") }
     var notes by remember { mutableStateOf(existing?.notes ?: "") }
     var paddockId by remember { mutableStateOf(existing?.paddockId) }
@@ -307,13 +412,18 @@ private fun PinEditSheet(
                 Text("Type", fontSize = 13.sp, color = vine.textSecondary)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     pinModes.forEach { option ->
+                        val accent = pinModeColor(option)
                         FilterChip(
                             selected = mode == option,
                             onClick = { mode = option },
                             label = { Text(option) },
+                            leadingIcon = {
+                                Icon(pinModeIcon(option), contentDescription = null, modifier = Modifier.size(18.dp))
+                            },
                             colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = VineColors.PrimaryAccent.copy(alpha = 0.18f),
-                                selectedLabelColor = VineColors.PrimaryAccent,
+                                selectedContainerColor = accent.copy(alpha = 0.18f),
+                                selectedLabelColor = accent,
+                                selectedLeadingIconColor = accent,
                             ),
                         )
                     }
