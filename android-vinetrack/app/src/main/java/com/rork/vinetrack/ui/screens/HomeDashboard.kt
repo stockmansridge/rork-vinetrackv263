@@ -22,6 +22,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.Scale
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Coronavirus
 import androidx.compose.material.icons.filled.DirectionsCar
@@ -134,9 +135,11 @@ private fun DashboardContent(
 
             ToolsSection(
                 onOpenWorkTasks = { onSwitchTab(4) },
-                onOpenMaintenance = { onSwitchTab(7) },
+                onOpenMaintenance = { onSwitchTab(9) },
                 onOpenGrowth = { onSwitchTab(6) },
             )
+
+            YieldSection(state, onOpenYield = { onSwitchTab(7) })
 
             RecentSection(state, onSwitchTab)
 
@@ -291,6 +294,61 @@ private fun ToolsSection(onOpenWorkTasks: () -> Unit, onOpenMaintenance: () -> U
 }
 
 @Composable
+private fun YieldSection(state: AppUiState, onOpenYield: () -> Unit) {
+    val vine = LocalVineColors.current
+    val latest = state.yieldRecords.maxByOrNull { it.year * 100 + (it.archivedEpochMs?.let { 1 } ?: 0) }
+        ?: state.yieldRecords.firstOrNull()
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        SectionHeader("Yield")
+        VineyardCard(modifier = Modifier.clickable { onOpenYield() }) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Box(
+                    modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp))
+                        .background(VineColors.Orange.copy(alpha = 0.15f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Filled.Scale, contentDescription = null, tint = VineColors.Orange)
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        latest?.let { "${it.season} ${it.year}".trim() }?.takeIf { it.isNotBlank() } ?: "No yield records",
+                        fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
+                        color = vine.textPrimary, maxLines = 1,
+                    )
+                    Text(
+                        if (latest != null) "Latest season summary" else "Tap to record yields",
+                        fontSize = 12.sp, color = vine.textSecondary,
+                    )
+                }
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = vine.textSecondary)
+            }
+            if (latest != null) {
+                Spacer(Modifier.height(14.dp))
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    OverviewStat(
+                        "%.1f t".format(latest.totalYieldTonnes),
+                        "Estimated", Icons.Filled.BarChart, VineColors.Orange, Modifier.weight(1f),
+                    )
+                    val actual = latest.totalActualYieldTonnes
+                    OverviewStat(
+                        if (actual != null) "%.1f t".format(actual) else "—",
+                        "Actual", Icons.Filled.Scale, VineColors.LeafGreen, Modifier.weight(1f),
+                    )
+                    val tha = latest.actualYieldPerHectare ?: latest.yieldPerHectare
+                    OverviewStat(
+                        if (latest.totalAreaHectares > 0) "%.1f".format(tha) else "—",
+                        "t/ha", Icons.Filled.Map, VineColors.DarkGreen, Modifier.weight(1f),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun RecentSection(state: AppUiState, onSwitchTab: (Int) -> Unit) {
     val vine = LocalVineColors.current
     Column(
@@ -313,7 +371,9 @@ private fun RecentSection(state: AppUiState, onSwitchTab: (Int) -> Unit) {
             Divider(vine.cardBorder)
             SummaryRow("Growth observations", state.growthRecords.size, VineColors.LeafGreen) { onSwitchTab(6) }
             Divider(vine.cardBorder)
-            SummaryRow("Maintenance logs", state.maintenanceLogs.size, VineColors.EarthBrown) { onSwitchTab(7) }
+            SummaryRow("Maintenance logs", state.maintenanceLogs.size, VineColors.EarthBrown) { onSwitchTab(9) }
+            Divider(vine.cardBorder)
+            SummaryRow("Yield records", state.yieldRecords.size, VineColors.Orange) { onSwitchTab(7) }
         }
     }
 }
