@@ -10,7 +10,11 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
 import com.rork.vinetrack.data.model.CoordinatePoint
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.resume
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
@@ -93,6 +97,38 @@ class LocationTracker(context: Context) {
     fun stop() {
         callback?.let { client.removeLocationUpdates(it) }
         callback = null
+    }
+
+    /**
+     * One-shot current location for dropping a pin. Tries the cached last-known
+     * fix first (instant), then requests a single fresh high-accuracy fix with a
+     * short timeout. Returns null when permission is missing or no fix arrives.
+     */
+    @SuppressLint("MissingPermission")
+    suspend fun currentLocation(timeoutMs: Long = 8000L): CoordinatePoint? {
+        if (!hasPermission) return null
+        lastKnown()?.let { return it }
+        return withTimeoutOrNull(timeoutMs) { freshFix() }
+    }
+
+    @SuppressLint("MissingPermission")
+    private suspend fun lastKnown(): CoordinatePoint? = suspendCancellableCoroutine { cont ->
+        client.lastLocation
+            .addOnSuccessListener { loc ->
+                cont.resume(loc?.let { CoordinatePoint(it.latitude, it.longitude) })
+            }
+            .addOnFailureListener { cont.resume(null) }
+    }
+
+    @SuppressLint("MissingPermission")
+    private suspend fun freshFix(): CoordinatePoint? = suspendCancellableCoroutine { cont ->
+        val cts = CancellationTokenSource()
+        client.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cts.token)
+            .addOnSuccessListener { loc ->
+                cont.resume(loc?.let { CoordinatePoint(it.latitude, it.longitude) })
+            }
+            .addOnFailureListener { cont.resume(null) }
+        cont.invokeOnCancellation { cts.cancel() }
     }
 
     private fun pathLength(pts: List<CoordinatePoint>): Double {

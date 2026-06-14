@@ -668,6 +668,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Id of the currently active trip, if any (used to navigate after start). */
     fun activeTripIdOrNull(): String? = _ui.value.activeTrip?.id
 
+    /**
+     * One-shot current GPS fix for dropping a pin from the Repairs/Growth
+     * launcher. Returns lat/lng when permission is granted and a fix is
+     * available, otherwise null so callers fall back to the paddock centroid.
+     */
+    fun fetchCurrentLocation(onResult: (Pair<Double, Double>?) -> Unit) {
+        viewModelScope.launch {
+            val point = try {
+                LocationTracker(getApplication()).currentLocation()
+            } catch (_: Exception) {
+                null
+            }
+            onResult(point?.let { it.latitude to it.longitude })
+        }
+    }
+
+    /** Whether foreground location permission is currently granted. */
+    fun hasLocationPermission(): Boolean = LocationTracker(getApplication()).hasPermission
+
     private fun beginTracking(trip: Trip) {
         val t = LocationTracker(getApplication())
         if (!t.hasPermission) {

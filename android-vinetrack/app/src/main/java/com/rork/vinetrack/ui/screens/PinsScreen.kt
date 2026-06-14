@@ -246,7 +246,13 @@ private fun PinEditSheetHost(
         onSave = { fields, photoUri, onDone ->
             when (target) {
                 is PinEditTarget.New -> {
-                    val loc = defaultLocation(fields.paddockId, state)
+                    // Prefer the GPS fix captured when the category was tapped;
+                    // fall back to the paddock centroid / vineyard coordinate.
+                    val loc = if (target.latitude != null && target.longitude != null) {
+                        target.latitude to target.longitude
+                    } else {
+                        defaultLocation(fields.paddockId, state)
+                    }
                     vm.createPin(
                         title = fields.title,
                         mode = fields.mode,
@@ -306,7 +312,51 @@ fun PinCategoryLauncherScreen(
     var editing by remember { mutableStateOf<PinEditTarget?>(null) }
     var showGrowthStageSheet by remember { mutableStateOf(false) }
     var showCustomiseSoon by remember { mutableStateOf(false) }
+    var locating by remember { mutableStateOf(false) }
     val vineyardName = state.selectedVineyard?.name?.takeIf { it.isNotBlank() } ?: "Vineyard"
+
+    // Category pending a GPS fix / permission decision before the sheet opens.
+    var pendingSelection by remember { mutableStateOf<Pair<String, String>?>(null) }
+
+    /** Open the create sheet for [category]/[side], stamping a GPS fix when available. */
+    fun launchCategory(category: String, side: String) {
+        locating = true
+        vm.fetchCurrentLocation { loc ->
+            locating = false
+            editing = PinEditTarget.New(
+                mode = mode,
+                category = category,
+                side = side,
+                titleDefault = category,
+                latitude = loc?.first,
+                longitude = loc?.second,
+            )
+        }
+    }
+
+    val locationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { _ ->
+        // Proceed regardless of the grant decision: with permission we capture a
+        // GPS fix, without it we fall back to the paddock centroid.
+        pendingSelection?.let { (cat, side) -> launchCategory(cat, side) }
+        pendingSelection = null
+    }
+
+    /** Entry point for a category tap: ensure permission, then launch the sheet. */
+    fun onCategoryTap(category: String, side: String) {
+        if (vm.hasLocationPermission()) {
+            launchCategory(category, side)
+        } else {
+            pendingSelection = category to side
+            locationPermission.launch(
+                arrayOf(
+                    android.Manifest.permission.ACCESS_FINE_LOCATION,
+                    android.Manifest.permission.ACCESS_COARSE_LOCATION,
+                ),
+            )
+        }
+    }
 
     Scaffold(
         modifier = modifier,
@@ -362,15 +412,15 @@ fun PinCategoryLauncherScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     categories.forEach { cat ->
-                        CategoryTile(cat) {
-                            editing = PinEditTarget.New(mode = mode, category = cat.name, side = "Left", titleDefault = cat.name)
+                        CategoryTile(cat, enabled = !locating) {
+                            onCategoryTap(cat.name, "Left")
                         }
                     }
                 }
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     categories.forEach { cat ->
-                        CategoryTile(cat) {
-                            editing = PinEditTarget.New(mode = mode, category = cat.name, side = "Right", titleDefault = cat.name)
+                        CategoryTile(cat, enabled = !locating) {
+                            onCategoryTap(cat.name, "Right")
                         }
                     }
                 }
@@ -459,7 +509,7 @@ private fun GrowthStageButton(onClick: () -> Unit) {
 }
 
 @Composable
-private fun CategoryTile(category: PinCategory, onClick: () -> Unit) {
+private fun CategoryTile(category: PinCategory, enabled: Boolean = true, onClick: () -> Unit) {
     val light = category.color.luminance() > 0.6f
     val fg = if (light) Color.Black else Color.White
     Column(
@@ -468,7 +518,7 @@ private fun CategoryTile(category: PinCategory, onClick: () -> Unit) {
             .height(92.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(category.color)
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(10.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -547,6 +597,9 @@ private sealed interface PinEditTarget {
         val category: String? = null,
         val side: String? = null,
         val titleDefault: String? = null,
+        /** GPS fix captured at launch time; null falls back to paddock centroid. */
+        val latitude: Double? = null,
+        val longitude: Double? = null,
     ) : PinEditTarget
     data class Existing(val pin: Pin) : PinEditTarget
 }
