@@ -39,6 +39,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -102,7 +103,9 @@ fun YieldScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifi
     var selectedId by remember { mutableStateOf<String?>(null) }
     var selectedVarietyKey by remember { mutableStateOf<String?>(null) }
     var creating by remember { mutableStateOf(false) }
+    var creatingEstimate by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<HistoricalYieldRecord?>(null) }
+    var editingEstimate by remember { mutableStateOf<HistoricalYieldRecord?>(null) }
 
     // Vineyard-wide per-variety totals, derived from block results matched back to
     // current paddock allocations. Recomputed only when records/paddocks change.
@@ -125,6 +128,7 @@ fun YieldScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifi
                 record = record,
                 onBack = { selectedId = null },
                 onEdit = { editing = record },
+                onEditEstimate = { editingEstimate = record },
                 onDelete = { vm.deleteYieldRecord(record.id) { ok -> if (ok) selectedId = null } },
             )
             variety != null -> VarietyYieldDetailView(
@@ -138,6 +142,7 @@ fun YieldScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifi
                 onOpen = { selectedId = it.id },
                 onOpenVariety = { selectedVarietyKey = it.key },
                 onCreate = { creating = true },
+                onCreateEstimate = { creatingEstimate = true },
             )
         }
     }
@@ -148,6 +153,27 @@ fun YieldScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifi
             state = state,
             onDismiss = { creating = false },
             onSaved = { creating = false },
+        )
+    }
+
+    if (creatingEstimate) {
+        EstimateYieldSheet(
+            vm = vm,
+            state = state,
+            existing = null,
+            onDismiss = { creatingEstimate = false },
+            onSaved = { creatingEstimate = false },
+        )
+    }
+
+    editingEstimate?.let { rec ->
+        val live = state.yieldRecords.firstOrNull { it.id == rec.id } ?: rec
+        EstimateYieldSheet(
+            vm = vm,
+            state = state,
+            existing = live,
+            onDismiss = { editingEstimate = null },
+            onSaved = { editingEstimate = null },
         )
     }
 
@@ -172,8 +198,10 @@ private fun YieldListView(
     onOpen: (HistoricalYieldRecord) -> Unit,
     onOpenVariety: (VarietyYieldSummary) -> Unit,
     onCreate: () -> Unit,
+    onCreateEstimate: () -> Unit,
 ) {
     val vine = LocalVineColors.current
+    var createMenu by remember { mutableStateOf(false) }
     val records = remember(state.yieldRecords) {
         state.yieldRecords.sortedWith(compareByDescending<HistoricalYieldRecord> { it.year }.thenByDescending { it.archivedEpochMs ?: 0L })
     }
@@ -192,12 +220,26 @@ private fun YieldListView(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = onCreate,
-                containerColor = VineColors.PrimaryAccent,
-                contentColor = Color.White,
-            ) {
-                Icon(Icons.Filled.Add, contentDescription = "Record yield")
+            Box {
+                FloatingActionButton(
+                    onClick = { createMenu = true },
+                    containerColor = VineColors.PrimaryAccent,
+                    contentColor = Color.White,
+                ) {
+                    Icon(Icons.Filled.Add, contentDescription = "Add yield record")
+                }
+                DropdownMenu(expanded = createMenu, onDismissRequest = { createMenu = false }) {
+                    DropdownMenuItem(
+                        text = { Text("New sampling estimate") },
+                        leadingIcon = { Icon(Icons.Filled.Agriculture, contentDescription = null, tint = VineColors.LeafGreen) },
+                        onClick = { createMenu = false; onCreateEstimate() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Record actual yield") },
+                        leadingIcon = { Icon(Icons.Filled.Scale, contentDescription = null, tint = VineColors.Info) },
+                        onClick = { createMenu = false; onCreate() },
+                    )
+                }
             }
         },
     ) { padding ->
@@ -308,17 +350,23 @@ private fun YieldDetailView(
     record: HistoricalYieldRecord,
     onBack: () -> Unit,
     onEdit: () -> Unit,
+    onEditEstimate: () -> Unit,
     onDelete: () -> Unit,
 ) {
     val vine = LocalVineColors.current
     var confirmDelete by remember { mutableStateOf(false) }
     val actual = record.totalActualYieldTonnes
+    // An estimate record is a single block authored from sampling inputs.
+    val isEstimate = record.blocks.size == 1 && record.blocks.first().averageBunchesPerVine > 0.0
 
     Box(modifier = Modifier.fillMaxSize().background(vine.appBackground)) {
         Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 32.dp)) {
             Row(modifier = Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = vine.textPrimary) }
                 Text("Yield Record", color = vine.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                if (isEstimate) {
+                    IconButton(onClick = onEditEstimate) { Icon(Icons.Filled.Agriculture, contentDescription = "Edit estimate", tint = VineColors.Orange) }
+                }
                 IconButton(onClick = onEdit) { Icon(Icons.Filled.Edit, contentDescription = "Edit actuals", tint = VineColors.LeafGreen) }
                 IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Filled.Delete, contentDescription = "Delete", tint = VineColors.Destructive) }
             }
@@ -555,6 +603,232 @@ private fun RecordYieldSheet(
             ) {
                 if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
                 else Text("Save yield record")
+            }
+        }
+    }
+}
+
+/**
+ * Sampling-based estimate authoring. Captures the sampling snapshot (avg
+ * bunches/vine, bunch weight, vines, samples, crop viability) for a single
+ * block, previews the computed estimated tonnes / t-ha live, and persists into
+ * `historical_yield_records` via the iOS-compatible `block_results` contract.
+ * When [existing] is non-null the sheet edits that estimate in place, leaving
+ * any recorded actual untouched.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun EstimateYieldSheet(
+    vm: AppViewModel,
+    state: AppUiState,
+    existing: HistoricalYieldRecord?,
+    onDismiss: () -> Unit,
+    onSaved: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val paddocks = state.paddocks
+    val existingBlock = existing?.blocks?.firstOrNull()
+
+    var year by remember { mutableIntStateOf(existing?.year ?: Calendar.getInstance().get(Calendar.YEAR)) }
+    var season by remember { mutableStateOf(existing?.season ?: "") }
+    var block by remember {
+        mutableStateOf(
+            existingBlock?.let { eb -> paddocks.firstOrNull { it.id == eb.paddockId } } ?: paddocks.firstOrNull(),
+        )
+    }
+    var variety by remember {
+        mutableStateOf(
+            existingBlock?.paddockName?.substringAfter(" \u2014 ", "")?.takeIf { it.isNotBlank() }
+                ?: block?.primaryVarietyName ?: "",
+        )
+    }
+    var bunchesText by remember { mutableStateOf(existingBlock?.averageBunchesPerVine?.takeIf { it > 0 }?.let { formatPlain(it) } ?: "") }
+    var bunchWeightText by remember { mutableStateOf(existingBlock?.averageBunchWeightGrams?.takeIf { it > 0 }?.let { formatPlain(it) } ?: "120") }
+    var vinesText by remember { mutableStateOf((existingBlock?.totalVines?.takeIf { it > 0 } ?: block?.effectiveVineCount ?: 0).toString()) }
+    var samplesText by remember { mutableStateOf(existingBlock?.samplesRecorded?.takeIf { it > 0 }?.toString() ?: "") }
+    var viabilityText by remember { mutableStateOf(existingBlock?.damageFactor?.let { formatPlain(it * 100.0) } ?: "100") }
+    var notes by remember { mutableStateOf(existing?.notes ?: "") }
+    var blockMenu by remember { mutableStateOf(false) }
+    var saving by remember { mutableStateOf(false) }
+
+    val bunches = bunchesText.trim().toDoubleOrNull()
+    val bunchWeight = bunchWeightText.trim().toDoubleOrNull()
+    val vines = vinesText.trim().toIntOrNull()
+    val viability = viabilityText.trim().toDoubleOrNull()
+    val damageFactor = (viability ?: 100.0).coerceIn(0.0, 100.0) / 100.0
+    val area = block?.areaHectares ?: 0.0
+
+    val estimatedTonnes: Double? = if (bunches != null && bunchWeight != null && vines != null && vines >= 0) {
+        (vines.toDouble() * bunches) * (bunchWeight / 1000.0) * damageFactor / 1000.0
+    } else null
+    val perHectare: Double? = estimatedTonnes?.let { if (area > 0) it / area else null }
+
+    val canSave = block != null && bunches != null && bunches >= 0 &&
+        bunchWeight != null && bunchWeight >= 0 && vines != null && vines >= 0 && !saving
+
+    fun save() {
+        val chosen = block ?: return
+        if (!canSave) return
+        saving = true
+        val input = YieldRepository.EstimateInput(
+            year = year,
+            season = season.trim(),
+            paddockId = chosen.id,
+            paddockName = chosen.name,
+            areaHectares = chosen.areaHectares,
+            totalVines = vines ?: chosen.effectiveVineCount,
+            averageBunchesPerVine = bunches ?: 0.0,
+            averageBunchWeightGrams = bunchWeight ?: 0.0,
+            damageFactor = damageFactor,
+            samplesRecorded = samplesText.trim().toIntOrNull() ?: 0,
+            variety = variety.trim().ifBlank { null },
+            notes = notes.trim().ifBlank { null },
+        )
+        val done: (Boolean) -> Unit = { ok -> saving = false; if (ok) onSaved() }
+        if (existing != null) vm.updateYieldEstimate(existing, input, done)
+        else vm.createYieldEstimate(input, done)
+    }
+
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(
+            modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Text(if (existing != null) "Edit sampling estimate" else "New sampling estimate", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Year", color = vine.textPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                IconButton(onClick = { if (year > 2000) year -= 1 }) { Text("\u2013", fontSize = 22.sp, color = VineColors.LeafGreen) }
+                Text("$year", color = vine.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                IconButton(onClick = { if (year < 2100) year += 1 }) { Text("+", fontSize = 20.sp, color = VineColors.LeafGreen) }
+            }
+
+            OutlinedTextField(
+                value = season,
+                onValueChange = { season = it },
+                label = { Text("Season (optional)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            if (paddocks.isEmpty()) {
+                Text("No blocks available. Add a block first.", color = vine.textSecondary, fontSize = 13.sp)
+            } else {
+                ExposedDropdownMenuBox(expanded = blockMenu, onExpandedChange = { blockMenu = it }) {
+                    OutlinedTextField(
+                        value = block?.name ?: "Select a block",
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Block / paddock") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = blockMenu) },
+                        modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                    )
+                    ExposedDropdownMenu(expanded = blockMenu, onDismissRequest = { blockMenu = false }) {
+                        paddocks.forEach { opt ->
+                            DropdownMenuItem(
+                                text = { Text(opt.name) },
+                                onClick = {
+                                    block = opt
+                                    if (variety.isBlank()) variety = opt.primaryVarietyName ?: ""
+                                    // Re-seed vine count from the newly chosen block when untouched/empty.
+                                    if (vinesText.isBlank() || vinesText.toIntOrNull() == 0) vinesText = opt.effectiveVineCount.toString()
+                                    blockMenu = false
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+
+            block?.takeIf { it.areaHectares > 0 }?.let {
+                Text("Area: ${formatHaY(it.areaHectares)} ha", color = vine.textSecondary, fontSize = 12.sp)
+            }
+
+            OutlinedTextField(
+                value = variety,
+                onValueChange = { variety = it },
+                label = { Text("Variety (optional)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = bunchesText,
+                    onValueChange = { bunchesText = it.filter { c -> c.isDigit() || c == '.' } },
+                    label = { Text("Avg bunches/vine") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.weight(1f),
+                )
+                OutlinedTextField(
+                    value = bunchWeightText,
+                    onValueChange = { bunchWeightText = it.filter { c -> c.isDigit() || c == '.' } },
+                    label = { Text("Bunch wt (g)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.weight(1f),
+                )
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = vinesText,
+                    onValueChange = { vinesText = it.filter { c -> c.isDigit() } },
+                    label = { Text("Total vines") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.weight(1f),
+                )
+                OutlinedTextField(
+                    value = viabilityText,
+                    onValueChange = { viabilityText = it.filter { c -> c.isDigit() || c == '.' } },
+                    label = { Text("Viable %") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.weight(1f),
+                )
+            }
+
+            OutlinedTextField(
+                value = samplesText,
+                onValueChange = { samplesText = it.filter { c -> c.isDigit() } },
+                label = { Text("Sample sites recorded (optional)") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            // Live estimate preview.
+            VineyardCard {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    YieldStat("Estimated", estimatedTonnes?.let { "${formatTonnes(it)} t" } ?: "\u2014", Icons.Filled.Agriculture, VineColors.LeafGreen, Modifier.weight(1f))
+                    YieldStat("Est. t/ha", perHectare?.let { formatTonnes(it) } ?: "\u2014", Icons.Filled.SquareFoot, VineColors.Orange, Modifier.weight(1f))
+                }
+            }
+            Text(
+                "Estimate = total vines \u00d7 avg bunches/vine \u00d7 bunch weight \u00d7 viable %. Record the actual yield later from the record.",
+                color = vine.textSecondary, fontSize = 11.sp,
+            )
+
+            OutlinedTextField(
+                value = notes,
+                onValueChange = { notes = it },
+                label = { Text("Notes (optional)") },
+                modifier = Modifier.fillMaxWidth().height(90.dp),
+            )
+
+            state.yieldError?.let { Text(it, color = VineColors.Destructive, fontSize = 13.sp) }
+
+            Button(
+                onClick = { save() },
+                enabled = canSave,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen),
+            ) {
+                if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
+                else Text(if (existing != null) "Save estimate" else "Create estimate")
             }
         }
     }

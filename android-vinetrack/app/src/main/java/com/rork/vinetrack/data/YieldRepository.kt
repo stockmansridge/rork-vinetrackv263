@@ -79,6 +79,39 @@ class YieldRepository(private val session: SessionStore) {
         val notes: String?,
     )
 
+    /**
+     * Sampling-derived estimate for a single block, mirroring the iOS yield
+     * estimation formula: `yieldKg = totalVines × avgBunchesPerVine ×
+     * (bunchWeightGrams / 1000) × damageFactor`, then `tonnes = yieldKg / 1000`.
+     * `damageFactor` is in 0..1 where 1.0 = 100% viable (matches iOS).
+     */
+    data class EstimateInput(
+        val year: Int,
+        val season: String,
+        val paddockId: String,
+        val paddockName: String,
+        val areaHectares: Double,
+        val totalVines: Int,
+        val averageBunchesPerVine: Double,
+        val averageBunchWeightGrams: Double,
+        val damageFactor: Double,
+        val samplesRecorded: Int,
+        val variety: String?,
+        val notes: String?,
+    ) {
+        /** Estimated tonnes for this block from the sampling inputs. */
+        val estimatedTonnes: Double
+            get() {
+                val totalBunches = totalVines.toDouble() * averageBunchesPerVine
+                val yieldKg = totalBunches * (averageBunchWeightGrams / 1000.0) * damageFactor
+                return yieldKg / 1000.0
+            }
+
+        /** Estimated tonnes per hectare, or 0 when the block has no area. */
+        val estimatedPerHectare: Double
+            get() = if (areaHectares > 0) estimatedTonnes / areaHectares else 0.0
+    }
+
     private fun nowIso(): String = Instant.now().toString()
 
     suspend fun listYieldRecords(vineyardId: String): List<HistoricalYieldRecord> =
@@ -139,6 +172,100 @@ class YieldRepository(private val session: SessionStore) {
             }
             firstRow(response)
         }
+
+    /**
+     * Create an estimate-only record from sampling inputs. The block result
+     * stores the full sampling snapshot (avg bunches/vine, bunch weight, vines,
+     * samples, damage factor) plus the computed estimated tonnes; no actual is
+     * recorded yet. JSON keys all exist in the iOS `HistoricalBlockResult`
+     * Codable contract, so the record round-trips to iOS unchanged.
+     */
+    suspend fun createEstimateRecord(vineyardId: String, input: EstimateInput): HistoricalYieldRecord =
+        withContext(Dispatchers.IO) {
+            requireConfig()
+            val token = session.accessToken ?: throw BackendError.Unauthorized
+            val now = nowIso()
+            val tonnes = input.estimatedTonnes
+            val perHectare = input.estimatedPerHectare
+            val blockName = input.variety?.takeIf { it.isNotBlank() }
+                ?.let { "${input.paddockName} \u2014 $it" } ?: input.paddockName
+            val block = HistoricalBlockResult(
+                id = UUID.randomUUID().toString(),
+                paddockId = input.paddockId,
+                paddockName = blockName,
+                areaHectares = input.areaHectares,
+                yieldTonnes = tonnes,
+                yieldPerHectare = perHectare,
+                averageBunchesPerVine = input.averageBunchesPerVine,
+                averageBunchWeightGrams = input.averageBunchWeightGrams,
+                totalVines = input.totalVines,
+                samplesRecorded = input.samplesRecorded,
+                damageFactor = input.damageFactor,
+                actualYieldTonnes = null,
+                actualRecordedAt = null,
+            )
+            val body = YieldInsert(
+                id = UUID.randomUUID().toString(),
+                vineyardId = vineyardId,
+                season = input.season.trim(),
+                year = input.year,
+                archivedAt = now,
+                totalYieldTonnes = tonnes,
+                totalAreaHectares = input.areaHectares,
+                notes = input.notes?.trim().orEmpty(),
+                blockResults = listOf(block),
+                createdBy = session.userId,
+                clientUpdatedAt = now,
+            )
+            val response = SupabaseClient.http.post(SupabaseClient.restUrl("historical_yield_records")) {
+                authHeaders(token)
+                headers { append("Prefer", "return=representation") }
+                contentType(ContentType.Application.Json)
+                setBody(body)
+            }
+            firstRow(response)
+        }
+
+    /**
+     * Re-author the estimate on an existing single-block estimate record from
+     * new sampling inputs while preserving any recorded actual. Recomputes the
+     * block's estimated tonnes/per-hectare and the record totals.
+     */
+    suspend fun updateEstimateRecord(
+        record: HistoricalYieldRecord,
+        input: EstimateInput,
+    ): HistoricalYieldRecord = withContext(Dispatchers.IO) {
+        val existing = record.blocks.firstOrNull()
+        val tonnes = input.estimatedTonnes
+        val perHectare = input.estimatedPerHectare
+        val blockName = input.variety?.takeIf { it.isNotBlank() }
+            ?.let { "${input.paddockName} \u2014 $it" } ?: input.paddockName
+        val block = HistoricalBlockResult(
+            id = existing?.id ?: UUID.randomUUID().toString(),
+            paddockId = input.paddockId,
+            paddockName = blockName,
+            areaHectares = input.areaHectares,
+            yieldTonnes = tonnes,
+            yieldPerHectare = perHectare,
+            averageBunchesPerVine = input.averageBunchesPerVine,
+            averageBunchWeightGrams = input.averageBunchWeightGrams,
+            totalVines = input.totalVines,
+            samplesRecorded = input.samplesRecorded,
+            damageFactor = input.damageFactor,
+            // Preserve any actual already recorded against this block.
+            actualYieldTonnes = existing?.actualYieldTonnes,
+            actualRecordedAt = existing?.actualRecordedAt,
+        )
+        updateYieldRecord(
+            id = record.id,
+            season = input.season,
+            year = input.year,
+            totalYieldTonnes = tonnes,
+            totalAreaHectares = input.areaHectares,
+            notes = input.notes?.trim().orEmpty(),
+            blockResults = listOf(block),
+        )
+    }
 
     /**
      * Patch an existing record's editable fields after the caller updates the

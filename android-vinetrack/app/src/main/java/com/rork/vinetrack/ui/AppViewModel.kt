@@ -1368,6 +1368,59 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * Create a sampling-based estimate record, optimistically inserting it at
+     * the top. Mirrors the iOS estimate flow: the block stores the sampling
+     * snapshot plus the computed estimated tonnes, with no actual recorded yet.
+     */
+    fun createYieldEstimate(input: YieldRepository.EstimateInput, onResult: (Boolean) -> Unit) {
+        val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
+        viewModelScope.launch {
+            _ui.update { it.copy(yieldBusy = true, yieldError = null) }
+            try {
+                val created = yieldRepo.createEstimateRecord(vineyardId, input)
+                _ui.update { it.copy(yieldRecords = listOf(created) + it.yieldRecords, yieldBusy = false) }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                _ui.update { it.copy(yieldBusy = false) }; signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(yieldBusy = false, yieldError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(yieldBusy = false, yieldError = "Couldn't save the estimate. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /**
+     * Re-author an existing single-block estimate record from new sampling
+     * inputs, preserving any recorded actual. Optimistic with rollback.
+     */
+    fun updateYieldEstimate(
+        record: HistoricalYieldRecord,
+        input: YieldRepository.EstimateInput,
+        onResult: (Boolean) -> Unit,
+    ) {
+        val previous = _ui.value.yieldRecords
+        _ui.update { it.copy(yieldBusy = true, yieldError = null) }
+        viewModelScope.launch {
+            try {
+                val saved = yieldRepo.updateEstimateRecord(record, input)
+                _ui.update { st -> st.copy(yieldRecords = st.yieldRecords.map { if (it.id == record.id) saved else it }, yieldBusy = false) }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                _ui.update { it.copy(yieldRecords = previous, yieldBusy = false) }; signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(yieldRecords = previous, yieldBusy = false, yieldError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(yieldRecords = previous, yieldBusy = false, yieldError = "Couldn't save the estimate. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /**
      * Edit a record's per-block actual yields and notes. Recomputes each block's
      * actual-recorded timestamp/per-hectare and the record's actual total before
      * patching; the estimated totals are preserved. Optimistic with rollback.
