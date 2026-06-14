@@ -1,5 +1,6 @@
 package com.rork.vinetrack.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,9 +12,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Opacity
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.WaterDrop
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -91,6 +94,13 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier) {
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
+    // Per-day manual overrides (session-only, keyed by the day's epoch ms).
+    // A missing key means "use the forecast value", matching iOS. Cleared when
+    // a fresh forecast is loaded so stale overrides never leak onto new dates.
+    var etoOverrides by remember { mutableStateOf<Map<Long, Double>>(emptyMap()) }
+    var rainOverrides by remember { mutableStateOf<Map<Long, Double>>(emptyMap()) }
+    var editingDayEpochMs by remember { mutableStateOf<Long?>(null) }
+
     // Resolve a forecast location: vineyard coords, else the selected block's
     // polygon centroid, else any mapped block's centroid.
     val vineyard = state.selectedVineyard
@@ -119,7 +129,19 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier) {
         soilMoistureBufferMm = parse(bufferText),
     )
 
-    val result: IrrigationRecommendationResult? = forecast?.days?.let { days ->
+    // Substitute any manual overrides into the forecast days before the
+    // calculator runs, so effective-rainfall / soil-buffer logic sees the
+    // overridden numbers exactly like iOS.
+    val effectiveDays = remember(forecast, etoOverrides, rainOverrides) {
+        forecast?.days?.map { d ->
+            d.copy(
+                forecastEToMm = etoOverrides[d.dateEpochMs] ?: d.forecastEToMm,
+                forecastRainMm = rainOverrides[d.dateEpochMs] ?: d.forecastRainMm,
+            )
+        }
+    }
+
+    val result: IrrigationRecommendationResult? = effectiveDays?.let { days ->
         IrrigationCalculator.calculate(days, settings)
     }
 
@@ -237,6 +259,8 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier) {
                                 errorMessage = null
                                 try {
                                     forecast = forecastRepo.fetchForecast(loc.first, loc.second)
+                                    etoOverrides = emptyMap()
+                                    rainOverrides = emptyMap()
                                 } catch (e: Exception) {
                                     errorMessage = e.message ?: "Could not load forecast."
                                     forecast = null
@@ -319,7 +343,14 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier) {
             // Result
             if (result != null) {
                 item { RecommendationCard(result, settings.irrigationApplicationRateMmPerHour) }
-                item { DailyBreakdownCard(result) }
+                item {
+                    DailyBreakdownCard(
+                        result = result,
+                        etoOverrides = etoOverrides,
+                        rainOverrides = rainOverrides,
+                        onEditDay = { editingDayEpochMs = it },
+                    )
+                }
             } else if (settings.irrigationApplicationRateMmPerHour <= 0 && forecast != null) {
                 item {
                     VineyardCard {
@@ -331,6 +362,35 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier) {
                     }
                 }
             }
+        }
+    }
+
+    val editingMs = editingDayEpochMs
+    if (editingMs != null && forecast != null) {
+        val rawDay = forecast?.days?.firstOrNull { it.dateEpochMs == editingMs }
+        if (rawDay != null) {
+            DayOverrideDialog(
+                dateEpochMs = editingMs,
+                forecastEToMm = rawDay.forecastEToMm,
+                forecastRainMm = rawDay.forecastRainMm,
+                etoOverride = etoOverrides[editingMs],
+                rainOverride = rainOverrides[editingMs],
+                onDismiss = { editingDayEpochMs = null },
+                onSave = { eto, rain ->
+                    etoOverrides = etoOverrides.toMutableMap().also { m ->
+                        if (eto == null) m.remove(editingMs) else m[editingMs] = eto
+                    }
+                    rainOverrides = rainOverrides.toMutableMap().also { m ->
+                        if (rain == null) m.remove(editingMs) else m[editingMs] = rain
+                    }
+                    editingDayEpochMs = null
+                },
+                onReset = {
+                    etoOverrides = etoOverrides.toMutableMap().also { it.remove(editingMs) }
+                    rainOverrides = rainOverrides.toMutableMap().also { it.remove(editingMs) }
+                    editingDayEpochMs = null
+                },
+            )
         }
     }
 }
@@ -362,13 +422,27 @@ private fun RecommendationCard(result: IrrigationRecommendationResult, rate: Dou
 }
 
 @Composable
-private fun DailyBreakdownCard(result: IrrigationRecommendationResult) {
+private fun DailyBreakdownCard(
+    result: IrrigationRecommendationResult,
+    etoOverrides: Map<Long, Double>,
+    rainOverrides: Map<Long, Double>,
+    onEditDay: (Long) -> Unit,
+) {
     val vine = LocalVineColors.current
     val dayFmt = remember { SimpleDateFormat("EEE d MMM", Locale.getDefault()) }
     VineyardCard {
-        SectionHeader("Daily Breakdown", onLight = true)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SectionHeader("Daily Breakdown", onLight = true)
+            Text("Tap a day to override", fontSize = 11.sp, color = vine.textSecondary)
+        }
         Box(Modifier.height(4.dp))
         result.dailyBreakdown.forEachIndexed { index, day ->
+            val etoOverridden = etoOverrides.containsKey(day.dateEpochMs)
+            val rainOverridden = rainOverrides.containsKey(day.dateEpochMs)
             if (index > 0) {
                 Box(Modifier.height(8.dp))
                 HorizontalDivider(color = vine.cardBorder)
@@ -377,15 +451,35 @@ private fun DailyBreakdownCard(result: IrrigationRecommendationResult) {
                 Box(Modifier.height(8.dp))
             }
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onEditDay(day.dateEpochMs) },
                 horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    dayFmt.format(Date(day.dateEpochMs)),
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = vine.textPrimary,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        dayFmt.format(Date(day.dateEpochMs)),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = vine.textPrimary,
+                    )
+                    if (etoOverridden || rainOverridden) {
+                        Box(Modifier.size(6.dp))
+                        Icon(
+                            Icons.Filled.Edit,
+                            contentDescription = "Overridden",
+                            modifier = Modifier.size(13.dp),
+                            tint = VineColors.LeafGreen,
+                        )
+                        Text(
+                            " Manual",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = VineColors.LeafGreen,
+                        )
+                    }
+                }
                 Text(
                     String.format(Locale.US, "%.1f mm deficit", day.dailyDeficitMm),
                     fontSize = 14.sp,
@@ -398,8 +492,8 @@ private fun DailyBreakdownCard(result: IrrigationRecommendationResult) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Metric("ETo", String.format(Locale.US, "%.1f", day.forecastEToMm))
-                Metric("Rain", String.format(Locale.US, "%.1f", day.forecastRainMm))
+                Metric("ETo", String.format(Locale.US, "%.1f", day.forecastEToMm), highlight = etoOverridden)
+                Metric("Rain", String.format(Locale.US, "%.1f", day.forecastRainMm), highlight = rainOverridden)
                 Metric("Crop Use", String.format(Locale.US, "%.1f", day.cropUseMm))
                 Metric("Eff. Rain", String.format(Locale.US, "%.1f", day.effectiveRainMm))
             }
@@ -407,12 +501,96 @@ private fun DailyBreakdownCard(result: IrrigationRecommendationResult) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun Metric(label: String, value: String) {
+private fun DayOverrideDialog(
+    dateEpochMs: Long,
+    forecastEToMm: Double,
+    forecastRainMm: Double,
+    etoOverride: Double?,
+    rainOverride: Double?,
+    onDismiss: () -> Unit,
+    onSave: (eto: Double?, rain: Double?) -> Unit,
+    onReset: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val dayFmt = remember { SimpleDateFormat("EEE d MMM", Locale.getDefault()) }
+    var etoText by remember { mutableStateOf(etoOverride?.let { String.format(Locale.US, "%.1f", it) } ?: "") }
+    var rainText by remember { mutableStateOf(rainOverride?.let { String.format(Locale.US, "%.1f", it) } ?: "") }
+    val hasOverride = etoOverride != null || rainOverride != null
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Override ${dayFmt.format(Date(dateEpochMs))}") },
+        text = {
+            Column {
+                Text(
+                    "Leave a field blank to use the forecast value.",
+                    fontSize = 12.sp,
+                    color = vine.textSecondary,
+                )
+                Box(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = etoText,
+                    onValueChange = { etoText = it },
+                    label = { Text("ETo (mm)") },
+                    placeholder = { Text(String.format(Locale.US, "%.1f", forecastEToMm)) },
+                    singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    String.format(Locale.US, "Forecast: %.1f mm", forecastEToMm),
+                    fontSize = 11.sp,
+                    color = vine.textSecondary,
+                )
+                Box(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = rainText,
+                    onValueChange = { rainText = it },
+                    label = { Text("Rain (mm)") },
+                    placeholder = { Text(String.format(Locale.US, "%.1f", forecastRainMm)) },
+                    singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    String.format(Locale.US, "Forecast: %.1f mm", forecastRainMm),
+                    fontSize = 11.sp,
+                    color = vine.textSecondary,
+                )
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = {
+                val eto = etoText.replace(",", ".").trim().toDoubleOrNull()
+                val rain = rainText.replace(",", ".").trim().toDoubleOrNull()
+                onSave(eto, rain)
+            }) { Text("Save") }
+        },
+        dismissButton = {
+            if (hasOverride) {
+                androidx.compose.material3.TextButton(onClick = onReset) {
+                    Text("Reset", color = VineColors.VineRed)
+                }
+            } else {
+                androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
+        },
+    )
+}
+
+@Composable
+private fun Metric(label: String, value: String, highlight: Boolean = false) {
     val vine = LocalVineColors.current
     Column {
         Text(label, fontSize = 11.sp, color = vine.textSecondary)
-        Text("$value mm", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+        Text(
+            "$value mm",
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = if (highlight) VineColors.LeafGreen else vine.textPrimary,
+        )
     }
 }
 
