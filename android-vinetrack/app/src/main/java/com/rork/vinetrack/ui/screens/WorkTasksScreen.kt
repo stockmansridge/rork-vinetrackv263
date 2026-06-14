@@ -187,20 +187,13 @@ private fun WorkTaskListView(
 
             state.workTasks.isEmpty() -> {
                 Box(Modifier.fillMaxSize().padding(padding).padding(24.dp), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                        EmptyState(
-                            icon = Icons.Filled.Assignment,
-                            title = "No work tasks yet",
-                            message = "Log pruning, mowing, spraying and other field jobs to track duration and link them to blocks and trips.",
-                        )
-                        Button(
-                            onClick = onAdd,
-                            colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent),
-                        ) {
-                            Icon(Icons.Filled.Add, contentDescription = null)
-                            Text("  Log a task")
-                        }
-                    }
+                    EmptyState(
+                        icon = Icons.Filled.Assignment,
+                        title = "No work tasks yet",
+                        message = "Log pruning, mowing, spraying and other field jobs to track duration and link them to blocks and trips.",
+                        actionLabel = "Log a task",
+                        onAction = onAdd,
+                    )
                 }
             }
 

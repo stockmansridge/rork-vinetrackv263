@@ -255,17 +255,13 @@ private fun SprayListView(
 
                 all.isEmpty() -> {
                     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                            EmptyState(
-                                icon = Icons.Filled.WaterDrop,
-                                title = "No spray records yet",
-                                message = "Log spray applications with tank mixes, weather conditions and equipment to keep compliant records.",
-                            )
-                            Button(onClick = onAdd, colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent)) {
-                                Icon(Icons.Filled.Add, contentDescription = null)
-                                Text("  Log a spray")
-                            }
-                        }
+                        EmptyState(
+                            icon = Icons.Filled.WaterDrop,
+                            title = "No spray records yet",
+                            message = "Log spray applications with tank mixes, weather conditions and equipment to keep compliant records.",
+                            actionLabel = "Log a spray",
+                            onAction = onAdd,
+                        )
                     }
                 }
 

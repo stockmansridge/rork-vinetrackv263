@@ -213,20 +213,13 @@ private fun TripListView(state: AppUiState, onSelect: (Trip) -> Unit, onStart: (
 
             state.trips.isEmpty() -> {
                 Box(Modifier.fillMaxSize().padding(padding).padding(24.dp), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                        EmptyState(
-                            icon = Icons.Filled.DirectionsCar,
-                            title = "No trips yet",
-                            message = "Start a trip to record field work with live GPS tracking, duration and distance.",
-                        )
-                        Button(
-                            onClick = onStart,
-                            colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent),
-                        ) {
-                            Icon(Icons.Filled.Add, contentDescription = null)
-                            Text("  Start a trip")
-                        }
-                    }
+                    EmptyState(
+                        icon = Icons.Filled.DirectionsCar,
+                        title = "No trips yet",
+                        message = "Start a trip to record field work with live GPS tracking, duration and distance.",
+                        actionLabel = "Start a trip",
+                        onAction = onStart,
+                    )
                 }
             }
 

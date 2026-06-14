@@ -16,6 +16,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -142,11 +145,18 @@ fun StatusBadge(text: String, tint: Color) {
     }
 }
 
+/**
+ * Standard empty-state placeholder. Pass [actionLabel] + [onAction] to render the shared
+ * primary CTA button instead of duplicating an inline button at the call site.
+ */
 @Composable
 fun EmptyState(
     icon: ImageVector,
     title: String,
     message: String? = null,
+    actionLabel: String? = null,
+    actionIcon: ImageVector = Icons.Filled.Add,
+    onAction: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val vine = LocalVineColors.current
@@ -169,6 +179,17 @@ fun EmptyState(
                 color = vine.textSecondary,
                 style = MaterialTheme.typography.bodyMedium,
             )
+        }
+        if (actionLabel != null && onAction != null) {
+            Button(
+                onClick = onAction,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = com.rork.vinetrack.ui.theme.VineColors.PrimaryAccent,
+                ),
+            ) {
+                Icon(actionIcon, contentDescription = null, modifier = Modifier.size(18.dp))
+                Text("  $actionLabel")
+            }
         }
     }
     Spacer(Modifier.height(0.dp))
