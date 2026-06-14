@@ -6,6 +6,9 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -78,6 +81,7 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.rork.vinetrack.data.PinDuplicateChecker
 import com.rork.vinetrack.data.RowAttachment
+import com.rork.vinetrack.data.model.LauncherButton
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Pin
 import com.rork.vinetrack.ui.AppUiState
@@ -389,7 +393,7 @@ fun PinCategoryLauncherScreen(
     var mode by rememberSaveable { mutableStateOf(if (initialMode == "Growth") "Growth" else "Repairs") }
     var editing by remember { mutableStateOf<PinEditTarget?>(null) }
     var showGrowthStageSheet by remember { mutableStateOf(false) }
-    var showCustomiseSoon by remember { mutableStateOf(false) }
+    var showEditButtons by remember { mutableStateOf(false) }
     var locating by remember { mutableStateOf(false) }
     val vineyardName = state.selectedVineyard?.name?.takeIf { it.isNotBlank() } ?: "Vineyard"
 
@@ -452,7 +456,7 @@ fun PinCategoryLauncherScreen(
                     IconButton(onClick = onOpenList) {
                         Icon(Icons.Filled.LocationOn, contentDescription = "Observations list", tint = vine.textSecondary)
                     }
-                    IconButton(onClick = { showCustomiseSoon = true }) {
+                    IconButton(onClick = { showEditButtons = true }) {
                         Icon(Icons.Filled.Tune, contentDescription = "Customise buttons", tint = vine.textSecondary)
                     }
                 },
@@ -530,27 +534,229 @@ fun PinCategoryLauncherScreen(
         )
     }
 
-    if (showCustomiseSoon) {
-        val usingCustom = (if (mode == "Repairs") state.repairButtons else state.growthButtons)
-            .any { !it.isGrowthStageButton }
-        AlertDialog(
-            onDismissRequest = { showCustomiseSoon = false },
-            title = { Text("Launcher buttons") },
-            text = {
-                Text(
-                    if (usingCustom) {
-                        "These buttons come from your vineyard's shared setup and stay in " +
-                            "sync across the team. To rename, recolour or reorder them, edit " +
-                            "the buttons on iOS or the web portal — changes appear here automatically."
-                    } else {
-                        "You're using the default buttons. Set up custom Repairs and Growth " +
-                            "buttons for your whole team on iOS or the web portal, and they'll " +
-                            "sync here automatically."
-                    },
-                )
-            },
-            confirmButton = { TextButton(onClick = { showCustomiseSoon = false }) { Text("OK") } },
+    if (showEditButtons) {
+        EditLauncherButtonsSheet(
+            vm = vm,
+            state = state,
+            mode = mode,
+            onDismiss = { showEditButtons = false },
         )
+    }
+}
+
+/** Colour tokens offered in the editor — must all be handled by [launcherColor]. */
+private val launcherColorTokens: List<String> = listOf(
+    "blue", "brown", "green", "darkgreen", "red", "gray",
+    "yellow", "orange", "purple", "pink", "cyan", "indigo",
+)
+
+/** A single editable launcher row (paired Left/Right on save). */
+private data class ButtonRowDraft(
+    val name: String,
+    val color: String,
+    val isGrowthStage: Boolean,
+)
+
+/** iOS-parity built-in defaults, mirroring `ButtonConfig.default*Buttons`. */
+private fun defaultButtonDrafts(mode: String): List<ButtonRowDraft> =
+    if (mode == "Growth") {
+        listOf(
+            ButtonRowDraft("Growth Stage", "darkgreen", true),
+            ButtonRowDraft("Powdery", "gray", false),
+            ButtonRowDraft("Downy", "yellow", false),
+            ButtonRowDraft("Blackberries", "red", false),
+        )
+    } else {
+        listOf(
+            ButtonRowDraft("Irrigation", "blue", false),
+            ButtonRowDraft("Broken Post", "brown", false),
+            ButtonRowDraft("Vine Issue", "green", false),
+            ButtonRowDraft("Other", "red", false),
+        )
+    }
+
+/** Build the first-four draft rows from the current synced config (or defaults). */
+private fun draftsFromConfig(mode: String, buttons: List<LauncherButton>): List<ButtonRowDraft> {
+    val sorted = buttons.sortedBy { it.index }.take(4)
+    if (sorted.isEmpty()) return defaultButtonDrafts(mode)
+    val fallback = defaultButtonDrafts(mode)
+    return (0 until 4).map { i ->
+        val b = sorted.getOrNull(i)
+        if (b != null) {
+            ButtonRowDraft(b.name, b.color.ifBlank { fallback[i].color }, b.isGrowthStageButton)
+        } else {
+            fallback[i]
+        }
+    }
+}
+
+/**
+ * iOS `EditButtonsSheet` parity for Android: edit the four Repairs/Growth launcher
+ * rows (paired Left & Right) for the selected vineyard. Owners/managers can rename,
+ * recolour, toggle the Growth Stage row (Growth mode) and reset to defaults; the
+ * config is saved to the shared `vineyard_button_configs` contract and re-read so
+ * iOS stays canonical. Other members see a read-only view.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun EditLauncherButtonsSheet(
+    vm: AppViewModel,
+    state: AppUiState,
+    mode: String,
+    onDismiss: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val canEdit = state.canEditLauncherButtons
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val source = if (mode == "Repairs") state.repairButtons else state.growthButtons
+    var rows by remember(mode, source) { mutableStateOf(draftsFromConfig(mode, source)) }
+    var expandedColorIndex by remember { mutableStateOf<Int?>(null) }
+
+    val colorTokens = rows.map { it.color.lowercase() }
+    val hasDuplicateColors = colorTokens.toSet().size != colorTokens.size
+    val allNamed = rows.all { it.name.trim().isNotEmpty() }
+    val canSave = canEdit && !hasDuplicateColors && allNamed && !state.buttonConfigBusy
+
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = vine.cardBackground) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Text(
+                "Edit ${if (mode == "Growth") "Growth" else "Repairs"} Buttons",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = vine.textPrimary,
+            )
+            Text(
+                "Four rows, each shown on both the Left and Right columns. Changes sync to iOS and the web portal.",
+                fontSize = 13.sp,
+                color = vine.textSecondary,
+            )
+
+            if (!canEdit) {
+                Text(
+                    "Only vineyard owners and managers can customise these buttons.",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = vine.textSecondary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(vine.textSecondary.copy(alpha = 0.10f))
+                        .padding(12.dp),
+                )
+            }
+
+            rows.forEachIndexed { index, row ->
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .background(launcherColor(row.color))
+                                .then(
+                                    if (canEdit) Modifier.clickable {
+                                        expandedColorIndex = if (expandedColorIndex == index) null else index
+                                    } else Modifier,
+                                ),
+                        )
+                        OutlinedTextField(
+                            value = row.name,
+                            onValueChange = { v -> rows = rows.toMutableList().also { it[index] = row.copy(name = v) } },
+                            enabled = canEdit,
+                            singleLine = true,
+                            label = { Text("Row ${index + 1}") },
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (mode == "Growth") {
+                            IconButton(
+                                enabled = canEdit,
+                                onClick = { rows = rows.toMutableList().also { it[index] = row.copy(isGrowthStage = !row.isGrowthStage) } },
+                            ) {
+                                Icon(
+                                    Icons.Filled.Grass,
+                                    contentDescription = "Growth Stage button",
+                                    tint = if (row.isGrowthStage) VineColors.LeafGreen else vine.textSecondary,
+                                )
+                            }
+                        }
+                    }
+                    if (expandedColorIndex == index && canEdit) {
+                        val used = rows.filterIndexed { i, r -> i != index }.map { it.color.lowercase() }.toSet()
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            launcherColorTokens.forEach { token ->
+                                val isUsed = used.contains(token)
+                                Box(
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .clip(CircleShape)
+                                        .background(launcherColor(token).copy(alpha = if (isUsed) 0.3f else 1f))
+                                        .then(
+                                            if (!isUsed) Modifier.clickable {
+                                                rows = rows.toMutableList().also { it[index] = row.copy(color = token) }
+                                                expandedColorIndex = null
+                                            } else Modifier,
+                                        ),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    if (row.color.equals(token, ignoreCase = true)) {
+                                        Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (hasDuplicateColors) {
+                Text("Each button must use a different colour.", fontSize = 12.sp, color = VineColors.Destructive)
+            } else if (!allNamed) {
+                Text("Every button needs a name.", fontSize = 12.sp, color = VineColors.Destructive)
+            }
+            state.buttonConfigError?.let { err ->
+                Text(err, fontSize = 12.sp, color = VineColors.Destructive)
+            }
+
+            if (canEdit) {
+                TextButton(
+                    onClick = { rows = defaultButtonDrafts(mode); expandedColorIndex = null },
+                    enabled = !state.buttonConfigBusy,
+                ) { Text("Reset to defaults") }
+
+                Button(
+                    onClick = {
+                        val payload = buildList {
+                            rows.forEachIndexed { i, r ->
+                                val name = r.name.trim()
+                                add(LauncherButton(name = name, color = r.color, index = i, mode = mode, isGrowthStageButton = r.isGrowthStage))
+                                add(LauncherButton(name = name, color = r.color, index = i + 4, mode = mode, isGrowthStageButton = r.isGrowthStage))
+                            }
+                        }
+                        vm.saveLauncherButtons(mode, payload) { ok -> if (ok) onDismiss() }
+                    },
+                    enabled = canSave,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
+                ) {
+                    if (state.buttonConfigBusy) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
+                    } else {
+                        Text("Save")
+                    }
+                }
+            }
+            TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text(if (canEdit) "Cancel" else "Close") }
+        }
     }
 }
 

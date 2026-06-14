@@ -5,12 +5,17 @@ import com.rork.vinetrack.data.model.LauncherButton
 import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.headers
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import java.time.Instant
 
 /**
  * Read path for per-vineyard Repairs/Growth launcher button configuration,
@@ -65,6 +70,56 @@ class ButtonConfigRepository(private val session: SessionStore) {
             else -> throw BackendError.Server(response.status.value, response.bodyAsText())
         }
     }
+
+    /**
+     * Owner/manager write path. Upserts one config row for [vineyardId]/[configType]
+     * against the canonical `vineyard_button_configs` contract, mirroring the iOS
+     * `BackendButtonConfigUpsert` (last-write-wins via `client_updated_at`).
+     *
+     * Uses PostgREST `on_conflict=vineyard_id,config_type` with merge-duplicates so
+     * an existing row is updated in place (its `id`/`created_at` are preserved by
+     * omitting them). RLS restricts insert/update to owners and managers — a
+     * non-authorised caller surfaces [BackendError.Unauthorized].
+     */
+    suspend fun upsert(
+        vineyardId: String,
+        configType: String,
+        buttons: List<LauncherButton>,
+    ): Unit = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val payload = UpsertRow(
+            vineyardId = vineyardId,
+            configType = configType,
+            configData = buttons,
+            createdBy = session.userId,
+            clientUpdatedAt = Instant.now().toString(),
+        )
+        val url = SupabaseClient.restUrl("vineyard_button_configs?on_conflict=vineyard_id,config_type")
+        val response = SupabaseClient.http.post(url) {
+            headers {
+                append("apikey", SupabaseClient.anonKey)
+                append("Authorization", "Bearer $token")
+                append("Prefer", "resolution=merge-duplicates,return=minimal")
+            }
+            contentType(ContentType.Application.Json)
+            setBody(listOf(payload))
+        }
+        when {
+            response.status.isSuccess() -> Unit
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
+    }
+
+    @Serializable
+    private data class UpsertRow(
+        @SerialName("vineyard_id") val vineyardId: String,
+        @SerialName("config_type") val configType: String,
+        @SerialName("config_data") val configData: List<LauncherButton>,
+        @SerialName("created_by") val createdBy: String? = null,
+        @SerialName("client_updated_at") val clientUpdatedAt: String,
+    )
 
     private fun requireConfig() {
         if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured

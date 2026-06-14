@@ -111,8 +111,17 @@ data class AppUiState(
     val yieldError: String? = null,
     val fuelBusy: Boolean = false,
     val fuelError: String? = null,
+    /** Signed-in user id, used to resolve the caller's vineyard role. */
+    val currentUserId: String? = null,
+    /** True while a launcher button-config save is in flight. */
+    val buttonConfigBusy: Boolean = false,
+    val buttonConfigError: String? = null,
 ) {
     val selectedVineyard: Vineyard? get() = vineyards.firstOrNull { it.id == selectedVineyardId }
+    /** The caller's role in the selected vineyard, if known. */
+    val currentRole: String? get() = members.firstOrNull { it.userId == currentUserId }?.role?.lowercase()
+    /** Only owners and managers may edit launcher buttons (matches iOS + RLS). */
+    val canEditLauncherButtons: Boolean get() = currentRole == "owner" || currentRole == "manager"
     val openPins: Int get() = pins.count { !it.isCompleted }
     val totalHectares: Double get() = paddocks.sumOf { it.areaHectares }
     val activeTrips: Int get() = trips.count { it.isActive }
@@ -1805,6 +1814,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 fuelLogs = fuelLogs,
                 repairButtons = launcherButtons.repair,
                 growthButtons = launcherButtons.growth,
+                currentUserId = session.userId,
                 grapeVarieties = grapeVarieties,
                 yieldRecords = yieldRecords,
                 isLoadingVineyardData = false,
@@ -1812,6 +1822,46 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 pinError = pinError,
                 tripError = tripError,
             )
+        }
+    }
+
+    /**
+     * Owner/manager save of the Repairs or Growth launcher buttons. Persists the
+     * full button set to the shared `vineyard_button_configs` contract (last-write-
+     * wins) then reloads from the server so iOS-saved metadata stays canonical.
+     * Non-authorised callers are short-circuited; RLS is the final guard.
+     *
+     * @param mode "Repairs" or "Growth".
+     * @param buttons the full button list (8 entries: 4 rows paired Left/Right).
+     */
+    fun saveLauncherButtons(mode: String, buttons: List<LauncherButton>, onDone: (Boolean) -> Unit = {}) {
+        val vineyardId = _ui.value.selectedVineyardId
+        if (vineyardId == null || !_ui.value.canEditLauncherButtons) {
+            onDone(false)
+            return
+        }
+        val configType = if (mode == "Growth") "growth_buttons" else "repair_buttons"
+        viewModelScope.launch {
+            _ui.update { it.copy(buttonConfigBusy = true, buttonConfigError = null) }
+            try {
+                buttonConfigRepo.upsert(vineyardId, configType, buttons)
+                // Re-read so the UI reflects exactly what the server stored.
+                val refreshed = buttonConfigRepo.fetch(vineyardId)
+                _ui.update {
+                    it.copy(
+                        repairButtons = refreshed.repair,
+                        growthButtons = refreshed.growth,
+                        buttonConfigBusy = false,
+                    )
+                }
+                onDone(true)
+            } catch (e: BackendError.Unauthorized) {
+                _ui.update { it.copy(buttonConfigBusy = false, buttonConfigError = "Only owners and managers can change these buttons.") }
+                onDone(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(buttonConfigBusy = false, buttonConfigError = "Couldn't save buttons. Check your connection and try again.") }
+                onDone(false)
+            }
         }
     }
 }
