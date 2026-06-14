@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import android.net.Uri
 import com.rork.vinetrack.data.BackendError
+import com.rork.vinetrack.data.FuelLogRepository
 import com.rork.vinetrack.data.LocationTracker
 import com.rork.vinetrack.data.MaintenanceLogRepository
 import com.rork.vinetrack.data.PinPhotoImageUtil
@@ -31,6 +32,7 @@ import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Pin
 import com.rork.vinetrack.data.model.SprayEquipment
 import com.rork.vinetrack.data.model.SprayRecord
+import com.rork.vinetrack.data.model.TractorFuelLog
 import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.Vineyard
 import com.rork.vinetrack.data.model.VineyardMachine
@@ -67,6 +69,7 @@ data class AppUiState(
     val sprayEquipment: List<SprayEquipment> = emptyList(),
     val maintenanceLogs: List<MaintenanceLog> = emptyList(),
     val growthRecords: List<GrowthStageRecord> = emptyList(),
+    val fuelLogs: List<TractorFuelLog> = emptyList(),
     val grapeVarieties: List<GrapeVarietyRow> = emptyList(),
     val yieldRecords: List<HistoricalYieldRecord> = emptyList(),
     val isLoadingVineyardData: Boolean = false,
@@ -96,6 +99,8 @@ data class AppUiState(
     val growthPhotoBusy: Boolean = false,
     val yieldBusy: Boolean = false,
     val yieldError: String? = null,
+    val fuelBusy: Boolean = false,
+    val fuelError: String? = null,
 ) {
     val selectedVineyard: Vineyard? get() = vineyards.firstOrNull { it.id == selectedVineyardId }
     val openPins: Int get() = pins.count { !it.isCompleted }
@@ -119,6 +124,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val growthRepo = GrowthStageRecordRepository(session)
     private val paddockRepo = PaddockRepository(session)
     private val yieldRepo = YieldRepository(session)
+    private val fuelRepo = FuelLogRepository(session)
 
     /** Foreground GPS tracker for the currently active trip (null when idle). */
     private var tracker: LocationTracker? = null
@@ -242,7 +248,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         session.selectedVineyardId = id
         // Clear the previous vineyard's data so the UI doesn't briefly show
         // stale blocks/pins while the new vineyard loads.
-        _ui.update { it.copy(selectedVineyardId = id, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), sprayRecords = emptyList(), sprayEquipment = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), yieldRecords = emptyList()) }
+        _ui.update { it.copy(selectedVineyardId = id, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), sprayRecords = emptyList(), sprayEquipment = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), yieldRecords = emptyList()) }
         viewModelScope.launch { loadVineyardData(id) }
     }
 
@@ -1156,6 +1162,74 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { it.copy(maintenanceError = null) }
     }
 
+    // MARK: - Fuel log write path
+
+    /** Record a new fuel fill, optimistically inserting it at the top. */
+    fun createFuelLog(input: FuelLogRepository.FuelInput, onResult: (Boolean) -> Unit) {
+        val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
+        viewModelScope.launch {
+            _ui.update { it.copy(fuelBusy = true, fuelError = null) }
+            try {
+                val created = fuelRepo.createFuelLog(vineyardId, input)
+                _ui.update { it.copy(fuelLogs = listOf(created) + it.fuelLogs, fuelBusy = false) }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                _ui.update { it.copy(fuelBusy = false) }; signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(fuelBusy = false, fuelError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(fuelBusy = false, fuelError = "Couldn't save the fuel fill. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /** Edit an existing fuel fill, reconciling the returned row. */
+    fun updateFuelLog(id: String, input: FuelLogRepository.FuelInput, onResult: (Boolean) -> Unit) {
+        val previous = _ui.value.fuelLogs
+        viewModelScope.launch {
+            _ui.update { it.copy(fuelBusy = true, fuelError = null) }
+            try {
+                val updated = fuelRepo.updateFuelLog(id, input)
+                _ui.update { st -> st.copy(fuelLogs = st.fuelLogs.map { if (it.id == id) updated else it }, fuelBusy = false) }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                _ui.update { it.copy(fuelBusy = false) }; signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(fuelBusy = false, fuelLogs = previous, fuelError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(fuelBusy = false, fuelLogs = previous, fuelError = "Couldn't save the fuel fill. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /** Soft-delete a fuel fill via the server RPC, optimistically removing it. */
+    fun deleteFuelLog(id: String, onResult: (Boolean) -> Unit) {
+        val previous = _ui.value.fuelLogs
+        _ui.update { st -> st.copy(fuelLogs = st.fuelLogs.filterNot { it.id == id }) }
+        viewModelScope.launch {
+            try {
+                fuelRepo.softDeleteFuelLog(id)
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(fuelLogs = previous, fuelError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(fuelLogs = previous, fuelError = "Couldn't delete the fuel fill. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    fun clearFuelError() {
+        _ui.update { it.copy(fuelError = null) }
+    }
+
     // MARK: - Growth-stage record write path
 
     /** Log a new growth-stage observation, optimistically inserting it at the top. */
@@ -1585,6 +1659,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } catch (e: Exception) {
             _ui.value.growthRecords
         }
+        // Fuel logs are an operational list; soft-fail to the existing list.
+        val fuelLogs = try {
+            repo.listFuelLogs(vineyardId)
+        } catch (e: Exception) {
+            _ui.value.fuelLogs
+        }
         // Grape variety catalog is an optional read-only reference list backing
         // the agronomy Varieties surface; soft-fail to the existing list (or empty).
         val grapeVarieties = try {
@@ -1611,6 +1691,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 sprayEquipment = sprayEquipment,
                 maintenanceLogs = maintenanceLogs,
                 growthRecords = growthRecords,
+                fuelLogs = fuelLogs,
                 grapeVarieties = grapeVarieties,
                 yieldRecords = yieldRecords,
                 isLoadingVineyardData = false,

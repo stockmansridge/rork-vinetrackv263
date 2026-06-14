@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.screens.BlocksScreen
+import com.rork.vinetrack.ui.screens.FuelLogScreen
 import com.rork.vinetrack.ui.screens.GrowthScreen
 import com.rork.vinetrack.ui.screens.HomeDashboard
 import com.rork.vinetrack.ui.screens.IrrigationScreen
@@ -88,6 +89,7 @@ private fun ToolHost(
         ToolRoute.Spray -> SpraysScreen(vm, state, modifier, onBack)
         ToolRoute.Yield -> YieldScreen(vm, state, modifier, onBack)
         ToolRoute.Maintenance -> MaintenanceScreen(vm, state, modifier, onBack)
+        ToolRoute.FuelLog -> FuelLogScreen(vm, state, modifier, onBack)
         ToolRoute.Settings -> SettingsScreen(vm, state, modifier, onBack)
     }
 }

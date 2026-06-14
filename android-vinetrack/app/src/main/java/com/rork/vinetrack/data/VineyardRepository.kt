@@ -9,6 +9,7 @@ import com.rork.vinetrack.data.model.GrowthStageRecord
 import com.rork.vinetrack.data.model.MaintenanceLog
 import com.rork.vinetrack.data.model.SprayEquipment
 import com.rork.vinetrack.data.model.SprayRecord
+import com.rork.vinetrack.data.model.TractorFuelLog
 import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.Vineyard
 import com.rork.vinetrack.data.model.VineyardMachine
@@ -72,6 +73,10 @@ class VineyardRepository(private val session: SessionStore) {
 
     suspend fun listGrowthStageRecords(vineyardId: String): List<GrowthStageRecord> = withContext(Dispatchers.IO) {
         get("growth_stage_records?select=*&vineyard_id=eq.$vineyardId&deleted_at=is.null&order=observed_at.desc")
+    }
+
+    suspend fun listFuelLogs(vineyardId: String): List<TractorFuelLog> = withContext(Dispatchers.IO) {
+        get("tractor_fuel_logs?select=*&vineyard_id=eq.$vineyardId&deleted_at=is.null&order=fill_datetime.desc")
     }
 
     suspend fun listOperatorCategories(vineyardId: String): List<OperatorCategory> = withContext(Dispatchers.IO) {

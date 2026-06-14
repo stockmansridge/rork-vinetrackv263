@@ -457,7 +457,7 @@ private fun OperationalToolsSection(onOpenTab: (MainTab) -> Unit, onOpenTool: (T
     val tools = listOf(
         ToolItem("Work Tasks", "Log & calculate", Icons.Filled.Group, VineColors.Indigo) { onOpenTab(MainTab.Tasks) },
         ToolItem("Maintenance Log", "Repairs & jobs", Icons.Filled.Build, VineColors.EarthBrown) { onOpenTool(ToolRoute.Maintenance) },
-        ToolItem("Fuel Log", "Coming soon", Icons.Filled.LocalGasStation, VineColors.Pink, comingSoon = true),
+        ToolItem("Fuel Log", "Fills & usage rate", Icons.Filled.LocalGasStation, VineColors.Pink) { onOpenTool(ToolRoute.FuelLog) },
         ToolItem("Irrigation Advisor", "Water planning", Icons.Filled.Opacity, VineColors.Cyan) { onOpenTool(ToolRoute.Irrigation) },
         ToolItem("Disease Risk", "Coming soon", Icons.Filled.Spa, VineColors.LeafGreen, comingSoon = true),
         ToolItem("Yields", "Forecasts & harvest", Icons.Filled.Scale, VineColors.Orange) { onOpenTool(ToolRoute.Yield) },

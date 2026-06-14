@@ -7,6 +7,7 @@ import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Grass
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.LocalGasStation
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Opacity
 import androidx.compose.material.icons.filled.Scale
@@ -55,5 +56,6 @@ enum class ToolRoute(
     Spray("Spray", "Applications & programs", Icons.Filled.WaterDrop, VineColors.Info, ToolGroup.Operations),
     Yield("Yield", "Forecasts & harvest", Icons.Filled.Scale, VineColors.Orange, ToolGroup.Records),
     Maintenance("Service & Maintenance", "Equipment & repairs", Icons.Filled.Build, VineColors.EarthBrown, ToolGroup.Records),
+    FuelLog("Fuel Log", "Fills & usage rate", Icons.Filled.LocalGasStation, VineColors.Pink, ToolGroup.Records),
     Settings("Settings", "Account & preferences", Icons.Filled.Settings, VineColors.Primary, ToolGroup.Account),
 }

@@ -1134,3 +1134,77 @@ data class HistoricalYieldRecord(
     val actualYieldPerHectare: Double?
         get() = totalActualYieldTonnes?.let { if (totalAreaHectares > 0) it / totalAreaHectares else null }
 }
+
+/**
+ * A single diesel fill recorded against a vineyard machine — backs
+ * `public.tractor_fuel_logs`. Mirrors the iOS `TractorFuelLog` contract:
+ * operators record litres added and the engine hours at the fill, and an
+ * hourly fuel-usage rate (litres/hour) is derived for display from consecutive
+ * fills for the same machine (never persisted). `machineId` is the preferred
+ * link to a `vineyard_machines` row; `tractorId` is the legacy fallback link.
+ * Soft-deleted via the `soft_delete_tractor_fuel_log` RPC; inserts/updates
+ * follow membership RLS.
+ */
+@Serializable
+data class TractorFuelLog(
+    val id: String,
+    @SerialName("vineyard_id") val vineyardId: String,
+    @SerialName("tractor_id") val tractorId: String? = null,
+    @SerialName("machine_id") val machineId: String? = null,
+    @SerialName("fill_datetime") val fillDatetime: String? = null,
+    @SerialName("litres_added") val litresAdded: Double = 0.0,
+    @SerialName("engine_hours") val engineHours: Double? = null,
+    @SerialName("operator_user_id") val operatorUserId: String? = null,
+    @SerialName("operator_name") val operatorName: String? = null,
+    @SerialName("cost_per_litre") val costPerLitre: Double? = null,
+    @SerialName("total_cost") val totalCost: Double? = null,
+    @SerialName("filled_to_full") val filledToFull: Boolean? = null,
+    val notes: String? = null,
+    @SerialName("deleted_at") val deletedAt: String? = null,
+) {
+    val fillEpochMs: Long? get() = parseIsoToEpochMs(fillDatetime)
+}
+
+/**
+ * Resolve the live display name for a fuel log's linked machine, preferring the
+ * preferred `machineId` link, then the legacy `tractorId`, then a neutral
+ * placeholder. Mirrors the iOS fuel-log group header resolver order.
+ */
+fun resolveFuelLogMachineName(log: TractorFuelLog, machines: List<VineyardMachine>): String {
+    log.machineId?.let { mid ->
+        machines.firstOrNull { it.id == mid }?.let { return it.displayName }
+    }
+    log.tractorId?.let { tid ->
+        machines.firstOrNull { it.id == tid || it.legacyTractorId == tid }?.let { return it.displayName }
+    }
+    return "Unassigned machine"
+}
+
+/** Stable group key for a fuel log, preferring the machine link, then tractor. */
+fun fuelLogGroupKey(log: TractorFuelLog): String =
+    log.machineId ?: log.tractorId ?: "unassigned"
+
+/** Result of a display-only litres/hour calculation between two consecutive fills. */
+data class FuelRateResult(
+    val litresPerHour: Double?,
+    val isReliable: Boolean,
+)
+
+/**
+ * Derive the display litres/hour for [current] relative to [previous] (the most
+ * recent earlier fill for the same machine). Returns null when it can't be
+ * computed; `isReliable` is true only when both fills were to a full tank.
+ * Mirrors the iOS `TractorFuelRateCalculator` (display-only, never persisted).
+ */
+fun fuelRate(current: TractorFuelLog, previous: TractorFuelLog?): FuelRateResult {
+    val curHours = current.engineHours
+    val prevHours = previous?.engineHours
+    if (previous == null || curHours == null || prevHours == null) {
+        return FuelRateResult(null, false)
+    }
+    val delta = curHours - prevHours
+    if (delta <= 0) return FuelRateResult(null, false)
+    val lph = current.litresAdded / delta
+    val bothFull = current.filledToFull == true && previous.filledToFull == true
+    return FuelRateResult(lph, bothFull)
+}
