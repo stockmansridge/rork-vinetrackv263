@@ -10,6 +10,7 @@ import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Assignment
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Opacity
+import androidx.compose.material.icons.filled.Scale
 import androidx.compose.material.icons.filled.Spa
 import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material3.Icon
@@ -37,6 +38,7 @@ import com.rork.vinetrack.ui.screens.SettingsScreen
 import com.rork.vinetrack.ui.screens.SpraysScreen
 import com.rork.vinetrack.ui.screens.TripsScreen
 import com.rork.vinetrack.ui.screens.WorkTasksScreen
+import com.rork.vinetrack.ui.screens.YieldScreen
 
 private data class TabItem(val label: String, val icon: ImageVector)
 
@@ -48,6 +50,7 @@ private val tabs = listOf(
     TabItem("Tasks", Icons.Filled.Assignment),
     TabItem("Spray", Icons.Filled.WaterDrop),
     TabItem("Growth", Icons.Filled.Spa),
+    TabItem("Yield", Icons.Filled.Scale),
     TabItem("Water", Icons.Filled.Opacity),
     TabItem("Service", Icons.Filled.Build),
     TabItem("Settings", Icons.Filled.Settings),
@@ -80,9 +83,10 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState) {
             4 -> WorkTasksScreen(vm, state, modifier)
             5 -> SpraysScreen(vm, state, modifier)
             6 -> GrowthScreen(vm, state, modifier)
-            7 -> IrrigationScreen(state, modifier)
-            8 -> MaintenanceScreen(vm, state, modifier)
-            9 -> SettingsScreen(vm, state, modifier)
+            7 -> YieldScreen(vm, state, modifier)
+            8 -> IrrigationScreen(state, modifier)
+            9 -> MaintenanceScreen(vm, state, modifier)
+            10 -> SettingsScreen(vm, state, modifier)
         }
     }
 }

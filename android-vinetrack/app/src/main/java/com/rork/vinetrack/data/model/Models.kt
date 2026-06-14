@@ -1061,3 +1061,76 @@ fun resolveGrowthRecordBlockName(record: GrowthStageRecord, paddocks: List<Paddo
     }
     return null
 }
+
+/**
+ * One block's row inside a [HistoricalYieldRecord], stored in the
+ * `block_results` jsonb array. Keys are camelCase to match the iOS
+ * `HistoricalBlockResult` Codable contract exactly (Supabase Swift encodes
+ * nested values with their Swift property names, no snake_case conversion).
+ * `actualYieldTonnes`/`actualRecordedAt` stay null until an actual is recorded.
+ */
+@Serializable
+data class HistoricalBlockResult(
+    val id: String,
+    val paddockId: String,
+    val paddockName: String,
+    val areaHectares: Double = 0.0,
+    val yieldTonnes: Double = 0.0,
+    val yieldPerHectare: Double = 0.0,
+    val averageBunchesPerVine: Double = 0.0,
+    val averageBunchWeightGrams: Double = 0.0,
+    val totalVines: Int = 0,
+    val samplesRecorded: Int = 0,
+    val damageFactor: Double = 1.0,
+    val actualYieldTonnes: Double? = null,
+    val actualRecordedAt: String? = null,
+) {
+    /** Tonnes per hectare for the recorded actual, when both are known. */
+    val actualYieldPerHectare: Double?
+        get() = actualYieldTonnes?.let { if (areaHectares > 0) it / areaHectares else null }
+
+    /** Actual minus estimate (positive = over-delivered), when an actual exists. */
+    val yieldVarianceTonnes: Double?
+        get() = actualYieldTonnes?.let { it - yieldTonnes }
+}
+
+/**
+ * An archived seasonal yield record — backs `public.historical_yield_records`.
+ * Mirrors the iOS `HistoricalYieldRecord` source-of-truth contract: a season's
+ * per-block estimated yields plus optional recorded actuals, consumed by Cost
+ * Reports for cost-per-tonne. Soft-deleted via
+ * `soft_delete_historical_yield_record`; RLS scopes reads/writes to vineyard
+ * members (operator+ may insert/update; owner/manager/supervisor may delete).
+ */
+@Serializable
+data class HistoricalYieldRecord(
+    val id: String,
+    @SerialName("vineyard_id") val vineyardId: String,
+    val season: String = "",
+    val year: Int = 0,
+    @SerialName("archived_at") val archivedAt: String? = null,
+    @SerialName("total_yield_tonnes") val totalYieldTonnes: Double = 0.0,
+    @SerialName("total_area_hectares") val totalAreaHectares: Double = 0.0,
+    val notes: String = "",
+    @SerialName("block_results") val blockResults: List<HistoricalBlockResult>? = null,
+    @SerialName("deleted_at") val deletedAt: String? = null,
+) {
+    val archivedEpochMs: Long? get() = parseIsoToEpochMs(archivedAt)
+
+    val blocks: List<HistoricalBlockResult> get() = blockResults ?: emptyList()
+
+    /** Estimated tonnes per hectare across all blocks in the record. */
+    val yieldPerHectare: Double
+        get() = if (totalAreaHectares > 0) totalYieldTonnes / totalAreaHectares else 0.0
+
+    /** Sum of recorded actual tonnes, or null when no block has an actual yet. */
+    val totalActualYieldTonnes: Double?
+        get() {
+            val actuals = blocks.mapNotNull { it.actualYieldTonnes }
+            return if (actuals.isEmpty()) null else actuals.sum()
+        }
+
+    /** Recorded actual tonnes per hectare across the record, when available. */
+    val actualYieldPerHectare: Double?
+        get() = totalActualYieldTonnes?.let { if (totalAreaHectares > 0) it / totalAreaHectares else null }
+}

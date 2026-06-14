@@ -17,11 +17,14 @@ import com.rork.vinetrack.data.TripRepository
 import com.rork.vinetrack.data.VineyardRepository
 import com.rork.vinetrack.data.WorkTaskRepository
 import com.rork.vinetrack.data.WorkTaskLineRepository
+import com.rork.vinetrack.data.YieldRepository
 import com.rork.vinetrack.data.auth.AuthRepository
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.CoordinatePoint
 import com.rork.vinetrack.data.model.GrapeVarietyRow
 import com.rork.vinetrack.data.model.GrowthStageRecord
+import com.rork.vinetrack.data.model.HistoricalBlockResult
+import com.rork.vinetrack.data.model.HistoricalYieldRecord
 import com.rork.vinetrack.data.model.MaintenanceLog
 import com.rork.vinetrack.data.model.OperatorCategory
 import com.rork.vinetrack.data.model.Paddock
@@ -65,6 +68,7 @@ data class AppUiState(
     val maintenanceLogs: List<MaintenanceLog> = emptyList(),
     val growthRecords: List<GrowthStageRecord> = emptyList(),
     val grapeVarieties: List<GrapeVarietyRow> = emptyList(),
+    val yieldRecords: List<HistoricalYieldRecord> = emptyList(),
     val isLoadingVineyardData: Boolean = false,
     val paddockError: String? = null,
     val pinError: String? = null,
@@ -90,6 +94,8 @@ data class AppUiState(
     val growthBusy: Boolean = false,
     val growthError: String? = null,
     val growthPhotoBusy: Boolean = false,
+    val yieldBusy: Boolean = false,
+    val yieldError: String? = null,
 ) {
     val selectedVineyard: Vineyard? get() = vineyards.firstOrNull { it.id == selectedVineyardId }
     val openPins: Int get() = pins.count { !it.isCompleted }
@@ -112,6 +118,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val maintenanceRepo = MaintenanceLogRepository(session)
     private val growthRepo = GrowthStageRecordRepository(session)
     private val paddockRepo = PaddockRepository(session)
+    private val yieldRepo = YieldRepository(session)
 
     /** Foreground GPS tracker for the currently active trip (null when idle). */
     private var tracker: LocationTracker? = null
@@ -235,7 +242,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         session.selectedVineyardId = id
         // Clear the previous vineyard's data so the UI doesn't briefly show
         // stale blocks/pins while the new vineyard loads.
-        _ui.update { it.copy(selectedVineyardId = id, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), sprayRecords = emptyList(), sprayEquipment = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList()) }
+        _ui.update { it.copy(selectedVineyardId = id, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), sprayRecords = emptyList(), sprayEquipment = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), yieldRecords = emptyList()) }
         viewModelScope.launch { loadVineyardData(id) }
     }
 
@@ -1333,6 +1340,110 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // MARK: - Yield record write path
+
+    /**
+     * Archive a single block's actual yield, optimistically inserting the new
+     * record at the top. Mirrors iOS's `RecordActualYieldSheet`: one block per
+     * Android-authored record, consumed by Cost Reports for cost-per-tonne.
+     */
+    fun createYieldRecord(input: YieldRepository.CreateInput, onResult: (Boolean) -> Unit) {
+        val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
+        viewModelScope.launch {
+            _ui.update { it.copy(yieldBusy = true, yieldError = null) }
+            try {
+                val created = yieldRepo.createYieldRecord(vineyardId, input)
+                _ui.update { it.copy(yieldRecords = listOf(created) + it.yieldRecords, yieldBusy = false) }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                _ui.update { it.copy(yieldBusy = false) }; signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(yieldBusy = false, yieldError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(yieldBusy = false, yieldError = "Couldn't save the yield record. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /**
+     * Edit a record's per-block actual yields and notes. Recomputes each block's
+     * actual-recorded timestamp/per-hectare and the record's actual total before
+     * patching; the estimated totals are preserved. Optimistic with rollback.
+     */
+    fun updateYieldActuals(
+        record: HistoricalYieldRecord,
+        actualsByBlockId: Map<String, Double?>,
+        notes: String,
+        onResult: (Boolean) -> Unit,
+    ) {
+        val previous = _ui.value.yieldRecords
+        val nowIso = java.time.Instant.now().toString()
+        val updatedBlocks = record.blocks.map { block ->
+            val newActual = actualsByBlockId[block.id]
+            // Keep the original recorded timestamp when the actual is unchanged.
+            val recordedAt = when {
+                newActual == null -> null
+                newActual == block.actualYieldTonnes -> block.actualRecordedAt ?: nowIso
+                else -> nowIso
+            }
+            block.copy(
+                actualYieldTonnes = newActual,
+                actualRecordedAt = recordedAt,
+            )
+        }
+        val optimistic = record.copy(blockResults = updatedBlocks, notes = notes.trim())
+        _ui.update { st -> st.copy(yieldRecords = st.yieldRecords.map { if (it.id == record.id) optimistic else it }, yieldBusy = true, yieldError = null) }
+        viewModelScope.launch {
+            try {
+                val saved = yieldRepo.updateYieldRecord(
+                    id = record.id,
+                    season = record.season,
+                    year = record.year,
+                    totalYieldTonnes = record.totalYieldTonnes,
+                    totalAreaHectares = record.totalAreaHectares,
+                    notes = notes,
+                    blockResults = updatedBlocks,
+                )
+                _ui.update { st -> st.copy(yieldRecords = st.yieldRecords.map { if (it.id == record.id) saved else it }, yieldBusy = false) }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                _ui.update { it.copy(yieldRecords = previous, yieldBusy = false) }; signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(yieldRecords = previous, yieldBusy = false, yieldError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(yieldRecords = previous, yieldBusy = false, yieldError = "Couldn't save the yield record. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /** Soft-delete a yield record via the server RPC, optimistically removing it. */
+    fun deleteYieldRecord(id: String, onResult: (Boolean) -> Unit) {
+        val previous = _ui.value.yieldRecords
+        _ui.update { st -> st.copy(yieldRecords = st.yieldRecords.filterNot { it.id == id }) }
+        viewModelScope.launch {
+            try {
+                yieldRepo.softDeleteYieldRecord(id)
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(yieldRecords = previous, yieldError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(yieldRecords = previous, yieldError = "Couldn't delete the yield record. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    fun clearYieldError() {
+        _ui.update { it.copy(yieldError = null) }
+    }
+
     private fun friendlyWriteError(code: Int): String = when (code) {
         403 -> "You don't have permission to do that."
         else -> "Something went wrong. Please try again."
@@ -1428,6 +1539,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } catch (e: Exception) {
             _ui.value.grapeVarieties
         }
+        // Archived seasonal yield records are an operational list; soft-fail to existing.
+        val yieldRecords = try {
+            yieldRepo.listYieldRecords(vineyardId)
+        } catch (e: Exception) {
+            _ui.value.yieldRecords
+        }
         _ui.update {
             it.copy(
                 paddocks = paddocks,
@@ -1442,6 +1559,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 maintenanceLogs = maintenanceLogs,
                 growthRecords = growthRecords,
                 grapeVarieties = grapeVarieties,
+                yieldRecords = yieldRecords,
                 isLoadingVineyardData = false,
                 paddockError = paddockError,
                 pinError = pinError,
