@@ -15,7 +15,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Label
 import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -136,6 +139,12 @@ fun VineyardMapScreen(
     var mode by remember { mutableStateOf(if (defaults.overview3D) MapMode.Overview else MapMode.TopDown) }
     var hasFramed by remember { mutableStateOf(false) }
 
+    // Session-only overlay visibility, seeded from persisted Settings defaults.
+    // Toggling here affects only the current map session (no writes to MapPrefsStore).
+    var showPins by remember(defaults.showPins) { mutableStateOf(defaults.showPins) }
+    var showRowLines by remember(defaults.showRowLines) { mutableStateOf(defaults.showRowLines) }
+    var showBlockLabels by remember(defaults.showBlockLabels) { mutableStateOf(defaults.showBlockLabels) }
+
     // Frame the content once the map is laid out.
     LaunchedEffect(bounds) {
         hasFramed = false
@@ -214,7 +223,7 @@ fun VineyardMapScreen(
                         )
                     }
                     // Row lines
-                    if (defaults.showRowLines) block.rows?.forEach { row ->
+                    if (showRowLines) block.rows?.forEach { row ->
                         val s = row.startPoint
                         val e = row.endPoint
                         if (s != null && e != null) {
@@ -226,7 +235,7 @@ fun VineyardMapScreen(
                         }
                     }
                     // Block name label (tap to reveal name + area/rows)
-                    if (defaults.showBlockLabels) block.centroid()?.let { center ->
+                    if (showBlockLabels) block.centroid()?.let { center ->
                         Marker(
                             state = MarkerState(position = center),
                             title = block.name,
@@ -238,7 +247,7 @@ fun VineyardMapScreen(
                 }
 
                 // Pins
-                if (defaults.showPins) locatedPins.forEach { pin ->
+                if (showPins) locatedPins.forEach { pin ->
                     pin.latLng()?.let { position ->
                         Marker(
                             state = MarkerState(position = position),
@@ -259,6 +268,18 @@ fun VineyardMapScreen(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .padding(top = 12.dp),
+            )
+
+            OverlayControls(
+                showPins = showPins,
+                showRowLines = showRowLines,
+                showBlockLabels = showBlockLabels,
+                onTogglePins = { showPins = !showPins },
+                onToggleRowLines = { showRowLines = !showRowLines },
+                onToggleBlockLabels = { showBlockLabels = !showBlockLabels },
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 12.dp, bottom = 16.dp),
             )
 
             // Helpful note if no Maps key is configured for this build.
@@ -290,6 +311,60 @@ private fun blockSubtitle(block: Paddock): String? {
     if (block.areaHectares > 0) parts.add("${"%.2f".format(block.areaHectares)} ha")
     if (block.rowCount > 0) parts.add("${block.rowCount} rows")
     return parts.joinToString(" · ").takeIf { it.isNotBlank() }
+}
+
+@Composable
+private fun OverlayControls(
+    showPins: Boolean,
+    showRowLines: Boolean,
+    showBlockLabels: Boolean,
+    onTogglePins: () -> Unit,
+    onToggleRowLines: () -> Unit,
+    onToggleBlockLabels: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(22.dp))
+            .background(Color.Black.copy(alpha = 0.55f))
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        OverlayChip(Icons.Filled.PushPin, "Pins", showPins, onTogglePins)
+        OverlayChip(Icons.Filled.Timeline, "Rows", showRowLines, onToggleRowLines)
+        OverlayChip(Icons.AutoMirrored.Filled.Label, "Labels", showBlockLabels, onToggleBlockLabels)
+    }
+}
+
+@Composable
+private fun OverlayChip(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(if (selected) VineColors.LeafGreen else Color.Transparent)
+            .clickable { onClick() }
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = if (selected) Color.White else Color.White.copy(alpha = 0.8f),
+            modifier = Modifier.size(16.dp),
+        )
+        Text(
+            label,
+            color = if (selected) Color.White else Color.White.copy(alpha = 0.8f),
+            fontSize = 13.sp,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+        )
+    }
 }
 
 @Composable
