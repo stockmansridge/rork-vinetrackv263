@@ -32,6 +32,15 @@ class SessionStore(context: Context) {
         get() = prefs.getString(KEY_SELECTED_VINEYARD, null)
         set(value) = prefs.edit { putString(KEY_SELECTED_VINEYARD, value) }
 
+    /**
+     * Cached copy of the user's preferred default vineyard (server is the
+     * source of truth). Kept locally so an offline launch can still prefer the
+     * default when the profile can't be fetched.
+     */
+    var defaultVineyardId: String?
+        get() = prefs.getString(KEY_DEFAULT_VINEYARD, null)
+        set(value) = prefs.edit { putString(KEY_DEFAULT_VINEYARD, value) }
+
     val hasSession: Boolean get() = !accessToken.isNullOrBlank() && !refreshToken.isNullOrBlank()
 
     fun save(accessToken: String, refreshToken: String, userId: String?, email: String?) {
@@ -59,5 +68,6 @@ class SessionStore(context: Context) {
         const val KEY_USER_ID = "user_id"
         const val KEY_EMAIL = "user_email"
         const val KEY_SELECTED_VINEYARD = "selected_vineyard_id"
+        const val KEY_DEFAULT_VINEYARD = "default_vineyard_id"
     }
 }

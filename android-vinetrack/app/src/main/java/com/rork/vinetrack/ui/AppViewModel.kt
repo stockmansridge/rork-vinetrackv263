@@ -14,6 +14,7 @@ import com.rork.vinetrack.data.PinPhotoRepository
 import com.rork.vinetrack.data.GrowthStageRecordRepository
 import com.rork.vinetrack.data.PaddockRepository
 import com.rork.vinetrack.data.PinRepository
+import com.rork.vinetrack.data.ProfileRepository
 import com.rork.vinetrack.data.RowAttachment
 import com.rork.vinetrack.data.SprayRecordRepository
 import com.rork.vinetrack.data.TripRepository
@@ -61,6 +62,8 @@ data class AppUiState(
     val route: AppRoute = AppRoute.Restoring,
     val vineyards: List<Vineyard> = emptyList(),
     val selectedVineyardId: String? = null,
+    /** The user's preferred default vineyard (auto-selected on launch). */
+    val defaultVineyardId: String? = null,
     val paddocks: List<Paddock> = emptyList(),
     val pins: List<Pin> = emptyList(),
     val trips: List<Trip> = emptyList(),
@@ -133,6 +136,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val yieldRepo = YieldRepository(session)
     private val fuelRepo = FuelLogRepository(session)
     private val buttonConfigRepo = ButtonConfigRepository(session)
+    private val profileRepo = ProfileRepository(session)
 
     /** Foreground GPS tracker for the currently active trip (null when idle). */
     private var tracker: LocationTracker? = null
@@ -230,13 +234,41 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun loadVineyards() {
         try {
             val vineyards = repo.listMyVineyards()
+            val memberIds = vineyards.map { it.id }.toSet()
+            // Resolve the per-user default vineyard from the profile (server is
+            // source of truth). Fall back to the locally cached copy when the
+            // profile fetch fails so an offline launch still honours it.
+            var defaultId = try {
+                profileRepo.getDefaultVineyardId()
+            } catch (e: BackendError.Unauthorized) {
+                throw e
+            } catch (_: Exception) {
+                session.defaultVineyardId
+            }
+            // Drop a stale default the user no longer has access to, clearing it
+            // remotely too (best-effort), mirroring iOS.
+            if (defaultId != null && defaultId !in memberIds) {
+                viewModelScope.launch { runCatching { profileRepo.setDefaultVineyard(null) } }
+                defaultId = null
+            }
+            session.defaultVineyardId = defaultId
+
+            // Selection priority (matches iOS applyDefaultVineyardSelection):
+            // 1. profile default if still a member,
+            // 2. existing local selection if still valid,
+            // 3. first available vineyard.
             val previous = session.selectedVineyardId
-            val selected = vineyards.firstOrNull { it.id == previous }?.id ?: vineyards.firstOrNull()?.id
+            val selected = when {
+                defaultId != null && defaultId in memberIds -> defaultId
+                previous != null && previous in memberIds -> previous
+                else -> vineyards.firstOrNull()?.id
+            }
             session.selectedVineyardId = selected
             _ui.update {
                 it.copy(
                     vineyards = vineyards,
                     selectedVineyardId = selected,
+                    defaultVineyardId = defaultId,
                     route = if (selected == null) AppRoute.NoVineyards else AppRoute.Main,
                 )
             }
@@ -248,6 +280,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update {
                 if (it.vineyards.isEmpty()) it.copy(route = AppRoute.VineyardLoadFailed)
                 else it.copy(route = AppRoute.Main)
+            }
+        }
+    }
+
+    /**
+     * Set (or clear, with null) the user's preferred default vineyard. The
+     * vineyard that opens on the next launch. Best-effort and silent on
+     * failure, mirroring iOS — the active session is unaffected either way.
+     */
+    fun setDefaultVineyard(vineyardId: String?) {
+        val target = if (vineyardId == _ui.value.defaultVineyardId) null else vineyardId
+        viewModelScope.launch {
+            val ok = runCatching { profileRepo.setDefaultVineyard(target) }.isSuccess
+            if (ok) {
+                session.defaultVineyardId = target
+                _ui.update { it.copy(defaultVineyardId = target) }
             }
         }
     }

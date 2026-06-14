@@ -22,6 +22,8 @@ import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.foundation.text.KeyboardOptions
@@ -129,11 +131,22 @@ fun SettingsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mod
                         if (state.vineyards.size > 1) "Switch Vineyard" else "Vineyard",
                         onLight = true,
                     )
+                    if (state.vineyards.size > 1) {
+                        Text(
+                            "Tap a vineyard to open it now. Tap the star to set the vineyard that opens by default each launch.",
+                            fontSize = 12.sp,
+                            color = vine.textSecondary,
+                        )
+                    }
                     VineyardCard {
                         state.vineyards.forEachIndexed { index, vineyard ->
-                            VineyardRow(vineyard, vineyard.id == state.selectedVineyardId) {
-                                vm.selectVineyard(vineyard.id)
-                            }
+                            VineyardRow(
+                                vineyard = vineyard,
+                                isSelected = vineyard.id == state.selectedVineyardId,
+                                isDefault = vineyard.id == state.defaultVineyardId,
+                                onClick = { vm.selectVineyard(vineyard.id) },
+                                onToggleDefault = { vm.setDefaultVineyard(vineyard.id) },
+                            )
                             if (index < state.vineyards.lastIndex) {
                                 Box(modifier = Modifier.fillMaxWidth().size(0.5.dp).background(vine.cardBorder))
                             }
@@ -479,7 +492,13 @@ private fun RowDivider(color: Color) {
 }
 
 @Composable
-private fun VineyardRow(vineyard: Vineyard, isSelected: Boolean, onClick: () -> Unit) {
+private fun VineyardRow(
+    vineyard: Vineyard,
+    isSelected: Boolean,
+    isDefault: Boolean,
+    onClick: () -> Unit,
+    onToggleDefault: () -> Unit,
+) {
     val vine = LocalVineColors.current
     Row(
         modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 10.dp),
@@ -492,9 +511,28 @@ private fun VineyardRow(vineyard: Vineyard, isSelected: Boolean, onClick: () -> 
         ) {
             Icon(Icons.Filled.Map, contentDescription = null, tint = VineColors.LeafGreen, modifier = Modifier.size(18.dp))
         }
-        Text(vineyard.name, color = vine.textPrimary, modifier = Modifier.weight(1f))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(vineyard.name, color = vine.textPrimary)
+            if (isDefault) {
+                Text("Opens by default", fontSize = 11.sp, color = VineColors.Warning, fontWeight = FontWeight.Medium)
+            }
+        }
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .clickable { onToggleDefault() },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                if (isDefault) Icons.Filled.Star else Icons.Filled.StarBorder,
+                contentDescription = if (isDefault) "Default vineyard" else "Set as default vineyard",
+                tint = if (isDefault) VineColors.Warning else vine.textSecondary,
+                modifier = Modifier.size(20.dp),
+            )
+        }
         if (isSelected) {
-            Icon(Icons.Filled.Check, contentDescription = "Selected", tint = VineColors.Success)
+            Icon(Icons.Filled.Check, contentDescription = "Currently open", tint = VineColors.Success)
         } else {
             Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = vine.textSecondary)
         }
