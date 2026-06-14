@@ -162,10 +162,7 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
             TopAppBar(
                 title = { Text("Irrigation") },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = vine.cardBackground,
-                    titleContentColor = vine.textPrimary,
-                ),
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
         },
         containerColor = vine.appBackground,

@@ -219,15 +219,16 @@ private fun GrowthListView(
             TopAppBar(
                 title = { Text("Growth & Phenology") },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = vine.cardBackground,
-                    titleContentColor = vine.textPrimary,
-                ),
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = onCreate, containerColor = VineColors.LeafGreen) {
-                Icon(Icons.Filled.Add, contentDescription = "Add observation", tint = Color.White)
+            FloatingActionButton(
+                onClick = onCreate,
+                containerColor = VineColors.PrimaryAccent,
+                contentColor = Color.White,
+            ) {
+                Icon(Icons.Filled.Add, contentDescription = "Add observation")
             }
         },
     ) { padding ->
@@ -345,10 +346,7 @@ private fun VarietiesCatalogView(
             TopAppBar(
                 title = { Text("Growth & Phenology") },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = vine.cardBackground,
-                    titleContentColor = vine.textPrimary,
-                ),
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
         },
     ) { padding ->

@@ -188,15 +188,16 @@ private fun YieldListView(
             TopAppBar(
                 title = { Text("Yield") },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = vine.cardBackground,
-                    titleContentColor = vine.textPrimary,
-                ),
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = onCreate, containerColor = VineColors.LeafGreen) {
-                Icon(Icons.Filled.Add, contentDescription = "Record yield", tint = Color.White)
+            FloatingActionButton(
+                onClick = onCreate,
+                containerColor = VineColors.PrimaryAccent,
+                contentColor = Color.White,
+            ) {
+                Icon(Icons.Filled.Add, contentDescription = "Record yield")
             }
         },
     ) { padding ->
