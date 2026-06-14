@@ -95,6 +95,7 @@ import com.rork.vinetrack.data.model.sprayOperationTypes
 import com.rork.vinetrack.data.model.windDirectionOptions
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
+import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.EmptyState
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.VineyardCard
@@ -107,7 +108,7 @@ import java.util.Locale
 import java.util.UUID
 
 @Composable
-fun SpraysScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifier) {
+fun SpraysScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifier, onBack: (() -> Unit)? = null) {
     var selectedId by remember { mutableStateOf<String?>(null) }
     var creating by remember { mutableStateOf(false) }
     var creatingTemplate by remember { mutableStateOf(false) }
@@ -126,6 +127,7 @@ fun SpraysScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modif
         if (record == null) {
             SprayListView(
                 state = state,
+                onBack = onBack,
                 onSelect = { selectedId = it.id },
                 onAdd = { creating = true },
                 onAddTemplate = { creatingTemplate = true },
@@ -169,6 +171,7 @@ private enum class SprayFilter(val label: String) {
 @Composable
 private fun SprayListView(
     state: AppUiState,
+    onBack: (() -> Unit)?,
     onSelect: (SprayRecord) -> Unit,
     onAdd: () -> Unit,
     onAddTemplate: () -> Unit,
@@ -197,6 +200,7 @@ private fun SprayListView(
         topBar = {
             TopAppBar(
                 title = { Text("Spray Program") },
+                navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
         },

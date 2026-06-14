@@ -10,14 +10,20 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Straighten
+import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
@@ -25,57 +31,85 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.model.Vineyard
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
+import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.SectionHeader
+import com.rork.vinetrack.ui.components.StatusBadge
 import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifier) {
+fun SettingsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifier, onBack: (() -> Unit)? = null) {
     val vine = LocalVineColors.current
+    val context = LocalContext.current
+    val versionLabel = remember {
+        try {
+            val pkg = context.packageManager.getPackageInfo(context.packageName, 0)
+            "Version ${pkg.versionName} (${pkg.longVersionCode})"
+        } catch (e: Exception) {
+            "Version 1.0"
+        }
+    }
+
     Scaffold(
         modifier = modifier,
         containerColor = vine.appBackground,
         topBar = {
             TopAppBar(
                 title = { Text("Settings") },
+                navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
         },
     ) { padding ->
         Column(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(24.dp),
         ) {
-            // Account card
-            VineyardCard {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Box(
-                        modifier = Modifier.size(48.dp).clip(CircleShape).background(VineColors.Primary.copy(alpha = 0.15f)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(Icons.Filled.Person, contentDescription = null, tint = VineColors.Primary)
-                    }
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(vm.userEmail ?: "Signed in", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                        Text("VineTrack account", fontSize = 13.sp, color = vine.textSecondary)
+            // Account
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SectionHeader("Account", onLight = true)
+                VineyardCard {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Box(
+                            modifier = Modifier.size(48.dp).clip(CircleShape).background(VineColors.Primary.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(Icons.Filled.Person, contentDescription = null, tint = VineColors.Primary)
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(vm.userEmail ?: "Signed in", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                            Text("VineTrack account", fontSize = 13.sp, color = vine.textSecondary)
+                        }
                     }
                 }
             }
 
+            // Vineyards
             if (state.vineyards.isNotEmpty()) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SectionHeader("Vineyards", onLight = true)
+                    SectionHeader(
+                        if (state.vineyards.size > 1) "Switch Vineyard" else "Vineyard",
+                        onLight = true,
+                    )
                     VineyardCard {
                         state.vineyards.forEachIndexed { index, vineyard ->
                             VineyardRow(vineyard, vineyard.id == state.selectedVineyardId) {
@@ -84,6 +118,56 @@ fun SettingsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mod
                             if (index < state.vineyards.lastIndex) {
                                 Box(modifier = Modifier.fillMaxWidth().size(0.5.dp).background(vine.cardBorder))
                             }
+                        }
+                    }
+                }
+            }
+
+            // App preferences (placeholders for upcoming settings)
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SectionHeader("Preferences", onLight = true)
+                VineyardCard {
+                    PreferenceRow(Icons.Filled.Straighten, VineColors.Indigo, "Units", "Metric (ha, t, mm)", comingSoon = true)
+                    RowDivider(vine.cardBorder)
+                    PreferenceRow(Icons.Filled.WaterDrop, VineColors.Cyan, "Irrigation defaults", "Application rate & soil buffer", comingSoon = true)
+                    RowDivider(vine.cardBorder)
+                    PreferenceRow(Icons.Filled.Map, VineColors.LeafGreen, "Map defaults", "Default block view", comingSoon = true)
+                }
+            }
+
+            // Data & sync
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SectionHeader("Data & Sync", onLight = true)
+                VineyardCard {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Box(
+                            modifier = Modifier.size(40.dp).clip(RoundedCornerShape(11.dp)).background(VineColors.Success.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(Icons.Filled.CloudDone, contentDescription = null, tint = VineColors.Success, modifier = Modifier.size(20.dp))
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Online-first", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                            Text("Your data syncs live with the server while connected.", fontSize = 12.sp, color = vine.textSecondary)
+                        }
+                    }
+                }
+            }
+
+            // About
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SectionHeader("About", onLight = true)
+                VineyardCard {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Box(
+                            modifier = Modifier.size(40.dp).clip(RoundedCornerShape(11.dp)).background(VineColors.EarthBrown.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(Icons.Filled.Info, contentDescription = null, tint = VineColors.EarthBrown, modifier = Modifier.size(20.dp))
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("VineTrack", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                            Text(versionLabel, fontSize = 12.sp, color = vine.textSecondary)
                         }
                     }
                 }
@@ -105,6 +189,41 @@ fun SettingsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mod
             }
         }
     }
+}
+
+@Composable
+private fun PreferenceRow(
+    icon: ImageVector,
+    tint: Color,
+    title: String,
+    subtitle: String,
+    comingSoon: Boolean = false,
+) {
+    val vine = LocalVineColors.current
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Box(
+            modifier = Modifier.size(40.dp).clip(RoundedCornerShape(11.dp)).background(tint.copy(alpha = 0.15f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+            Text(subtitle, fontSize = 12.sp, color = vine.textSecondary)
+        }
+        if (comingSoon) {
+            StatusBadge("Soon", VineColors.Stone)
+        }
+    }
+}
+
+@Composable
+private fun RowDivider(color: Color) {
+    Box(modifier = Modifier.fillMaxWidth().size(0.5.dp).background(color))
 }
 
 @Composable

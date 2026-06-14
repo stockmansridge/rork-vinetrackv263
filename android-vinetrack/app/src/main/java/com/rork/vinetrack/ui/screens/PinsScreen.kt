@@ -73,6 +73,7 @@ import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Pin
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
+import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.EmptyState
 import com.rork.vinetrack.ui.components.StatusBadge
 import com.rork.vinetrack.ui.components.VineyardCard
@@ -81,7 +82,7 @@ import com.rork.vinetrack.ui.theme.VineColors
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PinsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifier) {
+fun PinsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifier, onBack: (() -> Unit)? = null) {
     val vine = LocalVineColors.current
     var editing by remember { mutableStateOf<PinEditTarget?>(null) }
 
@@ -91,6 +92,7 @@ fun PinsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifie
         topBar = {
             TopAppBar(
                 title = { Text("Pins") },
+                navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
         },

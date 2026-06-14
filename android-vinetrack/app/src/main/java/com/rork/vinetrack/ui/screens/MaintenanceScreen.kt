@@ -83,6 +83,7 @@ import com.rork.vinetrack.data.model.machineTypeLabel
 import com.rork.vinetrack.data.model.resolveMaintenanceEquipmentName
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
+import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.EmptyState
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.VineyardCard
@@ -102,7 +103,7 @@ import java.util.Locale
 private data class EquipmentRef(val source: String, val refId: String, val name: String)
 
 @Composable
-fun MaintenanceScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifier) {
+fun MaintenanceScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifier, onBack: (() -> Unit)? = null) {
     var selectedLogId by remember { mutableStateOf<String?>(null) }
     var selectedEquipment by remember { mutableStateOf<EquipmentRef?>(null) }
     var creating by remember { mutableStateOf(false) }
@@ -131,6 +132,7 @@ fun MaintenanceScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = 
             )
             else -> MaintenanceHome(
                 state = state,
+                onBack = onBack,
                 onSelectLog = { selectedLogId = it.id },
                 onSelectEquipment = { selectedEquipment = it },
                 onAdd = { creating = true },
@@ -150,6 +152,7 @@ fun MaintenanceScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = 
 @Composable
 private fun MaintenanceHome(
     state: AppUiState,
+    onBack: (() -> Unit)?,
     onSelectLog: (MaintenanceLog) -> Unit,
     onSelectEquipment: (EquipmentRef) -> Unit,
     onAdd: () -> Unit,
@@ -162,6 +165,7 @@ private fun MaintenanceHome(
         topBar = {
             TopAppBar(
                 title = { Text("Maintenance") },
+                navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
         },

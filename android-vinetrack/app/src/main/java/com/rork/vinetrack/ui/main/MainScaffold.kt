@@ -1,18 +1,7 @@
 package com.rork.vinetrack.ui.main
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Grass
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.DirectionsCar
-import androidx.compose.material.icons.filled.Assignment
-import androidx.compose.material.icons.filled.Build
-import androidx.compose.material.icons.filled.Opacity
-import androidx.compose.material.icons.filled.Scale
-import androidx.compose.material.icons.filled.Spa
-import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -20,12 +9,10 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.screens.BlocksScreen
@@ -33,6 +20,7 @@ import com.rork.vinetrack.ui.screens.GrowthScreen
 import com.rork.vinetrack.ui.screens.HomeDashboard
 import com.rork.vinetrack.ui.screens.IrrigationScreen
 import com.rork.vinetrack.ui.screens.MaintenanceScreen
+import com.rork.vinetrack.ui.screens.MoreScreen
 import com.rork.vinetrack.ui.screens.PinsScreen
 import com.rork.vinetrack.ui.screens.SettingsScreen
 import com.rork.vinetrack.ui.screens.SpraysScreen
@@ -40,53 +28,62 @@ import com.rork.vinetrack.ui.screens.TripsScreen
 import com.rork.vinetrack.ui.screens.WorkTasksScreen
 import com.rork.vinetrack.ui.screens.YieldScreen
 
-private data class TabItem(val label: String, val icon: ImageVector)
-
-private val tabs = listOf(
-    TabItem("Home", Icons.Filled.Home),
-    TabItem("Blocks", Icons.Filled.Grass),
-    TabItem("Pins", Icons.Filled.LocationOn),
-    TabItem("Trip", Icons.Filled.DirectionsCar),
-    TabItem("Tasks", Icons.Filled.Assignment),
-    TabItem("Spray", Icons.Filled.WaterDrop),
-    TabItem("Growth", Icons.Filled.Spa),
-    TabItem("Yield", Icons.Filled.Scale),
-    TabItem("Water", Icons.Filled.Opacity),
-    TabItem("Service", Icons.Filled.Build),
-    TabItem("Settings", Icons.Filled.Settings),
-)
-
 @Composable
 fun MainScaffold(vm: AppViewModel, state: AppUiState) {
-    var selected by rememberSaveable { mutableIntStateOf(0) }
+    var tab by rememberSaveable { mutableStateOf(MainTab.Home) }
+    // Secondary surface opened on top of the More hub. Null = showing a tab root.
+    var tool by rememberSaveable { mutableStateOf<ToolRoute?>(null) }
 
     Scaffold(
         bottomBar = {
             NavigationBar {
-                tabs.forEachIndexed { index, tab ->
+                MainTab.entries.forEach { entry ->
                     NavigationBarItem(
-                        selected = selected == index,
-                        onClick = { selected = index },
-                        icon = { Icon(tab.icon, contentDescription = tab.label) },
-                        label = { Text(tab.label) },
+                        selected = tab == entry && tool == null,
+                        onClick = { tab = entry; tool = null },
+                        icon = { Icon(entry.icon, contentDescription = entry.label) },
+                        label = { Text(entry.label) },
                     )
                 }
             }
         }
     ) { padding ->
         val modifier = Modifier.padding(padding)
-        when (selected) {
-            0 -> HomeDashboard(vm, state, modifier) { selected = it }
-            1 -> BlocksScreen(state, modifier)
-            2 -> PinsScreen(vm, state, modifier)
-            3 -> TripsScreen(vm, state, modifier)
-            4 -> WorkTasksScreen(vm, state, modifier)
-            5 -> SpraysScreen(vm, state, modifier)
-            6 -> GrowthScreen(vm, state, modifier)
-            7 -> YieldScreen(vm, state, modifier)
-            8 -> IrrigationScreen(state, modifier)
-            9 -> MaintenanceScreen(vm, state, modifier)
-            10 -> SettingsScreen(vm, state, modifier)
+        val openTool = tool
+        if (openTool != null) {
+            BackHandler { tool = null }
+            ToolHost(openTool, vm, state, modifier, onBack = { tool = null })
+        } else when (tab) {
+            MainTab.Home -> HomeDashboard(
+                vm = vm,
+                state = state,
+                modifier = modifier,
+                onOpenTab = { tab = it },
+                onOpenTool = { tab = MainTab.More; tool = it },
+            )
+            MainTab.Blocks -> BlocksScreen(state, modifier)
+            MainTab.Trips -> TripsScreen(vm, state, modifier)
+            MainTab.Tasks -> WorkTasksScreen(vm, state, modifier)
+            MainTab.More -> MoreScreen(state, modifier, onOpenTool = { tool = it })
         }
+    }
+}
+
+@Composable
+private fun ToolHost(
+    route: ToolRoute,
+    vm: AppViewModel,
+    state: AppUiState,
+    modifier: Modifier,
+    onBack: () -> Unit,
+) {
+    when (route) {
+        ToolRoute.Pins -> PinsScreen(vm, state, modifier, onBack)
+        ToolRoute.Growth -> GrowthScreen(vm, state, modifier, onBack)
+        ToolRoute.Irrigation -> IrrigationScreen(state, modifier, onBack)
+        ToolRoute.Spray -> SpraysScreen(vm, state, modifier, onBack)
+        ToolRoute.Yield -> YieldScreen(vm, state, modifier, onBack)
+        ToolRoute.Maintenance -> MaintenanceScreen(vm, state, modifier, onBack)
+        ToolRoute.Settings -> SettingsScreen(vm, state, modifier, onBack)
     }
 }

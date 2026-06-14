@@ -78,6 +78,7 @@ import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.canonicalVarietyName
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
+import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.EmptyState
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.StatusBadge
@@ -97,7 +98,7 @@ import java.util.Locale
  * contract; estimates from sampling sessions remain an iOS-only flow for now.
  */
 @Composable
-fun YieldScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifier) {
+fun YieldScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifier, onBack: (() -> Unit)? = null) {
     var selectedId by remember { mutableStateOf<String?>(null) }
     var selectedVarietyKey by remember { mutableStateOf<String?>(null) }
     var creating by remember { mutableStateOf(false) }
@@ -133,6 +134,7 @@ fun YieldScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifi
             else -> YieldListView(
                 state = state,
                 varietySummaries = varietySummaries,
+                onBack = onBack,
                 onOpen = { selectedId = it.id },
                 onOpenVariety = { selectedVarietyKey = it.key },
                 onCreate = { creating = true },
@@ -166,6 +168,7 @@ fun YieldScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifi
 private fun YieldListView(
     state: AppUiState,
     varietySummaries: List<VarietyYieldSummary>,
+    onBack: (() -> Unit)?,
     onOpen: (HistoricalYieldRecord) -> Unit,
     onOpenVariety: (VarietyYieldSummary) -> Unit,
     onCreate: () -> Unit,
@@ -184,6 +187,7 @@ private fun YieldListView(
         topBar = {
             TopAppBar(
                 title = { Text("Yield") },
+                navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = vine.cardBackground,
                     titleContentColor = vine.textPrimary,

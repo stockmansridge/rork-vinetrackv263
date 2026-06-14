@@ -50,6 +50,7 @@ import com.rork.vinetrack.data.model.IrrigationRecommendationResult
 import com.rork.vinetrack.data.model.IrrigationSettings
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.ui.AppUiState
+import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.EmptyState
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.VineyardCard
@@ -69,7 +70,7 @@ import java.util.Locale
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier) {
+fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (() -> Unit)? = null) {
     val vine = LocalVineColors.current
     val scope = rememberCoroutineScope()
     val forecastRepo = remember { IrrigationForecastRepository() }
@@ -149,6 +150,7 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier) {
         topBar = {
             TopAppBar(
                 title = { Text("Irrigation") },
+                navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = vine.cardBackground,
                     titleContentColor = vine.textPrimary,

@@ -93,6 +93,7 @@ import com.rork.vinetrack.data.model.parseIsoToEpochMs
 import com.rork.vinetrack.data.model.resolveGrowthRecordBlockName
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
+import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.EmptyState
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.StatusBadge
@@ -116,7 +117,7 @@ private enum class GrowthTab(val label: String) {
 }
 
 @Composable
-fun GrowthScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifier) {
+fun GrowthScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifier, onBack: (() -> Unit)? = null) {
     var tab by remember { mutableStateOf(GrowthTab.Growth) }
     var selectedId by remember { mutableStateOf<String?>(null) }
     var selectedVarietyKey by remember { mutableStateOf<String?>(null) }
@@ -150,6 +151,7 @@ fun GrowthScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modif
                     vm = vm,
                     state = state,
                     tab = tab,
+                    onBack = onBack,
                     onTabChange = { tab = it },
                     onOpen = { selectedId = it.id },
                     onCreate = { creating = true },
@@ -157,6 +159,7 @@ fun GrowthScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modif
                 GrowthTab.Varieties -> VarietiesCatalogView(
                     state = state,
                     tab = tab,
+                    onBack = onBack,
                     onTabChange = { tab = it },
                     onOpenVariety = { selectedVarietyKey = it.varietyKey },
                 )
@@ -197,6 +200,7 @@ private fun GrowthListView(
     vm: AppViewModel,
     state: AppUiState,
     tab: GrowthTab,
+    onBack: (() -> Unit)?,
     onTabChange: (GrowthTab) -> Unit,
     onOpen: (GrowthStageRecord) -> Unit,
     onCreate: () -> Unit,
@@ -214,6 +218,7 @@ private fun GrowthListView(
         topBar = {
             TopAppBar(
                 title = { Text("Growth & Phenology") },
+                navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = vine.cardBackground,
                     titleContentColor = vine.textPrimary,
@@ -302,6 +307,7 @@ private fun GrowthListView(
 private fun VarietiesCatalogView(
     state: AppUiState,
     tab: GrowthTab,
+    onBack: (() -> Unit)?,
     onTabChange: (GrowthTab) -> Unit,
     onOpenVariety: (com.rork.vinetrack.data.model.GrapeVarietyRow) -> Unit,
 ) {
@@ -338,6 +344,7 @@ private fun VarietiesCatalogView(
         topBar = {
             TopAppBar(
                 title = { Text("Growth & Phenology") },
+                navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = vine.cardBackground,
                     titleContentColor = vine.textPrimary,
