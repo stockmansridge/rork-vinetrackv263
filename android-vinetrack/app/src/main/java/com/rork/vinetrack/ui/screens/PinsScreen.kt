@@ -76,6 +76,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import com.rork.vinetrack.data.PinDuplicateChecker
+import com.rork.vinetrack.data.RowAttachment
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Pin
 import com.rork.vinetrack.ui.AppUiState
@@ -237,6 +239,11 @@ private fun PinEditSheetHost(
     target: PinEditTarget,
     onDismiss: () -> Unit,
 ) {
+    // Pending duplicate confirmation for a launcher GPS pin that snapped onto a
+    // row already carrying a nearby open pin. Holds the candidate match plus the
+    // deferred save action so "Create anyway" can proceed.
+    var pendingDuplicate by remember { mutableStateOf<PendingPinDuplicate?>(null) }
+
     PinEditSheet(
         vm = vm,
         state = state,
@@ -254,22 +261,57 @@ private fun PinEditSheetHost(
                     } else {
                         defaultLocation(fields.paddockId, state)
                     }
-                    vm.createPin(
-                        title = fields.title,
-                        mode = fields.mode,
-                        category = fields.category,
-                        notes = fields.notes,
-                        side = fields.side,
-                        paddockId = fields.paddockId,
-                        rowNumber = fields.rowNumber,
-                        isCompleted = fields.isCompleted,
-                        latitude = loc?.first,
-                        longitude = loc?.second,
-                        // Only snap to a row when we have a real GPS fix; a centroid
-                        // fallback would produce a meaningless along-row distance.
-                        attachToRow = hasGps,
-                        photoUri = photoUri,
-                    ) { ok -> onDone(ok); if (ok) onDismiss() }
+                    val doCreate: () -> Unit = {
+                        vm.createPin(
+                            title = fields.title,
+                            mode = fields.mode,
+                            category = fields.category,
+                            notes = fields.notes,
+                            side = fields.side,
+                            paddockId = fields.paddockId,
+                            rowNumber = fields.rowNumber,
+                            isCompleted = fields.isCompleted,
+                            latitude = loc?.first,
+                            longitude = loc?.second,
+                            // Only snap to a row when we have a real GPS fix; a centroid
+                            // fallback would produce a meaningless along-row distance.
+                            attachToRow = hasGps,
+                            photoUri = photoUri,
+                        ) { ok -> onDone(ok); if (ok) onDismiss() }
+                    }
+                    // Duplicate detection runs only for launcher pins that snapped
+                    // to a real row (GPS fix + resolvable block geometry). Without
+                    // an attachment we save exactly as before.
+                    val attachment = if (hasGps) {
+                        RowAttachment.resolve(
+                            paddock = state.paddocks.firstOrNull { it.id == fields.paddockId },
+                            latitude = target.latitude,
+                            longitude = target.longitude,
+                            side = fields.side?.ifBlank { null },
+                        )
+                    } else {
+                        null
+                    }
+                    val duplicate = attachment?.let {
+                        PinDuplicateChecker.nearbyAlongRow(
+                            candidate = it,
+                            paddockId = fields.paddockId,
+                            mode = fields.mode,
+                            pins = state.pins,
+                        )
+                    }
+                    if (duplicate != null && attachment != null) {
+                        // Stop the save spinner and ask before creating.
+                        onDone(false)
+                        pendingDuplicate = PendingPinDuplicate(
+                            existing = duplicate.pin,
+                            rowNumber = attachment.pinRowNumber,
+                            distanceM = duplicate.distanceM,
+                            onCreateAnyway = doCreate,
+                        )
+                    } else {
+                        doCreate()
+                    }
                 }
                 is PinEditTarget.Existing -> {
                     vm.updatePin(
@@ -292,7 +334,39 @@ private fun PinEditSheetHost(
             }
         },
     )
+
+    pendingDuplicate?.let { dup ->
+        val rowLabel = if (dup.rowNumber % 1.0 == 0.0) dup.rowNumber.toInt().toString() else dup.rowNumber.toString()
+        val distLabel = String.format(java.util.Locale.US, "%.1f", dup.distanceM)
+        AlertDialog(
+            onDismissRequest = { pendingDuplicate = null },
+            title = { Text("Possible duplicate") },
+            text = {
+                Text(
+                    "A similar open item (\"${dup.existing.displayTitle}\") is already attached to " +
+                        "row $rowLabel, about $distLabel m away. Create another one here anyway?",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingDuplicate = null
+                    dup.onCreateAnyway()
+                }) { Text("Create anyway") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDuplicate = null }) { Text("Cancel") }
+            },
+        )
+    }
 }
+
+/** Deferred-save payload for the duplicate-warning confirmation dialog. */
+private data class PendingPinDuplicate(
+    val existing: Pin,
+    val rowNumber: Double,
+    val distanceM: Double,
+    val onCreateAnyway: () -> Unit,
+)
 
 /**
  * iOS PinDropView parity — a quick-action category launcher. Shows a Repairs /
