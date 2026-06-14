@@ -580,9 +580,10 @@ data class Pin(
     val latitude: Double? = null,
     val longitude: Double? = null,
     @SerialName("photo_path") val photoPath: String? = null,
-    // Read-only row-snapping fields populated by iOS / future Android snapping.
-    @SerialName("driving_row_number") val drivingRowNumber: Int? = null,
-    @SerialName("pin_row_number") val pinRowNumber: Int? = null,
+    // Row-attachment fields. iOS stores driving/pin row as numeric (the driving
+    // path is fractional, e.g. 14.5), so these decode as Double to stay tolerant.
+    @SerialName("driving_row_number") val drivingRowNumber: Double? = null,
+    @SerialName("pin_row_number") val pinRowNumber: Double? = null,
     @SerialName("pin_side") val pinSide: String? = null,
     @SerialName("along_row_distance_m") val alongRowDistanceM: Double? = null,
     @SerialName("created_at") val createdAt: String? = null,
@@ -598,6 +599,18 @@ data class Pin(
             ?: category?.takeIf { it.isNotBlank() }
             ?: mode?.takeIf { it.isNotBlank() }
             ?: "Pin"
+
+    /**
+     * Customer-facing "attached to row" summary, e.g. "Attached to row 15 · left".
+     * Prefers the snapped `pinRowNumber`; null when the pin isn't row-attached.
+     */
+    val rowAttachmentLabel: String?
+        get() {
+            val row = pinRowNumber ?: return null
+            val rowLabel = if (row % 1.0 == 0.0) row.toInt().toString() else row.toString()
+            val sideLabel = (pinSide ?: side)?.lowercase()?.takeIf { it == "left" || it == "right" }
+            return if (sideLabel != null) "Attached to row $rowLabel · $sideLabel" else "Attached to row $rowLabel"
+        }
 }
 
 /**

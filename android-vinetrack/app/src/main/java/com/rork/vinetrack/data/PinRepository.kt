@@ -41,6 +41,11 @@ class PinRepository(private val session: SessionStore) {
         val notes: String? = null,
         val side: String? = null,
         @SerialName("row_number") val rowNumber: Int? = null,
+        // Row-attachment columns, populated when a GPS launcher pin snaps to a
+        // mapped vine row. Left null (and untouched) for non-snapped pins.
+        @SerialName("pin_row_number") val pinRowNumber: Double? = null,
+        @SerialName("pin_side") val pinSide: String? = null,
+        @SerialName("along_row_distance_m") val alongRowDistanceM: Double? = null,
         @SerialName("is_completed") val isCompleted: Boolean = false,
         val latitude: Double? = null,
         val longitude: Double? = null,

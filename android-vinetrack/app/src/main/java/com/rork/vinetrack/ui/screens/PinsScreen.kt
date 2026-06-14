@@ -248,7 +248,8 @@ private fun PinEditSheetHost(
                 is PinEditTarget.New -> {
                     // Prefer the GPS fix captured when the category was tapped;
                     // fall back to the paddock centroid / vineyard coordinate.
-                    val loc = if (target.latitude != null && target.longitude != null) {
+                    val hasGps = target.latitude != null && target.longitude != null
+                    val loc = if (hasGps) {
                         target.latitude to target.longitude
                     } else {
                         defaultLocation(fields.paddockId, state)
@@ -264,6 +265,9 @@ private fun PinEditSheetHost(
                         isCompleted = fields.isCompleted,
                         latitude = loc?.first,
                         longitude = loc?.second,
+                        // Only snap to a row when we have a real GPS fix; a centroid
+                        // fallback would produce a meaningless along-row distance.
+                        attachToRow = hasGps,
                         photoUri = photoUri,
                     ) { ok -> onDone(ok); if (ok) onDismiss() }
                 }
@@ -564,6 +568,9 @@ private fun PinRow(pin: Pin, onClick: () -> Unit, onToggle: () -> Unit) {
             }
             Column(modifier = Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(pin.displayTitle, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                pin.rowAttachmentLabel?.let { label ->
+                    Text(label, fontSize = 12.sp, color = vine.textSecondary)
+                }
                 if (!pin.notes.isNullOrBlank()) {
                     Text(pin.notes, fontSize = 13.sp, color = vine.textSecondary, maxLines = 2)
                 }
@@ -798,6 +805,22 @@ private fun PinEditSheet(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.fillMaxWidth(),
             )
+
+            // Read-only row-attachment summary when the pin snapped to a mapped row.
+            existing?.rowAttachmentLabel?.let { label ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.Grass,
+                        contentDescription = null,
+                        tint = VineColors.LeafGreen,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Text(label, fontSize = 13.sp, color = vine.textSecondary)
+                }
+            }
 
             // Left / Right / None side selector — persists to pins.side.
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {

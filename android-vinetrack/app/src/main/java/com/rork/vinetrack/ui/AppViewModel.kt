@@ -13,6 +13,7 @@ import com.rork.vinetrack.data.PinPhotoRepository
 import com.rork.vinetrack.data.GrowthStageRecordRepository
 import com.rork.vinetrack.data.PaddockRepository
 import com.rork.vinetrack.data.PinRepository
+import com.rork.vinetrack.data.RowAttachment
 import com.rork.vinetrack.data.SprayRecordRepository
 import com.rork.vinetrack.data.TripRepository
 import com.rork.vinetrack.data.VineyardRepository
@@ -276,9 +277,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         latitude: Double?,
         longitude: Double?,
         photoUri: Uri? = null,
+        // True only for launcher pins dropped at a real GPS fix: snap the pin to
+        // the nearest mapped vine row and persist the row-attachment columns.
+        attachToRow: Boolean = false,
         onResult: (Boolean) -> Unit,
     ) {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
+        // Resolve row attachment from block geometry when a GPS fix is available.
+        val attachment = if (attachToRow) {
+            RowAttachment.resolve(
+                paddock = _ui.value.paddocks.firstOrNull { it.id == paddockId },
+                latitude = latitude,
+                longitude = longitude,
+                side = side?.ifBlank { null },
+            )
+        } else {
+            null
+        }
+        // Backfill the legacy row_number from the snapped row when the user left
+        // it blank, so the existing row column stays consistent with the snap.
+        val resolvedRowNumber = rowNumber ?: attachment?.pinRowNumber?.toInt()
         viewModelScope.launch {
             _ui.update { it.copy(pinError = null) }
             try {
@@ -291,7 +309,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         mode = mode.ifBlank { null },
                         notes = notes?.ifBlank { null },
                         side = side?.ifBlank { null },
-                        rowNumber = rowNumber,
+                        rowNumber = resolvedRowNumber,
+                        pinRowNumber = attachment?.pinRowNumber,
+                        pinSide = attachment?.pinSide,
+                        alongRowDistanceM = attachment?.alongRowDistanceM,
                         isCompleted = isCompleted,
                         latitude = latitude,
                         longitude = longitude,
