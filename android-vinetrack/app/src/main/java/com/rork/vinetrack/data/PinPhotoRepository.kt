@@ -32,12 +32,25 @@ class PinPhotoRepository(private val session: SessionStore) {
     fun storagePath(vineyardId: String, pinId: String): String =
         "${vineyardId.lowercase()}/pins/${pinId.lowercase()}/photo.jpg"
 
+    /**
+     * Canonical path for a directly-authored growth-stage record photo. Android
+     * growth records have no source pin, so they can't reuse the `pins/` path.
+     * The first folder is still the vineyard id, so the shared bucket's
+     * membership-based RLS applies unchanged. One photo per record, matching the
+     * single pin photo iOS mirrors into `growth_stage_records.photo_paths`.
+     */
+    fun growthStoragePath(vineyardId: String, recordId: String): String =
+        "${vineyardId.lowercase()}/growth/${recordId.lowercase()}/photo.jpg"
+
     /** Upload compressed JPEG bytes, upserting over any existing photo. Returns the object path. */
     suspend fun upload(vineyardId: String, pinId: String, jpeg: ByteArray): String =
+        uploadAtPath(storagePath(vineyardId, pinId), jpeg)
+
+    /** Upload compressed JPEG bytes to an explicit object path, upserting. Returns the path. */
+    suspend fun uploadAtPath(path: String, jpeg: ByteArray): String =
         withContext(Dispatchers.IO) {
             requireConfig()
             val token = session.accessToken ?: throw BackendError.Unauthorized
-            val path = storagePath(vineyardId, pinId)
             val response = SupabaseClient.http.post(
                 SupabaseClient.storageUrl("object/$BUCKET/$path")
             ) {

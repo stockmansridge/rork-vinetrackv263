@@ -62,6 +62,13 @@ class GrowthStageRecordRepository(private val session: SessionStore) {
         @SerialName("client_updated_at") val clientUpdatedAt: String,
     )
 
+    /** Partial edit of only the photo array, leaving stage/block/date/notes/sync intact. */
+    @Serializable
+    private data class PhotoPathsPatch(
+        @SerialName("photo_paths") val photoPaths: List<String>?,
+        @SerialName("client_updated_at") val clientUpdatedAt: String,
+    )
+
     @Serializable
     private data class SoftDeleteArgs(@SerialName("p_id") val id: String)
 
@@ -118,6 +125,28 @@ class GrowthStageRecordRepository(private val session: SessionStore) {
                 observedAt = input.observedAt,
                 rowNumber = input.rowNumber,
                 notes = input.notes,
+                clientUpdatedAt = nowIso(),
+            )
+            val response = SupabaseClient.http.patch(SupabaseClient.restUrl("growth_stage_records?id=eq.$id")) {
+                authHeaders(token)
+                headers { append("Prefer", "return=representation") }
+                contentType(ContentType.Application.Json)
+                setBody(patch)
+            }
+            firstRow(response)
+        }
+
+    /**
+     * Set or clear a record's `photo_paths` after a storage upload/removal.
+     * Mirrors iOS's single-photo contract (the array holds at most one path) and
+     * touches no other column. `null`/empty clears the photo reference.
+     */
+    suspend fun updatePhotoPaths(id: String, paths: List<String>?): GrowthStageRecord =
+        withContext(Dispatchers.IO) {
+            requireConfig()
+            val token = session.accessToken ?: throw BackendError.Unauthorized
+            val patch = PhotoPathsPatch(
+                photoPaths = paths?.takeIf { it.isNotEmpty() },
                 clientUpdatedAt = nowIso(),
             )
             val response = SupabaseClient.http.patch(SupabaseClient.restUrl("growth_stage_records?id=eq.$id")) {

@@ -89,6 +89,7 @@ data class AppUiState(
     val maintenanceError: String? = null,
     val growthBusy: Boolean = false,
     val growthError: String? = null,
+    val growthPhotoBusy: Boolean = false,
 ) {
     val selectedVineyard: Vineyard? get() = vineyards.firstOrNull { it.id == selectedVineyardId }
     val openPins: Int get() = pins.count { !it.isCompleted }
@@ -1214,6 +1215,86 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearGrowthError() {
         _ui.update { it.copy(growthError = null) }
+    }
+
+    // MARK: - Growth-stage record photos
+
+    /**
+     * Compress and upload a single photo for a directly-authored growth-stage
+     * record, then persist the `photo_paths` reference. Mirrors iOS's one-photo
+     * contract and the pin-photo flow: the record row is untouched until the
+     * storage upload succeeds, and pin-mirrored records are never edited here.
+     */
+    fun uploadGrowthPhoto(record: GrowthStageRecord, uri: Uri, onResult: (Boolean) -> Unit) {
+        if (record.isFromPin) { onResult(false); return }
+        _ui.update { it.copy(growthPhotoBusy = true, growthError = null) }
+        viewModelScope.launch {
+            try {
+                val jpeg = PinPhotoImageUtil.compress(getApplication(), uri)
+                val path = pinPhotoRepo.uploadAtPath(
+                    pinPhotoRepo.growthStoragePath(record.vineyardId, record.id),
+                    jpeg,
+                )
+                val updated = growthRepo.updatePhotoPaths(record.id, listOf(path))
+                _ui.update { st ->
+                    st.copy(
+                        growthRecords = st.growthRecords.map { if (it.id == record.id) updated else it },
+                        growthPhotoBusy = false,
+                    )
+                }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                _ui.update { it.copy(growthPhotoBusy = false) }
+                signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(growthPhotoBusy = false, growthError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(growthPhotoBusy = false, growthError = "Couldn't upload the photo. Check your connection and try again.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /** Remove a growth-stage record's photo from storage and clear its reference. */
+    fun removeGrowthPhoto(record: GrowthStageRecord, onResult: (Boolean) -> Unit) {
+        if (record.isFromPin) { onResult(false); return }
+        val path = record.photoPaths?.firstOrNull()
+        if (path.isNullOrBlank()) { onResult(true); return }
+        _ui.update { it.copy(growthPhotoBusy = true, growthError = null) }
+        viewModelScope.launch {
+            try {
+                pinPhotoRepo.delete(path)
+                val updated = growthRepo.updatePhotoPaths(record.id, null)
+                _ui.update { st ->
+                    st.copy(
+                        growthRecords = st.growthRecords.map { if (it.id == record.id) updated else it },
+                        growthPhotoBusy = false,
+                    )
+                }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                _ui.update { it.copy(growthPhotoBusy = false) }
+                signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(growthPhotoBusy = false, growthError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                _ui.update { it.copy(growthPhotoBusy = false, growthError = "Couldn't remove the photo. Check your connection.") }
+                onResult(false)
+            }
+        }
+    }
+
+    /** Mint a signed URL so Coil can load a private growth-record photo (shared bucket). */
+    fun requestGrowthPhotoUrl(path: String, onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            try {
+                onResult(pinPhotoRepo.signedUrl(path))
+            } catch (e: Exception) {
+                onResult(null)
+            }
+        }
     }
 
     // MARK: - Paddock phenology write path
