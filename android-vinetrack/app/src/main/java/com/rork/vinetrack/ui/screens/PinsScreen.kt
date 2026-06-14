@@ -283,12 +283,14 @@ private fun PinEditSheetHost(
                             photoUri = photoUri,
                         ) { ok -> onDone(ok); if (ok) onDismiss() }
                     }
-                    // Duplicate detection runs only for launcher pins that snapped
-                    // to a real row (GPS fix + resolvable block geometry). Without
-                    // an attachment we save exactly as before.
+                    // Duplicate detection runs only for launcher pins with a real
+                    // GPS fix. The preferred path snaps to a row and compares
+                    // along-row distance; legacy pins lacking row attachment are
+                    // caught by a conservative raw-distance fallback.
+                    val paddock = state.paddocks.firstOrNull { it.id == fields.paddockId }
                     val attachment = if (hasGps) {
                         RowAttachment.resolve(
-                            paddock = state.paddocks.firstOrNull { it.id == fields.paddockId },
+                            paddock = paddock,
                             latitude = target.latitude,
                             longitude = target.longitude,
                             side = fields.side?.ifBlank { null },
@@ -296,7 +298,8 @@ private fun PinEditSheetHost(
                     } else {
                         null
                     }
-                    val duplicate = attachment?.let {
+                    // Preferred: along-row duplicate using the snapped attachment.
+                    val alongRowDup = attachment?.let {
                         PinDuplicateChecker.nearbyAlongRow(
                             candidate = it,
                             paddockId = fields.paddockId,
@@ -304,13 +307,30 @@ private fun PinEditSheetHost(
                             pins = state.pins,
                         )
                     }
-                    if (duplicate != null && attachment != null) {
+                    // Fallback: raw-distance match against older pins without row
+                    // attachment, scoped to the same block / mode / side / manual row.
+                    val duplicate = alongRowDup ?: if (hasGps) {
+                        PinDuplicateChecker.nearbyRawDistance(
+                            latitude = target.latitude,
+                            longitude = target.longitude,
+                            paddockId = fields.paddockId,
+                            mode = fields.mode,
+                            side = fields.side?.ifBlank { null },
+                            manualRowNumber = fields.rowNumber,
+                            paddock = paddock,
+                            pins = state.pins,
+                        )
+                    } else {
+                        null
+                    }
+                    if (duplicate != null) {
                         // Stop the save spinner and ask before creating.
                         onDone(false)
                         pendingDuplicate = PendingPinDuplicate(
                             existing = duplicate.pin,
-                            rowNumber = attachment.pinRowNumber,
+                            rowNumber = if (duplicate.alongRow) attachment?.pinRowNumber else null,
                             distanceM = duplicate.distanceM,
+                            alongRow = duplicate.alongRow,
                             onCreateAnyway = doCreate,
                         )
                     } else {
@@ -340,17 +360,21 @@ private fun PinEditSheetHost(
     )
 
     pendingDuplicate?.let { dup ->
-        val rowLabel = if (dup.rowNumber % 1.0 == 0.0) dup.rowNumber.toInt().toString() else dup.rowNumber.toString()
         val distLabel = String.format(java.util.Locale.US, "%.1f", dup.distanceM)
+        val message = if (dup.alongRow && dup.rowNumber != null) {
+            val rowLabel = if (dup.rowNumber % 1.0 == 0.0) dup.rowNumber.toInt().toString() else dup.rowNumber.toString()
+            "A similar open item (\"${dup.existing.displayTitle}\") is already attached to " +
+                "row $rowLabel, about $distLabel m away. Create another one here anyway?"
+        } else {
+            // Raw-distance fallback: the existing pin predates row attachment, so
+            // we only know straight-line distance within the block.
+            "A similar open item (\"${dup.existing.displayTitle}\") is already nearby in this block, " +
+                "about $distLabel m away. Create another one here anyway?"
+        }
         AlertDialog(
             onDismissRequest = { pendingDuplicate = null },
             title = { Text("Possible duplicate") },
-            text = {
-                Text(
-                    "A similar open item (\"${dup.existing.displayTitle}\") is already attached to " +
-                        "row $rowLabel, about $distLabel m away. Create another one here anyway?",
-                )
-            },
+            text = { Text(message) },
             confirmButton = {
                 TextButton(onClick = {
                     pendingDuplicate = null
@@ -367,8 +391,11 @@ private fun PinEditSheetHost(
 /** Deferred-save payload for the duplicate-warning confirmation dialog. */
 private data class PendingPinDuplicate(
     val existing: Pin,
-    val rowNumber: Double,
+    /** Attached row of the new pin for along-row matches; null for raw-distance fallback. */
+    val rowNumber: Double?,
     val distanceM: Double,
+    /** True when matched along the snapped row; false for the legacy raw-distance fallback. */
+    val alongRow: Boolean,
     val onCreateAnyway: () -> Unit,
 )
 
