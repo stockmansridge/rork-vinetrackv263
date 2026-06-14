@@ -12,9 +12,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Opacity
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -39,12 +41,15 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.rork.vinetrack.data.IrrigationDefaults
 import com.rork.vinetrack.data.IrrigationForecast
 import com.rork.vinetrack.data.IrrigationForecastRepository
+import com.rork.vinetrack.data.IrrigationPrefsStore
 import com.rork.vinetrack.data.model.IrrigationCalculator
 import com.rork.vinetrack.data.model.IrrigationRecommendationResult
 import com.rork.vinetrack.data.model.IrrigationSettings
@@ -73,7 +78,10 @@ import java.util.Locale
 fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (() -> Unit)? = null) {
     val vine = LocalVineColors.current
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val forecastRepo = remember { IrrigationForecastRepository() }
+    val prefsStore = remember { IrrigationPrefsStore(context) }
+    val savedDefaults = remember { prefsStore.load() }
 
     val paddocks = remember(state.paddocks, state.selectedVineyardId) {
         val vid = state.selectedVineyardId
@@ -83,13 +91,16 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
     var selectedPaddockId by remember(paddocks) { mutableStateOf(paddocks.firstOrNull()?.id) }
     val selectedPaddock = paddocks.firstOrNull { it.id == selectedPaddockId }
 
-    // Settings (local-only, mirrors iOS defaults).
+    // Settings (mirrors iOS defaults). The agronomy parameters are seeded from
+    // the on-device saved defaults; the application rate stays per-session and
+    // is prefilled from the selected block's system rate.
     var appRateText by remember { mutableStateOf("") }
-    var kcText by remember { mutableStateOf("0.65") }
-    var efficiencyText by remember { mutableStateOf("90") }
-    var rainEffText by remember { mutableStateOf("80") }
-    var replacementText by remember { mutableStateOf("100") }
-    var bufferText by remember { mutableStateOf("0") }
+    var kcText by remember { mutableStateOf(numText(savedDefaults.cropCoefficientKc)) }
+    var efficiencyText by remember { mutableStateOf(numText(savedDefaults.irrigationEfficiencyPercent)) }
+    var rainEffText by remember { mutableStateOf(numText(savedDefaults.rainfallEffectivenessPercent)) }
+    var replacementText by remember { mutableStateOf(numText(savedDefaults.replacementPercent)) }
+    var bufferText by remember { mutableStateOf(numText(savedDefaults.soilMoistureBufferMm)) }
+    var savedConfirmation by remember { mutableStateOf<String?>(null) }
 
     var forecast by remember { mutableStateOf<IrrigationForecast?>(null) }
     var isLoading by remember { mutableStateOf(false) }
@@ -339,6 +350,53 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
                         help = "Stored soil water from earlier rain/irrigation. Leave at 0 if unsure.",
                         isLast = true,
                     )
+                    Box(Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                prefsStore.save(
+                                    IrrigationDefaults(
+                                        cropCoefficientKc = parse(kcText, 0.65),
+                                        irrigationEfficiencyPercent = parse(efficiencyText, 90.0),
+                                        rainfallEffectivenessPercent = parse(rainEffText, 80.0),
+                                        replacementPercent = parse(replacementText, 100.0),
+                                        soilMoistureBufferMm = parse(bufferText),
+                                    )
+                                )
+                                savedConfirmation = "Saved as defaults"
+                            },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Icon(Icons.Filled.Bookmark, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Box(Modifier.size(6.dp))
+                            Text("Save as defaults")
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                val d = IrrigationDefaults.factory
+                                kcText = numText(d.cropCoefficientKc)
+                                efficiencyText = numText(d.irrigationEfficiencyPercent)
+                                rainEffText = numText(d.rainfallEffectivenessPercent)
+                                replacementText = numText(d.replacementPercent)
+                                bufferText = numText(d.soilMoistureBufferMm)
+                                prefsStore.reset()
+                                savedConfirmation = "Reset to defaults"
+                            },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Icon(Icons.Filled.RestartAlt, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Box(Modifier.size(6.dp))
+                            Text("Reset")
+                        }
+                    }
+                    val confirmation = savedConfirmation
+                    if (confirmation != null) {
+                        Box(Modifier.height(8.dp))
+                        Text(confirmation, fontSize = 12.sp, color = VineColors.LeafGreen, fontWeight = FontWeight.SemiBold)
+                    }
                 }
             }
 
@@ -641,6 +699,15 @@ private fun hoursMinutes(hours: Double): String {
     val h = totalMinutes / 60
     val m = totalMinutes % 60
     return "$h hr $m min"
+}
+
+/** Formats a default for an editable text field, trimming trailing zeros. */
+private fun numText(value: Double): String {
+    return if (value == value.toLong().toDouble()) {
+        value.toLong().toString()
+    } else {
+        String.format(Locale.US, "%.2f", value).trimEnd('0').trimEnd('.')
+    }
 }
 
 private fun parse(text: String, default: Double = 0.0): Double {

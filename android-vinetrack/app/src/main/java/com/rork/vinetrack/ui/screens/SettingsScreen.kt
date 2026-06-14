@@ -24,14 +24,19 @@ import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.WaterDrop
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -39,9 +44,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.rork.vinetrack.data.IrrigationDefaults
+import com.rork.vinetrack.data.IrrigationPrefsStore
 import com.rork.vinetrack.data.model.Vineyard
+import java.util.Locale
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.BackNavIcon
@@ -56,6 +65,9 @@ import com.rork.vinetrack.ui.theme.VineColors
 fun SettingsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifier, onBack: (() -> Unit)? = null) {
     val vine = LocalVineColors.current
     val context = LocalContext.current
+    val prefsStore = remember { IrrigationPrefsStore(context) }
+    var irrigationDefaults by remember { mutableStateOf(prefsStore.load()) }
+    var showIrrigationEditor by remember { mutableStateOf(false) }
     val versionLabel = remember {
         try {
             val pkg = context.packageManager.getPackageInfo(context.packageName, 0)
@@ -129,7 +141,13 @@ fun SettingsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mod
                 VineyardCard {
                     PreferenceRow(Icons.Filled.Straighten, VineColors.Indigo, "Units", "Metric (ha, t, mm)", comingSoon = true)
                     RowDivider(vine.cardBorder)
-                    PreferenceRow(Icons.Filled.WaterDrop, VineColors.Cyan, "Irrigation defaults", "Application rate & soil buffer", comingSoon = true)
+                    PreferenceRow(
+                        Icons.Filled.WaterDrop,
+                        VineColors.Cyan,
+                        "Irrigation defaults",
+                        irrigationSummary(irrigationDefaults),
+                        onClick = { showIrrigationEditor = true },
+                    )
                     RowDivider(vine.cardBorder)
                     PreferenceRow(Icons.Filled.Map, VineColors.LeafGreen, "Map defaults", "Default block view", comingSoon = true)
                 }
@@ -189,6 +207,102 @@ fun SettingsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mod
             }
         }
     }
+
+    if (showIrrigationEditor) {
+        IrrigationDefaultsEditor(
+            current = irrigationDefaults,
+            onDismiss = { showIrrigationEditor = false },
+            onSave = { updated ->
+                prefsStore.save(updated)
+                irrigationDefaults = updated
+                showIrrigationEditor = false
+            },
+            onReset = {
+                prefsStore.reset()
+                irrigationDefaults = prefsStore.load()
+                showIrrigationEditor = false
+            },
+        )
+    }
+}
+
+private fun irrigationSummary(d: IrrigationDefaults): String {
+    fun n(v: Double): String =
+        if (v == v.toLong().toDouble()) v.toLong().toString() else String.format(Locale.US, "%.2f", v).trimEnd('0').trimEnd('.')
+    return "Kc ${n(d.cropCoefficientKc)} \u00B7 Eff ${n(d.irrigationEfficiencyPercent)}% \u00B7 Buffer ${n(d.soilMoistureBufferMm)} mm"
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun IrrigationDefaultsEditor(
+    current: IrrigationDefaults,
+    onDismiss: () -> Unit,
+    onSave: (IrrigationDefaults) -> Unit,
+    onReset: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    fun n(v: Double): String =
+        if (v == v.toLong().toDouble()) v.toLong().toString() else String.format(Locale.US, "%.2f", v).trimEnd('0').trimEnd('.')
+    fun parse(t: String, default: Double): Double = t.replace(",", ".").trim().toDoubleOrNull() ?: default
+
+    var kc by remember { mutableStateOf(n(current.cropCoefficientKc)) }
+    var efficiency by remember { mutableStateOf(n(current.irrigationEfficiencyPercent)) }
+    var rainEff by remember { mutableStateOf(n(current.rainfallEffectivenessPercent)) }
+    var replacement by remember { mutableStateOf(n(current.replacementPercent)) }
+    var buffer by remember { mutableStateOf(n(current.soilMoistureBufferMm)) }
+
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Irrigation Defaults") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    "Used as the starting parameters in the irrigation calculator. Saved on this device only.",
+                    fontSize = 12.sp,
+                    color = vine.textSecondary,
+                )
+                DefaultField("Crop Coefficient (Kc)", kc) { kc = it }
+                DefaultField("Irrigation Efficiency (%)", efficiency) { efficiency = it }
+                DefaultField("Rainfall Effectiveness (%)", rainEff) { rainEff = it }
+                DefaultField("Replacement (%)", replacement) { replacement = it }
+                DefaultField("Soil Buffer (mm)", buffer) { buffer = it }
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = {
+                onSave(
+                    IrrigationDefaults(
+                        cropCoefficientKc = parse(kc, 0.65),
+                        irrigationEfficiencyPercent = parse(efficiency, 90.0),
+                        rainfallEffectivenessPercent = parse(rainEff, 80.0),
+                        replacementPercent = parse(replacement, 100.0),
+                        soilMoistureBufferMm = parse(buffer, 0.0),
+                    )
+                )
+            }) { Text("Save") }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = onReset) {
+                Text("Reset", color = VineColors.Destructive)
+            }
+        },
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DefaultField(label: String, value: String, onValueChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+        modifier = Modifier.fillMaxWidth(),
+    )
 }
 
 @Composable
@@ -198,10 +312,14 @@ private fun PreferenceRow(
     title: String,
     subtitle: String,
     comingSoon: Boolean = false,
+    onClick: (() -> Unit)? = null,
 ) {
     val vine = LocalVineColors.current
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .let { if (onClick != null) it.clickable { onClick() } else it }
+            .padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
@@ -217,6 +335,12 @@ private fun PreferenceRow(
         }
         if (comingSoon) {
             StatusBadge("Soon", VineColors.Stone)
+        } else if (onClick != null) {
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = vine.textSecondary,
+            )
         }
     }
 }
