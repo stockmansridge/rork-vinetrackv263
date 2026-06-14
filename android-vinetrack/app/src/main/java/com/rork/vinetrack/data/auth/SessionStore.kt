@@ -44,11 +44,23 @@ class SessionStore(context: Context) {
     val hasSession: Boolean get() = !accessToken.isNullOrBlank() && !refreshToken.isNullOrBlank()
 
     fun save(accessToken: String, refreshToken: String, userId: String?, email: String?) {
+        // If a *different* user is signing in, drop the previous user's cached
+        // vineyard selection/default so it can't leak into the new session.
+        // We track ownership with a dedicated key that survives `clear()` (which
+        // wipes userId on sign-out), so a sign-out → different-user sign-in is
+        // still detected. A token refresh for the same user keeps the cache.
+        val cacheOwner = prefs.getString(KEY_VINEYARD_CACHE_OWNER, null)
+        val isDifferentUser = userId != null && cacheOwner != null && userId != cacheOwner
         prefs.edit {
             putString(KEY_ACCESS, accessToken)
             putString(KEY_REFRESH, refreshToken)
             putString(KEY_USER_ID, userId)
             putString(KEY_EMAIL, email)
+            if (userId != null) putString(KEY_VINEYARD_CACHE_OWNER, userId)
+            if (isDifferentUser) {
+                remove(KEY_SELECTED_VINEYARD)
+                remove(KEY_DEFAULT_VINEYARD)
+            }
         }
     }
 
@@ -58,7 +70,10 @@ class SessionStore(context: Context) {
             remove(KEY_REFRESH)
             remove(KEY_USER_ID)
             remove(KEY_EMAIL)
-            // Keep selected vineyard so re-login restores context.
+            // Keep selected/default vineyard so the SAME user re-logging in
+            // restores their context. KEY_VINEYARD_CACHE_OWNER is also kept so
+            // a different user signing in next is detected by save() and the
+            // stale cache is dropped before it can leak.
         }
     }
 
@@ -69,5 +84,6 @@ class SessionStore(context: Context) {
         const val KEY_EMAIL = "user_email"
         const val KEY_SELECTED_VINEYARD = "selected_vineyard_id"
         const val KEY_DEFAULT_VINEYARD = "default_vineyard_id"
+        const val KEY_VINEYARD_CACHE_OWNER = "vineyard_cache_owner"
     }
 }
