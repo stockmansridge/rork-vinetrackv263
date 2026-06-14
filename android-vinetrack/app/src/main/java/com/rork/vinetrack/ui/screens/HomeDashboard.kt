@@ -45,9 +45,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.rork.vinetrack.data.MapPrefsStore
 import com.rork.vinetrack.data.model.Vineyard
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
@@ -68,6 +70,8 @@ fun HomeDashboard(
     onOpenTool: (ToolRoute) -> Unit,
 ) {
     var showMap by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val mapDefaults = remember { MapPrefsStore(context).load() }
 
     AnimatedContent(
         targetState = showMap,
@@ -76,7 +80,7 @@ fun HomeDashboard(
         modifier = modifier,
     ) { mapVisible ->
         if (mapVisible) {
-            VineyardMapScreen(state, onBack = { showMap = false })
+            VineyardMapScreen(state, defaults = mapDefaults, onBack = { showMap = false })
         } else {
             DashboardContent(vm, state, onOpenTab = onOpenTab, onOpenTool = onOpenTool, onOpenMap = { showMap = true })
         }

@@ -41,6 +41,8 @@ import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.LatLngBounds
+import com.rork.vinetrack.data.MapDefaults
+import com.rork.vinetrack.data.MapStyle
 import com.rork.vinetrack.data.model.CoordinatePoint
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Pin
@@ -65,6 +67,13 @@ private enum class MapMode { TopDown, Overview }
 
 /** 3D Overview camera tilt in degrees (top-down uses 0). */
 private const val OVERVIEW_TILT = 50f
+
+private fun MapStyle.toMapType(): MapType = when (this) {
+    MapStyle.Hybrid -> MapType.HYBRID
+    MapStyle.Satellite -> MapType.SATELLITE
+    MapStyle.Normal -> MapType.NORMAL
+    MapStyle.Terrain -> MapType.TERRAIN
+}
 
 private fun CoordinatePoint.toLatLng(): LatLng = LatLng(latitude, longitude)
 
@@ -91,7 +100,12 @@ private fun Pin.latLng(): LatLng? {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun VineyardMapScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: () -> Unit) {
+fun VineyardMapScreen(
+    state: AppUiState,
+    modifier: Modifier = Modifier,
+    defaults: MapDefaults = MapDefaults.factory,
+    onBack: () -> Unit,
+) {
     val vine = LocalVineColors.current
     val scope = rememberCoroutineScope()
 
@@ -119,7 +133,7 @@ fun VineyardMapScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: 
     }
 
     val cameraPositionState = rememberCameraPositionState()
-    var mode by remember { mutableStateOf(MapMode.TopDown) }
+    var mode by remember { mutableStateOf(if (defaults.overview3D) MapMode.Overview else MapMode.TopDown) }
     var hasFramed by remember { mutableStateOf(false) }
 
     // Frame the content once the map is laid out.
@@ -174,7 +188,7 @@ fun VineyardMapScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: 
             GoogleMap(
                 modifier = Modifier.fillMaxSize(),
                 cameraPositionState = cameraPositionState,
-                properties = MapProperties(mapType = MapType.HYBRID),
+                properties = MapProperties(mapType = defaults.style.toMapType()),
                 uiSettings = MapUiSettings(
                     zoomControlsEnabled = false,
                     mapToolbarEnabled = false,
@@ -200,7 +214,7 @@ fun VineyardMapScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: 
                         )
                     }
                     // Row lines
-                    block.rows?.forEach { row ->
+                    if (defaults.showRowLines) block.rows?.forEach { row ->
                         val s = row.startPoint
                         val e = row.endPoint
                         if (s != null && e != null) {
@@ -212,7 +226,7 @@ fun VineyardMapScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: 
                         }
                     }
                     // Block name label (tap to reveal name + area/rows)
-                    block.centroid()?.let { center ->
+                    if (defaults.showBlockLabels) block.centroid()?.let { center ->
                         Marker(
                             state = MarkerState(position = center),
                             title = block.name,
@@ -224,7 +238,7 @@ fun VineyardMapScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: 
                 }
 
                 // Pins
-                locatedPins.forEach { pin ->
+                if (defaults.showPins) locatedPins.forEach { pin ->
                     pin.latLng()?.let { position ->
                         Marker(
                             state = MarkerState(position = position),

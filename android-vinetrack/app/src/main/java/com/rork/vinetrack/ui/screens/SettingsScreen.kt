@@ -28,6 +28,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -49,6 +50,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.IrrigationDefaults
 import com.rork.vinetrack.data.IrrigationPrefsStore
+import com.rork.vinetrack.data.MapDefaults
+import com.rork.vinetrack.data.MapPrefsStore
+import com.rork.vinetrack.data.MapStyle
 import com.rork.vinetrack.data.model.Vineyard
 import java.util.Locale
 import com.rork.vinetrack.ui.AppUiState
@@ -68,6 +72,9 @@ fun SettingsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mod
     val prefsStore = remember { IrrigationPrefsStore(context) }
     var irrigationDefaults by remember { mutableStateOf(prefsStore.load()) }
     var showIrrigationEditor by remember { mutableStateOf(false) }
+    val mapPrefsStore = remember { MapPrefsStore(context) }
+    var mapDefaults by remember { mutableStateOf(mapPrefsStore.load()) }
+    var showMapEditor by remember { mutableStateOf(false) }
     val versionLabel = remember {
         try {
             val pkg = context.packageManager.getPackageInfo(context.packageName, 0)
@@ -149,7 +156,13 @@ fun SettingsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mod
                         onClick = { showIrrigationEditor = true },
                     )
                     RowDivider(vine.cardBorder)
-                    PreferenceRow(Icons.Filled.Map, VineColors.LeafGreen, "Map defaults", "Default block view", comingSoon = true)
+                    PreferenceRow(
+                        Icons.Filled.Map,
+                        VineColors.LeafGreen,
+                        "Map defaults",
+                        mapSummary(mapDefaults),
+                        onClick = { showMapEditor = true },
+                    )
                 }
             }
 
@@ -208,6 +221,23 @@ fun SettingsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mod
         }
     }
 
+    if (showMapEditor) {
+        MapDefaultsEditor(
+            current = mapDefaults,
+            onDismiss = { showMapEditor = false },
+            onSave = { updated ->
+                mapPrefsStore.save(updated)
+                mapDefaults = updated
+                showMapEditor = false
+            },
+            onReset = {
+                mapPrefsStore.reset()
+                mapDefaults = mapPrefsStore.load()
+                showMapEditor = false
+            },
+        )
+    }
+
     if (showIrrigationEditor) {
         IrrigationDefaultsEditor(
             current = irrigationDefaults,
@@ -223,6 +253,104 @@ fun SettingsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mod
                 showIrrigationEditor = false
             },
         )
+    }
+}
+
+private fun mapSummary(d: MapDefaults): String {
+    val overlays = listOfNotNull(
+        if (d.showPins) "pins" else null,
+        if (d.showRowLines) "rows" else null,
+        if (d.showBlockLabels) "labels" else null,
+    )
+    val view = if (d.overview3D) "3D" else "Top-down"
+    val overlayText = if (overlays.isEmpty()) "no overlays" else overlays.joinToString(", ")
+    return "${d.style.label} \u00B7 $view \u00B7 $overlayText"
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MapDefaultsEditor(
+    current: MapDefaults,
+    onDismiss: () -> Unit,
+    onSave: (MapDefaults) -> Unit,
+    onReset: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    var style by remember { mutableStateOf(current.style) }
+    var overview3D by remember { mutableStateOf(current.overview3D) }
+    var showPins by remember { mutableStateOf(current.showPins) }
+    var showRowLines by remember { mutableStateOf(current.showRowLines) }
+    var showBlockLabels by remember { mutableStateOf(current.showBlockLabels) }
+
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Map Defaults") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    "Used when opening the vineyard map. Saved on this device only.",
+                    fontSize = 12.sp,
+                    color = vine.textSecondary,
+                )
+                Text("Imagery", fontWeight = FontWeight.SemiBold, color = vine.textPrimary, fontSize = 13.sp)
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    MapStyle.entries.forEach { option ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { style = option }
+                                .padding(vertical = 8.dp, horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(option.label, color = vine.textPrimary, modifier = Modifier.weight(1f))
+                            if (style == option) {
+                                Icon(Icons.Filled.Check, contentDescription = null, tint = VineColors.Success)
+                            }
+                        }
+                    }
+                }
+                MapToggleRow("3D overview by default", overview3D) { overview3D = it }
+                MapToggleRow("Show pins", showPins) { showPins = it }
+                MapToggleRow("Show row lines", showRowLines) { showRowLines = it }
+                MapToggleRow("Show block labels", showBlockLabels) { showBlockLabels = it }
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = {
+                onSave(
+                    MapDefaults(
+                        style = style,
+                        overview3D = overview3D,
+                        showPins = showPins,
+                        showRowLines = showRowLines,
+                        showBlockLabels = showBlockLabels,
+                    )
+                )
+            }) { Text("Save") }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = onReset) {
+                Text("Reset", color = VineColors.Destructive)
+            }
+        },
+    )
+}
+
+@Composable
+private fun MapToggleRow(label: String, value: Boolean, onValueChange: (Boolean) -> Unit) {
+    val vine = LocalVineColors.current
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable { onValueChange(!value) },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(label, color = vine.textPrimary, modifier = Modifier.weight(1f))
+        Switch(checked = value, onCheckedChange = onValueChange)
     }
 }
 
