@@ -573,10 +573,18 @@ data class Pin(
     @SerialName("button_name") val buttonName: String? = null,
     val mode: String? = null,
     val notes: String? = null,
+    /** Left/Right side selected from the Repairs/Growth launcher column. */
+    val side: String? = null,
+    @SerialName("row_number") val rowNumber: Int? = null,
     @SerialName("is_completed") val isCompleted: Boolean = false,
     val latitude: Double? = null,
     val longitude: Double? = null,
     @SerialName("photo_path") val photoPath: String? = null,
+    // Read-only row-snapping fields populated by iOS / future Android snapping.
+    @SerialName("driving_row_number") val drivingRowNumber: Int? = null,
+    @SerialName("pin_row_number") val pinRowNumber: Int? = null,
+    @SerialName("pin_side") val pinSide: String? = null,
+    @SerialName("along_row_distance_m") val alongRowDistanceM: Double? = null,
     @SerialName("created_at") val createdAt: String? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
 ) {

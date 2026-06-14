@@ -39,6 +39,7 @@ class PinRepository(private val session: SessionStore) {
         val category: String? = null,
         val mode: String? = null,
         val notes: String? = null,
+        val side: String? = null,
         @SerialName("row_number") val rowNumber: Int? = null,
         @SerialName("is_completed") val isCompleted: Boolean = false,
         val latitude: Double? = null,
@@ -54,6 +55,7 @@ class PinRepository(private val session: SessionStore) {
         val category: String? = null,
         val mode: String? = null,
         val notes: String? = null,
+        val side: String? = null,
         @SerialName("row_number") val rowNumber: Int? = null,
         @SerialName("is_completed") val isCompleted: Boolean,
     )
@@ -89,6 +91,7 @@ class PinRepository(private val session: SessionStore) {
         category: String?,
         mode: String?,
         notes: String?,
+        side: String?,
         rowNumber: Int?,
         isCompleted: Boolean,
     ): Pin = withContext(Dispatchers.IO) {
@@ -100,6 +103,7 @@ class PinRepository(private val session: SessionStore) {
             category = category,
             mode = mode,
             notes = notes,
+            side = side,
             rowNumber = rowNumber,
             isCompleted = isCompleted,
         )

@@ -252,6 +252,7 @@ private fun PinEditSheetHost(
                         mode = fields.mode,
                         category = fields.category,
                         notes = fields.notes,
+                        side = fields.side,
                         paddockId = fields.paddockId,
                         rowNumber = fields.rowNumber,
                         isCompleted = fields.isCompleted,
@@ -267,6 +268,7 @@ private fun PinEditSheetHost(
                         mode = fields.mode,
                         category = fields.category,
                         notes = fields.notes,
+                        side = fields.side,
                         paddockId = fields.paddockId,
                         rowNumber = fields.rowNumber,
                         isCompleted = fields.isCompleted,
@@ -609,6 +611,7 @@ private data class PinFields(
     val mode: String,
     val category: String?,
     val notes: String?,
+    val side: String?,
     val paddockId: String?,
     val rowNumber: Int?,
     val isCompleted: Boolean,
@@ -639,9 +642,11 @@ private fun PinEditSheet(
     var title by remember { mutableStateOf(existing?.title ?: newTarget?.titleDefault ?: newTarget?.category ?: "") }
     var mode by remember { mutableStateOf(existing?.mode?.takeIf { it in pinModes } ?: initialMode) }
     var category by remember { mutableStateOf(existing?.category ?: newTarget?.category ?: "") }
-    var notes by remember { mutableStateOf(existing?.notes ?: newTarget?.side?.let { "$it side" } ?: "") }
+    var notes by remember { mutableStateOf(existing?.notes ?: "") }
+    // Side persists to pins.side. Seeded from the launcher column or the live pin.
+    var side by remember { mutableStateOf(existing?.side ?: newTarget?.side) }
     var paddockId by remember { mutableStateOf(existing?.paddockId) }
-    var rowText by remember { mutableStateOf("") }
+    var rowText by remember { mutableStateOf(existing?.rowNumber?.toString() ?: "") }
     var isCompleted by remember { mutableStateOf(existing?.isCompleted ?: false) }
     var saving by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -741,6 +746,25 @@ private fun PinEditSheet(
                 modifier = Modifier.fillMaxWidth(),
             )
 
+            // Left / Right / None side selector — persists to pins.side.
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Side", fontSize = 13.sp, color = vine.textSecondary)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("Left", "Right", "None").forEach { option ->
+                        val isSelected = (side ?: "None") == option
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = { side = if (option == "None") null else option },
+                            label = { Text(option) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = VineColors.Primary.copy(alpha = 0.18f),
+                                selectedLabelColor = VineColors.Primary,
+                            ),
+                        )
+                    }
+                }
+            }
+
             OutlinedTextField(
                 value = notes,
                 onValueChange = { notes = it },
@@ -777,6 +801,7 @@ private fun PinEditSheet(
                             mode = mode,
                             category = category.trim().ifBlank { null },
                             notes = notes.trim().ifBlank { null },
+                            side = side,
                             paddockId = paddockId,
                             rowNumber = rowText.toIntOrNull(),
                             isCompleted = isCompleted,

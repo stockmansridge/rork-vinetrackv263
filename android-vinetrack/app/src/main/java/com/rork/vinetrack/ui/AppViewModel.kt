@@ -269,6 +269,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         mode: String,
         category: String?,
         notes: String?,
+        side: String?,
         paddockId: String?,
         rowNumber: Int?,
         isCompleted: Boolean,
@@ -289,6 +290,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         category = category?.ifBlank { null },
                         mode = mode.ifBlank { null },
                         notes = notes?.ifBlank { null },
+                        side = side?.ifBlank { null },
                         rowNumber = rowNumber,
                         isCompleted = isCompleted,
                         latitude = latitude,
@@ -328,6 +330,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         mode: String,
         category: String?,
         notes: String?,
+        side: String?,
         paddockId: String?,
         rowNumber: Int?,
         isCompleted: Boolean,
@@ -344,6 +347,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     category = category?.ifBlank { null },
                     mode = mode.ifBlank { null },
                     notes = notes?.ifBlank { null },
+                    side = side?.ifBlank { null },
                     rowNumber = rowNumber,
                     isCompleted = isCompleted,
                 )
@@ -376,7 +380,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     category = pin.category,
                     mode = pin.mode,
                     notes = pin.notes,
-                    rowNumber = null,
+                    side = pin.side,
+                    rowNumber = pin.rowNumber,
                     isCompleted = target,
                 )
             } catch (e: BackendError.Unauthorized) {
